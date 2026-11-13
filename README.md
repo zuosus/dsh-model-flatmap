@@ -36,9 +36,15 @@ while active. Disabling the plugin restores the native control with no residue.
   Haiku, Sonnet, Claude, Qwen, GLM, Kimi, GPT, Gemini, Llama, Mistral and others.
   Unrecognised models are inferred from their id; anything unjudgeable falls into
   *Others* (always sorts last). Families stay flat — no nesting.
-- **A family is a brand, not a version.** A version tail never splits one brand
-  into several headings, so `hy3`, `hy4-preview` and `hy4free` share one `HY`
-  heading. Each row under *By family* shows its provider as secondary text.
+- **Generations are kept apart.** A registered brand splits by generation:
+  `hy3` → `HY3`, `hy4free` / `hy4std` / `hy4-preview` → `HY4`, and a bare `hy`
+  → `HY`. Unregistered brands still collapse their version tail; dictionary
+  families (GPT, Qwen…) are never split.
+- **Rows are provider-primary.** Under *By family* the heading already says what
+  the models are, so the family name is not repeated in a row: the primary text
+  is the provider name. Only when one provider offers several models in the same
+  family does a short id-derived suffix differentiate them. The full model name
+  and description stay in the tooltip.
 - **Reasoning effort.** The current model's reasoning levels render as an
   exclusive, keyboard-operable group ("推理等级" / "Reasoning effort") driven by
   radio semantics.

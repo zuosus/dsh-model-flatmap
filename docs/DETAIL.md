@@ -36,17 +36,26 @@ and the agent teamwork switch are all visible at once.
   others. A model the dictionary does not cover is inferred from its id;
   anything unjudgeable falls into *Others*, which always sorts last. Families
   stay flat — no nesting.
-- **A family is a brand, not a version.** A version tail never splits one
-  brand into several headings, so `hy3`, `hy4-preview` and `hy4free` share a
-  single `HY` family instead of producing three. The same rule covers
-  `acme4-turbo` and `acme-7b`. A provider prefix on the id does not hide the
-  brand either (`codebuddy-hy3` is still `HY`), and a registered brand keeps
-  its own casing so `HY` does not read as the word "Hy".
-- **Rows name their provider under family grouping.** A family heading says
-  what the models *are*, and one family can hold models from several
-  providers, so each row carries its provider as quiet secondary text (caption
-  colour, 11 px, ellipsised before the model name). Under *By provider* the
-  heading already is the provider, so the tag is not drawn.
+- **Registered brands keep their generations apart.** Merging `hy3` and `hy4`
+  into one `HY` family (DEC-004) was wrong: the generation has to be visible.
+  A registered brand (`FAMILY_BRANDS`, currently `HY`) resolves to
+  `BRAND + generation` when its id carries a generation digit, so `hy3` /
+  `hy3-x` → `HY3`, `hy4-preview` / `hy4free` / `hy4std` → `HY4`, and a bare
+  `hy` → `HY`. Generations rank next to their bare brand in numeric order.
+  Unregistered brands still collapse their version tail (`acme4-turbo` and
+  `acme-7b` are one `Acme`), and dictionary families are never split by
+  generation. A provider prefix does not hide the brand (`codebuddy-hy3` →
+  `HY3`).
+- **Family-grouped rows are provider-primary.** A family heading says what the
+  models *are*, so the family name is not repeated in a row. The row's primary
+  text is the provider name — the one thing a heading cannot tell you when a
+  family spans providers. The full model name and description stay in the row
+  tooltip. Only when one provider offers several models in the same family do
+  those rows carry a short secondary variant derived from the id tail (e.g.
+  `hy4free` → `free`, `hy3-x` → `x`); the plain base model carries no tag.
+  Colliding variants fall back to the unique model id. Under *By provider* the
+  heading already is the provider, so the primary text stays the model name and
+  no secondary tag is drawn.
 - **Adaptive columns.** The panel measures one group title and one model row,
   subtracts the fixed sections from the 320 px cap, and picks the smallest
   column count from 1 to 3 that fits. If even three columns overflow, it keeps

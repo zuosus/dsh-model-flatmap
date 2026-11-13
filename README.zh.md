@@ -31,9 +31,12 @@
 - **模型家族。** 内置词典识别 DeepSeek、Grok、Opus、Haiku、Sonnet、Claude、Qwen、
   GLM、Kimi、GPT、Gemini、Llama、Mistral 等。未覆盖的模型按 id 推断；无法判断的归入
   *Others*（永远排在最后）。家族保持平铺，不嵌套。
-- **family 是品牌，不是版本。** 版本后缀不会把一个品牌拆成多个标题，因此 `hy3`、
-  `hy4-preview`、`hy4free` 共享同一个 `HY` 标题。*按 family* 下每行以次级文字显示其
-  provider。
+- **generation 要区分开。** 已注册品牌按 generation 分节：`hy3` 归 `HY3`、`hy4free` /
+  `hy4std` / `hy4-preview` 归 `HY4`，裸 `hy` 仍是 `HY`；未注册品牌仍折叠版本后缀。
+  词典家族（GPT、Qwen…）不拆 generation。
+- **row content 以 provider 为主。** *按 family* 下标题已经说明模型是什么，所以行里
+  不再重复家族名，主文本改为 provider name；仅当同一 provider 在同一家族下有多个
+  模型时，才补一个由 id 推出的短后缀区分。完整模型名/描述保留在 tooltip。
 - **推理等级。** 当前模型的推理等级渲染为一个互斥、可键盘操作的分组（"推理等级"，
   基于 radio 语义）。
 - **跟随主题。** 仅使用宿主主题令牌着色，在浅色与深色主题下都正确。

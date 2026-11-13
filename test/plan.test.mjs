@@ -55,7 +55,7 @@ function materialize() {
 }
 
 const bundle = materialize()
-const { familyOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, planColumns, packColumns } = bundle.__test
+const { familyOf, familyRank, familyVariant, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, planColumns, packColumns } = bundle.__test
 
 test('families come from the dictionary before the id guess', () => {
   assert.equal(familyOf({ id: 'deepseek-chat', name: 'DeepSeek Chat' }), 'DeepSeek')
@@ -70,19 +70,49 @@ test('an uncovered model id falls back to its first id segment', () => {
   assert.equal(familyOf({ id: 'vendor/acme-7b', name: 'Acme 7B' }), 'Acme')
 })
 
-test('versions of one brand collapse into one family', () => {
-  // A family is a brand, not a version: `hy3`, `hy4-preview` and `hy4free`
-  // are one HY family, so they must not produce three headings.
-  assert.equal(familyOf({ id: 'hy3', name: 'hy3' }), 'HY')
-  assert.equal(familyOf({ id: 'hy4-preview', name: 'hy4-preview' }), 'HY')
-  assert.equal(familyOf({ id: 'hy4free', name: 'hy4free' }), 'HY')
-  // A provider-prefixed id still finds the brand behind the prefix.
-  assert.equal(familyOf({ id: 'codebuddy-hy3', name: 'hy3' }), 'HY')
-  assert.equal(familyOf({ id: 'codebuddy-cli:hy4-preview', name: 'hy4' }), 'HY')
-  // A bare brand id keeps the registered heading, not generic title case.
+test('a registered brand keeps its generations distinct', () => {
+  // The old merge (DEC-004) put hy3 and hy4 in ONE HY family. That was a
+  // mistake: the generation has to be visible. hy3 → HY3, hy4* → HY4,
+  // and a bare hy → HY (no generation digit to keep).
+  assert.equal(familyOf({ id: 'hy3', name: 'Hy3' }), 'HY3')
+  assert.equal(familyOf({ id: 'hy3-x', name: 'Hy3' }), 'HY3')
+  assert.equal(familyOf({ id: 'hy4-preview', name: 'Hy4' }), 'HY4')
+  assert.equal(familyOf({ id: 'hy4free', name: 'Hy4' }), 'HY4')
+  assert.equal(familyOf({ id: 'hy4std', name: 'Hy4' }), 'HY4')
+  assert.equal(familyOf({ id: 'hy4flash-exp1', name: 'Hy4' }), 'HY4')
   assert.equal(familyOf({ id: 'hy', name: 'HY' }), 'HY')
-  // The same rule generalises: a version tail never splits a brand.
+  // A provider prefix on the id does not hide the brand or its generation.
+  assert.equal(familyOf({ id: 'codebuddy-hy3', name: 'Hy3' }), 'HY3')
+  assert.equal(familyOf({ id: 'codebuddy-cli:hy4-preview', name: 'Hy4' }), 'HY4')
+  // Dictionary families are never split by generation.
+  assert.equal(familyOf({ id: 'gpt-5.5', name: 'GPT 5.5' }), 'GPT')
+})
+
+test('generations rank with their brand, in generation order', () => {
+  const hy = familyRank('HY')
+  assert.ok(familyRank('HY3') > hy, 'HY3 ranks after the bare brand')
+  assert.ok(familyRank('HY4') > familyRank('HY3'), 'HY4 ranks after HY3')
+  assert.ok(familyRank('HY4') < familyRank('Others'), 'still before Others')
+})
+
+test('unregistered brands still collapse their version tail', () => {
+  // The generation split applies only to registered brands. Other brands keep
+  // the DEC-004 behaviour: a version tail never splits one heading.
   assert.equal(familyOf({ id: 'acme4-turbo', name: 'Acme 4 Turbo' }), 'Acme')
+  assert.equal(familyOf({ id: 'acme-7b', name: 'Acme 7B' }), 'Acme')
+})
+
+test('family row variant is short and omits the family name', () => {
+  // Row content is provider-primary; the secondary text is only a variant.
+  assert.equal(idVariantOf({ id: 'hy4free' }, 'HY4'), 'free')
+  assert.equal(idVariantOf({ id: 'hy4std' }, 'HY4'), 'std')
+  assert.equal(idVariantOf({ id: 'hy4-preview' }, 'HY4'), 'preview')
+  assert.equal(idVariantOf({ id: 'hy4flash-exp1' }, 'HY4'), 'flash exp1')
+  assert.equal(idVariantOf({ id: 'hy3-x' }, 'HY3'), 'x')
+  assert.equal(idVariantOf({ id: 'hy4free' }, 'HY4').includes('hy'), false,
+    'the family name never leaks into a row variant')
+  assert.equal(familyVariant({ id: 'hy4free', name: 'Hy4' }, 'HY4'), 'free')
+  assert.equal(familyVariant({ id: 'gpt-5.5', name: 'GPT 5.5 Turbo' }, 'GPT'), 'Turbo')
 })
 
 test('a bare version is not a brand', () => {

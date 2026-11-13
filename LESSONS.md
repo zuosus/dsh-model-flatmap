@@ -5,6 +5,31 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## LES-011 — 2026-11-13 — "Smart, flexible" row text means conditional, not just restyled
+
+Three traps from reworking family rows, worth remembering before the next
+"make the text smarter" request:
+
+1. **Decide what the heading already says before choosing the row's primary
+   text.** A family heading tells you WHAT and (with generations) WHICH
+   generation. Printing a model/family name in the row repeats it; the missing
+   fact is the provider. Inverting primary/secondary (provider primary, no
+   family name, model name kept in the tooltip) is the actual fix — not a font
+   or colour tweak.
+2. **"On demand" needs a real condition.** Adding a variant tag to every row
+   is noise. The right condition is "one provider has >1 model in this family";
+   the plain base model then legitimately carries NO tag at all (null), which
+   is more informative than a forced label. Let an empty derived variant mean
+   "no tag", and only fall back to the unique id on a genuine collision.
+3. **Validate against a pristine base when the tree has concurrent writers.**
+   HEAD here already failed 29 render tests because a teammate's teamwork
+   commit changed `teamAvailable` from a boolean to a function while the test
+   harness still passed a boolean. Those failures were NOT mine. I confirmed
+   by running the suite against a clean `git show HEAD:client.js`, then fixed
+   only the harness (make `teamAvailable` a function), never the teammate's
+   plugin code, and reported the base issue. Never "fix" a failing suite by
+   rolling back someone else's work.
+
 ## LES-010 — 2026-11-13 — Pick the theme-invariant palette when the spec fixes a colour
 
 A request for "a deep blue background with white text" is a *fixed* colour

@@ -5,6 +5,54 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-012 — ⛔️ 2026-11-13 — Family rows are provider-primary, and a brand's generations stay distinct
+
+推翻: DEC-004 的两点结论（"每行以次级文字显示 provider" 与 "hy3/hy4 合并进一个 HY 家族"）。
+DEC-004 条目本身保留原样，仅由本条声明其失效。
+
+**Context.** After DEC-004 shipped, the user reported that under *By family*
+the row content needed a smarter, more flexible treatment:
+
+1. A family heading already says what the models ARE (and now, with the
+   generation split, also which generation). Repeating a model/family name as
+   the row's main text is redundant — the useful, missing information in a
+   family that spans providers is WHERE a model comes from.
+2. Merging `hy3` and `hy4` into one `HY` family was explicitly called a
+   mistake: the model's **generation has to be distinguished**, not collapsed.
+
+**Decision.**
+
+- *Row content (By family).* The primary text becomes the **provider name**.
+  The family name is not drawn in the row at all. The full model name and
+  description move to (and stay in) the row tooltip. A short secondary variant
+  is added **only on demand**: when one provider offers more than one model in
+  the same family, those rows get an id-derived tail (`hy4free` → `free`,
+  `hy3-x` → `x`, `hy4flash-exp1` → `flash exp1`); the plain base model carries
+  no tag. Colliding variants fall back to the unique model id. Under
+  *By provider* the primary text stays the model name and no tag is drawn.
+- *Generation split.* A registered brand (`FAMILY_BRANDS`, currently `HY`)
+  resolves to `BRAND + generation` from the id's leading digit, so `hy3` →
+  `HY3`, `hy4free`/`hy4std`/`hy4-preview` → `HY4`, and a bare `hy` → `HY`.
+  Dictionary families (GPT, Qwen, …) are never split. Unregistered brands
+  keep DEC-004's collapse (`acme4-turbo` and `acme-7b` → `Acme`).
+- Generations rank next to their bare brand in numeric order
+  (`HY` < `HY3` < `HY4` < `Others`), so a new generation does not jump to the
+  end of the grid.
+
+**Rejected.** Keeping the model name as primary text with the provider as a
+quiet tag (the DEC-004 shape) — it repeats the family name and buries the one
+discriminating fact (the provider). A fixed variant on every row (noise when a
+provider has one model in the family). Upper-casing all generations or splitting
+dictionary families by version.
+
+**Consequences.** `client.js`: `familyOf` now emits `HY3`/`HY4`, `familyRank`
+orders generations, `idVariantOf`/`rowVariantOf` derive short tails, the
+sections builder disambiguates per provider+family, and `renderRow` swaps the
+primary/secondary roles. The measurement probe and 26 px row height are
+unchanged (the tag still shares the model-name line). Render tests pin the
+generation split, provider-primary text, no family name in a row, and the
+on-demand variant; plan tests pin `familyOf`/`familyRank`/variant helpers.
+
 ## DEC-011 — 2026-11-13 — 分割线只放在模型网格与推理等级之间
 
 **Context.** 用户要求：推理等级与智能体团队协作之间不要有分割线；模型网格与推理等级之间要有一条明显一些的灰色分割线。

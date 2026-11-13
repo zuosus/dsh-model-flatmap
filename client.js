@@ -192,11 +192,11 @@ window.__ModuleLoader__.load({
    multiplier reads as an aside without disturbing the row's text rhythm
    (see renderRow's nameRuns). */
 .dshmf-rowNameMark { font-size: 11px; line-height: 18px; font-weight: 700; letter-spacing: normal; }
-/* Provider tag inside a family-grouped row: the same family spans several
-   providers, so each row says where it comes from. Quieter than the model name
-   (caption colour, 11px) and shrinks before the name does, because the model
-   name is what identifies the row. No width cap: a cap truncates a perfectly
-   readable provider label ("CodeBuddy …") in a column that had room for it. */
+/* Secondary text in a family-grouped row. The primary text is the provider,
+   so this is only a short variant tail shown when one provider offers several
+   models in the same family. Quieter than the primary text (caption colour,
+   11px) and shrinks before it does. No width cap: a cap truncates a perfectly
+   readable label ("CodeBuddy …") in a column that had room for it. */
 .dshmf-rowProvider {
   flex: 0 1 auto; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -489,9 +489,11 @@ html[data-ds-dark-theme] .dshmf-reason { border-top-color: #D1D5DB; }
 
     // ---------------------------------------------------------------------
     // Model families: hard-coded dictionary → id-derived guess → Others.
-    // Families stay flat; Others always sorts last. A family is a BRAND, not a
-    // version: `hy3`, `hy4-preview` and `hy4free` are one `HY` family, not
-    // three, so a version tail never splits a heading.
+    // Families stay flat; Others always sorts last. A family is a BRAND, and
+    // a *registered* brand keeps its GENERATIONS apart: `hy3` is `HY3`,
+    // `hy4-preview`/`hy4free`/`hy4std` are `HY4`, while a bare `hy` is `HY`.
+    // Unregistered brands still collapse their version tail (`acme4-turbo`
+    // and `acme-7b` are one `Acme`). Dictionary families never split.
     // ---------------------------------------------------------------------
     const FAMILY_DICTIONARY = [
       ['DeepSeek', ['deepseek']],
@@ -523,18 +525,21 @@ html[data-ds-dark-theme] .dshmf-reason { border-top-color: #D1D5DB; }
     ])
     const VERSION_ONLY = /^(v|ver|r)?\d+([.-]\d+)*$/i
     /**
-     * A brand token followed by a version tail: `hy3`, `hy4-preview`,
-     * `hy4free`, `qwen2.5`. The family is the brand; the tail is a version,
-     * and a version must never split one brand into several headings —
-     * `hy3` and `hy4free` are the same family.
+     * A brand token plus its version tail: `hy3`, `hy4-preview`, `hy4free`,
+     * `qwen2.5`. Group 1 is the brand, group 2 the leading generation digit(s)
+     * (captured so registered brands can keep generations apart), group 3 the
+     * rest of the variant tail.
      */
-    const BRAND_WITH_VERSION = /^([a-z][a-z]*?)(\d[\w.-]*)$/i
+    const BRAND_WITH_VERSION = /^([a-z][a-z]*?)(\d+)([\w.-]*)$/i
     /**
-     * Brands the versioned rule has to own, mapped to the exact heading they
-     * draw. They sort with the dictionary families instead of after them.
-     * `HY` is the case that prompted this: its ids (`hy3`, `hy4-preview`,
-     * `hy4free`) share no name needle, and the brand is an acronym, so the
-     * generic title-casing would draw it as `Hy`.
+     * Registered brands, mapped to their exact heading casing. Sort with the
+     * dictionary families instead of after them. `HY` is the case that
+     * prompted this: its ids (`hy3`, `hy4-preview`, `hy4free`) share no name
+     * needle, and the brand is an acronym the generic title-casing would draw
+     * as `Hy`. A registered brand's family is `BRAND + generation` when the id
+     * carries a generation digit (so `hy3` → `HY3`, `hy4free` → `HY4`), and
+     * the bare brand otherwise (`hy` → `HY`). Dictionary families are never
+     * split by generation.
      */
     const FAMILY_BRANDS = new Map([['hy', 'HY']])
     const FAMILY_ORDER = [
@@ -543,16 +548,25 @@ html[data-ds-dark-theme] .dshmf-reason { border-top-color: #D1D5DB; }
     ]
 
     /**
+     * Split one versioned id token into its brand / generation / variant tail.
+     * @param {string} token - one lowercased id segment.
+     * @returns {{brand: string, generation: string, variant: string} | null}
+     */
+    function versionParts(token) {
+      const hit = BRAND_WITH_VERSION.exec(token)
+      if (hit === null) return null
+      const brand = hit[1]
+      return brand.length < 2 ? null : { brand, generation: hit[2], variant: hit[3] }
+    }
+
+    /**
      * The brand part of one versioned id token, or '' when the token carries
      * no version tail.
      * @param {string} token - one lowercased id segment.
      * @returns {string} the lowercased brand, or ''.
      */
     function brandOf(token) {
-      const hit = BRAND_WITH_VERSION.exec(token)
-      if (hit === null) return ''
-      const brand = hit[1]
-      return brand.length < 2 ? '' : brand
+      return versionParts(token)?.brand ?? ''
     }
 
     /**
@@ -567,30 +581,94 @@ html[data-ds-dark-theme] .dshmf-reason { border-top-color: #D1D5DB; }
       }
       // Id-derived guess. The provider prefix is dropped, then every remaining
       // segment is checked for a registered brand, so an id that prefixes the
-      // brand with its provider (`codebuddy-hy3`) still lands in `HY`, and a
-      // bare brand id (`hy`) does not fall through to the generic casing.
+      // brand with its provider (`codebuddy-hy3`) still lands in `HY3`, and a
+      // bare brand id (`hy`) resolves to `HY` rather than the generic casing.
       const segments = String(model.id).split(/[/:]/).pop().split(/[-_.]/).filter(Boolean)
       if (segments.length === 0) return OTHERS
       for (const segment of segments) {
         const lower = segment.toLowerCase()
-        const known = FAMILY_BRANDS.get(lower) ?? FAMILY_BRANDS.get(brandOf(lower))
-        if (known !== undefined) return known
+        const parts = versionParts(lower)
+        const known = FAMILY_BRANDS.get(lower)
+          ?? FAMILY_BRANDS.get(parts?.brand ?? '')
+        if (known !== undefined) {
+          // A registered brand keeps its generations distinct: hy3 → HY3,
+          // hy4free → HY4. A bare brand with no generation stays `HY`.
+          return parts === null ? known : `${known}${parts.generation}`
+        }
       }
       const token = segments[0].toLowerCase()
       if (token.length < 2 || VERSION_ONLY.test(token)) return OTHERS
       const alias = FAMILY_ALIASES.get(token)
       if (alias !== undefined) return alias
-      // A versioned segment collapses onto its brand, so `acme4-turbo` and
-      // `acme-7b` share one heading instead of two.
+      // An unregistered versioned segment collapses onto its brand, so
+      // `acme4-turbo` and `acme-7b` share one heading instead of two.
       const brand = brandOf(token)
       const stem = brand === '' ? token : brand
       return stem.charAt(0).toUpperCase() + stem.slice(1)
     }
 
+    /**
+     * Sort rank of a family. Registered-brand generations (`HY3`, `HY4`, …)
+     * rank with their bare brand (`HY`) and order by generation number, so a
+     * new generation lands next to its siblings instead of at the end.
+     */
     function familyRank(family) {
       if (family === OTHERS) return Number.MAX_SAFE_INTEGER
       const known = FAMILY_ORDER.indexOf(family)
-      return known === -1 ? FAMILY_ORDER.length : known
+      if (known !== -1) return known
+      for (const [brand, heading] of FAMILY_BRANDS) {
+        if (!family.startsWith(heading) || family.length === heading.length) continue
+        const generation = family.slice(heading.length)
+        if (!/^\d+$/.test(generation)) continue
+        return FAMILY_ORDER.indexOf(heading) + Number(generation) / 1000
+      }
+      return FAMILY_ORDER.length
+    }
+
+    /**
+     * A short variant label taken from a model id, used only to tell several
+     * models of ONE provider inside ONE family apart. The family prefix is
+     * stripped from every id segment, so hy4free → "free", hy4std → "std",
+     * hy4-preview → "preview", hy4flash-exp1 → "flash exp1", hy3-x → "x",
+     * and a bare hy3 → "". Pure version numbers are dropped. Returns '' when
+     * the id carries nothing beyond the family heading itself.
+     * @param {{id: string}} model - catalog entry.
+     * @param {string} family - the resolved family heading.
+     * @returns {string} a short variant label, or ''.
+     */
+    function idVariantOf(model, family) {
+      const familyLower = family.toLowerCase()
+      const segments = String(model.id).split(/[/:]/).pop().split(/[-_.]/).filter(Boolean)
+      const words = []
+      for (const raw of segments) {
+        const segment = raw.toLowerCase()
+        // Remove the family heading from inside a glued segment: hy4free →
+        // free, hy4flash → flash. A segment equal to the family drops to ''.
+        let word = segment.startsWith(familyLower) ? segment.slice(familyLower.length) : segment
+        word = word.replace(/^[-._]+/, '')
+        if (word === '' || /^\d+(\.\d+)?$/.test(word)) continue
+        words.push(...word.split(/[-._]+/).filter(Boolean))
+      }
+      return words.filter(word => !/^\d+$/.test(word)).join(' ')
+    }
+
+    /**
+     * The distinguishing part of one model for a family-grouped row: the id's
+     * variant tail first, then any catalog-name words that are not just the
+     * family heading or a bare version number. Returns '' when the model adds
+     * nothing beyond what the family heading already says.
+     * @param {{id: string, name: string}} model - catalog entry.
+     * @param {string} family - the resolved family heading.
+     * @returns {string} a short, non-family supplement; possibly ''.
+     */
+    function rowVariantOf(model, family) {
+      const fromId = idVariantOf(model, family)
+      if (fromId !== '') return fromId
+      const familyWords = new Set(family.toLowerCase().split(/[\s-]+/).filter(Boolean))
+      return String(model.name ?? '').split(/[\s._-]+/).filter(word => {
+        const lower = word.toLowerCase()
+        return word !== '' && !familyWords.has(lower) && !/^\d+(\.\d+)?$/.test(lower)
+      }).join(' ')
     }
 
     // ---------------------------------------------------------------------
@@ -939,6 +1017,37 @@ html[data-ds-dark-theme] .dshmf-reason { border-top-color: #D1D5DB; }
           || left.title.localeCompare(right.title))
         for (const family of families) {
           family.scored.sort((left, right) => left.score - right.score)
+          // Under family grouping each row's primary text is its provider and
+          // the family name is NOT repeated (the heading already says it). Only
+          // when ONE provider offers several models in this family do the rows
+          // need a short distinguishing tail, so the same provider name is not
+          // printed twice with no way to tell the models apart.
+          const byProvider = new Map()
+          for (const item of family.scored) {
+            const list = byProvider.get(item.entry.providerId) ?? []
+            list.push(item)
+            byProvider.set(item.entry.providerId, list)
+          }
+          for (const list of byProvider.values()) {
+            if (list.length <= 1) continue
+            const used = new Map()
+            for (const item of list) {
+              // An empty variant is intentional: the plain/base model of this
+              // family carries no tag at all. Only a real collision (two rows
+              // with the same non-empty variant, or two rows both empty) needs
+              // a distinguishing fallback — the model id, which is unique.
+              const variant = rowVariantOf(item.entry.model, family.title)
+              item.entry.rowVariant = variant
+              used.set(variant, (used.get(variant) ?? 0) + 1)
+            }
+            if ([...used.values()].some(count => count > 1)) {
+              for (const item of list) {
+                if (used.get(item.entry.rowVariant) > 1) {
+                  item.entry.rowVariant = String(item.entry.model.id ?? '')
+                }
+              }
+            }
+          }
           out.push({ key: family.key, title: family.title, models: family.scored.map(item => item.entry) })
         }
         return out
@@ -1197,36 +1306,43 @@ html[data-ds-dark-theme] .dshmf-reason { border-top-color: #D1D5DB; }
       }
 
       const renderRow = entry => {
-        const { model, providerId, providerLabel } = entry
+        const { model, providerId, providerLabel, rowVariant } = entry
         const selected = state.current?.provider === providerId && state.current.model === model.id
         const pendingThis = state.pending?.provider === providerId && state.pending.model === model.id
         const badge = badgeOf(model)
         /**
-         * In family grouping a heading says what the models ARE, not where
-         * they come from — the same family can hold models from several
-         * providers — so each row names its own provider. In provider grouping
-         * the heading already is the provider, and repeating it per row would
-         * be pure noise.
+         * Under family grouping the heading already says what the models ARE,
+         * so the family name is not repeated in a row. The row's primary text
+         * is the PROVIDER — the one thing a heading cannot tell you when a
+         * family spans providers. Only when one provider offers several models
+         * in this family does a short variant tail differentiate them. Under
+         * provider grouping the heading IS the provider, so the primary text
+         * stays the model name and no secondary tag is drawn.
          */
-        const showProvider = grouping === 'family'
-          && typeof providerLabel === 'string' && providerLabel !== ''
+        const familyMode = grouping === 'family'
+        const primary = familyMode && typeof providerLabel === 'string' && providerLabel !== ''
+          ? providerLabel : String(model.name ?? '')
+        const showVariant = familyMode && typeof rowVariant === 'string' && rowVariant !== ''
         const rowTitle = model.description === undefined
-          ? model.name
-          : `${model.name}\n${model.description}`
+          ? `${model.name}\n${providerLabel}`
+          : `${model.name}\n${model.description}\n${providerLabel}`
         return h('button', {
           key: `${providerId}/${model.id}`,
           type: 'button',
           className: 'dshmf-row',
           'aria-pressed': selected,
-          title: showProvider ? `${rowTitle}\n${providerLabel}` : rowTitle,
+          title: rowTitle,
           disabled: busy,
           onClick: () => { chooseModel(providerId, model) },
         },
-          h('span', { className: 'dshmf-rowName' }, ...nameRuns(model.name)),
-          showProvider ? h('span', {
+          // `nameRuns` (xN multiplier markers) is applied to whatever the
+          // primary text is: the model name under provider grouping, or the
+          // provider name under family grouping.
+          h('span', { className: 'dshmf-rowName' }, ...nameRuns(primary)),
+          showVariant ? h('span', {
             className: 'dshmf-rowProvider',
-            title: providerLabel,
-          }, providerLabel) : null,
+            title: rowVariant,
+          }, rowVariant) : null,
           badge === null ? null : h('span', {
             className: 'dshmf-badge',
             'data-tone': badge.tone,
@@ -1512,9 +1628,10 @@ html[data-ds-dark-theme] .dshmf-reason { border-top-color: #D1D5DB; }
               ),
 
             // ---- measurement probe (never painted). It mirrors a family-
-            // grouped row (name + provider tag), the widest row shape, so the
-            // measured row height covers every mode. It carries no trailing
-            // tail: the selected row no longer reserves one.
+            // grouped row (provider primary + variant tag), the widest row
+            // shape, so the measured row height covers every mode. It carries
+            // no trailing tail: the selected row is a filled band now and the
+            // spinner is only drawn for a pending selection.
             h('div', { className: 'dshmf-probe', 'aria-hidden': 'true' },
               h('div', { ref: probeHeadRef, className: 'dshmf-groupTitle' }, 'X'),
               h('div', { ref: probeRowRef, className: 'dshmf-row' },
@@ -1623,7 +1740,7 @@ html[data-ds-dark-theme] .dshmf-reason { border-top-color: #D1D5DB; }
       // Pure layout and grouping derivations plus the component itself,
       // exposed for `node --test` so grouping, filtering and the column
       // algorithm are pinned without a browser. The shell never reads this key.
-      __test: { familyOf, familyRank, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns },
+      __test: { familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns },
       __component: ModelFlatMap,
       __seat: Seat,
       apply(ctx) {

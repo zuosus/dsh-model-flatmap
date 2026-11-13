@@ -253,7 +253,7 @@ function gridRowNameMarks(tree) {
   return findAll(grid, node => hasClass(node, 'dshmf-rowNameMark')).map(textOf)
 }
 
-/** The model name of each row, in grid order. */
+/** The primary text of each row, in grid order. */
 function gridRowNames(tree) {
   const grid = findAll(tree, node => hasClass(node, 'dshmf-grid'))[0]
   return grid === undefined
@@ -261,7 +261,7 @@ function gridRowNames(tree) {
     : findAll(grid, node => hasClass(node, 'dshmf-rowName')).map(textOf)
 }
 
-/** The provider tag of each row, in grid order; `null` where a row has none. */
+/** The secondary text of each row, in grid order; `null` where a row has none. */
 function gridRowProviders(tree) {
   const grid = findAll(tree, node => hasClass(node, 'dshmf-grid'))[0]
   if (grid === undefined) return []
@@ -269,6 +269,14 @@ function gridRowProviders(tree) {
     const tag = findAll(row, node => hasClass(node, 'dshmf-rowProvider'))[0]
     return tag === undefined ? null : textOf(tag)
   })
+}
+
+/** The tooltip of each row, in grid order. */
+function gridRowTitles(tree) {
+  const grid = findAll(tree, node => hasClass(node, 'dshmf-grid'))[0]
+  return grid === undefined
+    ? []
+    : findAll(grid, node => hasClass(node, 'dshmf-row')).map(row => row.props.title)
 }
 
 /** Switch the open panel to family grouping and return the new tree. */
@@ -400,39 +408,45 @@ test('family grouping regroups the same models and sorts Others last', () => {
   assert.equal(gridRows(tree).length, 6)
 })
 
-test('a family-grouped row names the provider it comes from', () => {
-  // A family heading says what the models ARE; the same family can hold models
-  // from several providers, so each row has to name its own provider.
+test('family grouping makes the provider the primary row text', () => {
+  // The heading says what the models ARE, so the family name is not repeated
+  // in a row. The row's primary text is the provider, and the full model name
+  // stays in the tooltip.
   runtime.reset()
   const { props } = makeProps(catalogState())
   let tree = runtime.render(bundle.__component, props)
   findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
   tree = runtime.render(bundle.__component, props)
   tree = switchToFamily(tree, props)
-  assert.deepEqual(gridRowProviders(tree), [
+  assert.deepEqual(gridRowNames(tree), [
     'provider.account', 'provider.account', // DeepSeek family
     'Third Party', 'Third Party', 'Third Party', 'Third Party',
   ])
-  // The tag is secondary text, not part of the model name.
-  assert.deepEqual(gridRowNames(tree), [
-    'DeepSeek Chat', 'DeepSeek Reasoner',
-    'Grok 4', 'GLM 4.6', 'Kimi K2', 'Mystery',
-  ])
+  // The family name never appears as row text; the model name is in the tooltip.
+  for (const title of gridRowTitles(tree)) {
+    assert.match(title, /DeepSeek|Grok|GLM|Kimi|Mystery|provider\.account|Third Party/)
+  }
 })
 
-test('provider grouping draws no per-row provider tag', () => {
-  // The heading already is the provider, so repeating it on every row is noise.
+test('provider grouping keeps the model name as the primary text', () => {
+  // The heading already IS the provider, so the row text stays the model name
+  // and no secondary variant tag is drawn.
   runtime.reset()
   const { props } = makeProps(catalogState())
   let tree = runtime.render(bundle.__component, props)
   findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
   tree = runtime.render(bundle.__component, props)
+  assert.deepEqual(gridRowNames(tree), [
+    'DeepSeek Chat', 'DeepSeek Reasoner',
+    'Grok 4', 'GLM 4.6', 'Kimi K2', 'Mystery',
+  ])
   assert.deepEqual(gridRowProviders(tree), [null, null, null, null, null, null])
 })
 
-test('a family spanning two providers tags each row with its own provider', () => {
-  // One `HY` family, three ids that differ only by version, offered by two
-  // providers: one heading, one row per model, each row naming its provider.
+test('family grouping keeps generations apart and never repeats the family name', () => {
+  // hy3 / hy3-x are HY3; hy4-preview / hy4free / hy4std are HY4. The old
+  // decision merged them all into HY — that was a mistake. Each row's primary
+  // text is its provider, and no row repeats the family name as its text.
   const state = catalogState({
     current: null,
     groups: [
@@ -440,14 +454,16 @@ test('a family spanning two providers tags each row with its own provider', () =
         id: 'codebuddy-cli',
         name: 'CodeBuddy CLI',
         models: [
-          { id: 'hy3', name: 'hy3' },
-          { id: 'hy4-preview', name: 'hy4-preview' },
+          { id: 'hy3', name: 'Hy3' },
+          { id: 'hy3-x', name: 'Hy3' },
+          { id: 'hy4-preview', name: 'Hy4' },
+          { id: 'hy4std', name: 'Hy4' },
         ],
       },
       {
         id: 'workbuddy-global',
         name: 'WorkBuddy Global',
-        models: [{ id: 'hy4free', name: 'hy4free' }],
+        models: [{ id: 'hy4free', name: 'Hy4' }],
       },
     ],
   })
@@ -457,14 +473,22 @@ test('a family spanning two providers tags each row with its own provider', () =
   findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
   tree = runtime.render(bundle.__component, props)
   tree = switchToFamily(tree, props)
-  // The three versions share ONE heading.
-  assert.deepEqual(gridTitles(tree).map(textOf), ['HY'])
-  assert.deepEqual(gridRowNames(tree), ['hy3', 'hy4-preview', 'hy4free'])
-  assert.deepEqual(gridRowProviders(tree),
-    ['CodeBuddy CLI', 'CodeBuddy CLI', 'WorkBuddy Global'])
+  assert.deepEqual(gridTitles(tree).map(textOf), ['HY3', 'HY4'])
+  // Every row's primary text is its provider; the family name is not repeated.
+  assert.deepEqual(gridRowNames(tree), [
+    'CodeBuddy CLI', 'CodeBuddy CLI', 'CodeBuddy CLI', 'CodeBuddy CLI',
+    'WorkBuddy Global',
+  ])
+  for (const name of gridRowNames(tree)) {
+    assert.doesNotMatch(name, /^HY[34]?$/, 'no family name as row text')
+  }
+  // One provider offers several models per family, so those rows carry a short
+  // variant tail; the plain base model (hy3) and the lone WorkBuddy row need
+  // none (null = no tag), which is exactly the "smart, flexible" change.
+  assert.deepEqual(gridRowProviders(tree), [null, 'x', 'preview', 'std', null])
 })
 
-test('a localized provider name is resolved once for heading and row tag', () => {
+test('a localized provider name is resolved once for heading and row text', () => {
   // Catalog provider names arrive localized; both faces of the panel have to
   // draw the resolved label, not the raw `{ zh, en }` record.
   const state = catalogState({
@@ -483,7 +507,7 @@ test('a localized provider name is resolved once for heading and row tag', () =>
   assert.deepEqual(gridTitles(tree).map(textOf), ['Doubao'])
   tree = switchToFamily(tree, props)
   assert.deepEqual(gridTitles(tree).map(textOf), ['Doubao'])
-  assert.deepEqual(gridRowProviders(tree), ['Doubao'])
+  assert.deepEqual(gridRowNames(tree), ['Doubao'])
 })
 
 test('search filters across providers and hides empty group titles', () => {
@@ -651,9 +675,11 @@ test('a provider-wide hit also widens family grouping', () => {
   findAll(tree, node => node.props?.role === 'searchbox')[0]
     .props.onChange({ target: { value: 'dou' } })
   tree = runtime.render(bundle.__component, props)
-  // Grouping changes the headings only; the same four models stay visible.
-  assert.deepEqual(gridRowNames(tree).sort(),
-    ['Ark Lite', 'Doubao 1.5 Pro', 'Doubao Seed 1.6', 'Skylark V3'])
+  // Grouping changes the headings and makes each row name its provider; the
+  // same four models stay visible, so every row's primary text is the provider.
+  assert.deepEqual(gridRowNames(tree), [
+    '豆包(doubao)', '豆包(doubao)', '豆包(doubao)', '豆包(doubao)',
+  ])
   const families = gridTitles(tree).map(textOf)
   assert.ok(families.includes('Doubao'), 'the dictionary family is used')
   assert.ok(families.includes('Skylark'), 'an uncovered id still gets its own family')
