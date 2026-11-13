@@ -273,6 +273,58 @@ window.__ModuleLoader__.load({
       return 2
     }
 
+    /**
+     * Rank of a model that is shown because its PROVIDER matched the query
+     * rather than its own name. Sorts after every name hit; the sort is stable,
+     * so models pulled in this way keep their catalog order.
+     */
+    const PROVIDER_MATCH = 3
+
+    /**
+     * Every searchable face of a provider-authored text: a plain string is one
+     * face, a localized object contributes each language it carries. Provider
+     * names arrive localized (`{ zh: '豆包(doubao)', en: 'Doubao' }`), so the
+     * search has to see all of them — matching only the English face would make
+     * the Chinese name unsearchable.
+     * @param {unknown} value - a string, or a localized record of strings.
+     * @returns {string[]} lowercased, non-empty faces.
+     */
+    function textFaces(value) {
+      if (typeof value === 'string') return [value.toLowerCase()].filter(text => text !== '')
+      if (value === null || typeof value !== 'object') return []
+      const faces = []
+      for (const face of Object.values(value)) {
+        if (typeof face !== 'string') continue
+        const text = face.toLowerCase()
+        if (text !== '') faces.push(text)
+      }
+      return faces
+    }
+
+    /**
+     * Match the query against the provider itself — its id, its catalog name,
+     * and the label its section draws. A hit means "this vendor was asked for",
+     * so the whole catalog of that provider is listed: typing `dou` finds the
+     * `豆包(doubao)` provider and every model under it, including the ones whose
+     * own names never contain the query.
+     *
+     * Only prefix and substring are considered. A subsequence pass — which
+     * `matchScore` allows for model names — would let a two-letter query light
+     * up every provider in the directory, which is noise rather than a match.
+     * @param {{id?: string, name?: unknown}} group - one provider entry.
+     * @param {string} query - raw search text.
+     * @param {unknown} [title] - the label this provider's section draws.
+     * @returns {0|1|null} 0 for a prefix hit, 1 for a substring hit, else null.
+     */
+    function providerScore(group, query, title) {
+      const q = query.trim().toLowerCase()
+      if (q === '') return null
+      const texts = [...textFaces(group?.id), ...textFaces(group?.name), ...textFaces(title)]
+      if (texts.some(text => text.startsWith(q))) return 0
+      if (texts.some(text => text.includes(q))) return 1
+      return null
+    }
+
     // ---------------------------------------------------------------------
     // Model families: hard-coded dictionary → id-derived guess → Others.
     // Families stay flat; Others always sorts last.
@@ -606,11 +658,26 @@ window.__ModuleLoader__.load({
       /** Provider or family sections, search-filtered; empty groups never appear. */
       const sections = useMemo(() => derive('grouping models', () => {
         const out = []
+        /**
+         * A provider whose own name or id matches the query keeps its whole
+         * catalog: `dou` shows the `豆包(doubao)` provider with every model it
+         * offers. Models matched by their own name still rank first, so a
+         * provider-wide hit only widens the result, never reorders it.
+         */
+        const providerHitOf = group => providerScore(group, query,
+          group.id === 'deepseek-account' ? t('provider.account') : group.name)
+        /** One model's rank, or null when neither it nor its provider matched. */
+        const scoreOf = (model, providerHit) => {
+          const byName = matchScore(model.name, query)
+          if (byName !== null) return byName
+          return providerHit ? PROVIDER_MATCH : null
+        }
         if (grouping === 'provider') {
           for (const group of groups) {
+            const providerHit = providerHitOf(group) !== null
             const scored = []
             for (const model of group.models) {
-              const score = matchScore(model.name, query)
+              const score = scoreOf(model, providerHit)
               if (score !== null) scored.push({ entry: { model, providerId: group.id }, score })
             }
             if (scored.length === 0) continue
@@ -625,8 +692,9 @@ window.__ModuleLoader__.load({
         }
         const buckets = new Map()
         for (const group of groups) {
+          const providerHit = providerHitOf(group) !== null
           for (const model of group.models) {
-            const score = matchScore(model.name, query)
+            const score = scoreOf(model, providerHit)
             if (score === null) continue
             const family = familyOf(model)
             let bucket = buckets.get(family)
@@ -1245,7 +1313,7 @@ window.__ModuleLoader__.load({
       // Pure layout and grouping derivations plus the component itself,
       // exposed for `node --test` so grouping, filtering and the column
       // algorithm are pinned without a browser. The shell never reads this key.
-      __test: { familyOf, familyRank, matchScore, buildUnits, columnHeight, packColumns, planColumns },
+      __test: { familyOf, familyRank, matchScore, providerScore, buildUnits, columnHeight, packColumns, planColumns },
       __component: ModelFlatMap,
       __seat: Seat,
       apply(ctx) {

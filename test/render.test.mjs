@@ -245,6 +245,14 @@ function gridTitles(tree) {
   return grid === undefined ? [] : findAll(grid, node => hasClass(node, 'dshmf-groupTitle'))
 }
 
+/** The model name of each row, in grid order. */
+function gridRowNames(tree) {
+  const grid = findAll(tree, node => hasClass(node, 'dshmf-grid'))[0]
+  return grid === undefined
+    ? []
+    : findAll(grid, node => hasClass(node, 'dshmf-rowName')).map(textOf)
+}
+
 function textOf(node) {
   if (node === null || node === undefined) return ''
   if (typeof node === 'string' || typeof node === 'number') return String(node)
@@ -337,6 +345,128 @@ test('search filters across providers and hides empty group titles', () => {
   tree = runtime.render(bundle.__component, props)
   assert.deepEqual(gridTitles(tree).map(textOf), ['Third Party'])
   assert.equal(gridRows(tree).length, 1)
+})
+
+/**
+ * A catalog whose doubao provider holds models that mostly do NOT contain the
+ * provider's own name, which is what a provider-wide match has to reveal.
+ */
+function providerState() {
+  return catalogState({
+    current: null,
+    groups: [
+      {
+        id: 'deepseek-account',
+        name: 'DeepSeek Account',
+        models: [{ id: 'deepseek-chat', name: 'DeepSeek Chat' }],
+      },
+      {
+        id: 'doubao',
+        name: '豆包(doubao)',
+        models: [
+          { id: 'doubao-seed-1.6', name: 'Doubao Seed 1.6' },
+          { id: 'doubao-1.5-pro', name: 'Doubao 1.5 Pro' },
+          { id: 'skylark-v3', name: 'Skylark V3' },
+          { id: 'ark-lite', name: 'Ark Lite' },
+        ],
+      },
+      {
+        id: 'third-party',
+        name: 'Third Party',
+        models: [{ id: 'grok-4', name: 'Grok 4' }],
+      },
+    ],
+  })
+}
+
+/** Open the panel on a fresh state and type into the search box. */
+function openAndSearch(state, query) {
+  runtime.reset()
+  const { props } = makeProps(state)
+  let tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => node.props?.role === 'searchbox')[0]
+    .props.onChange({ target: { value: query } })
+  tree = runtime.render(bundle.__component, props)
+  return { tree, props }
+}
+
+test('a provider-name hit reveals every model that provider offers', () => {
+  // `dou` hits the provider id, so models whose own names never contain it
+  // (Skylark V3, Ark Lite) still appear — the whole catalog, not just matches.
+  const { tree } = openAndSearch(providerState(), 'dou')
+  assert.deepEqual(gridTitles(tree).map(textOf), ['豆包(doubao)'])
+  assert.deepEqual(gridRowNames(tree).sort(),
+    ['Ark Lite', 'Doubao 1.5 Pro', 'Doubao Seed 1.6', 'Skylark V3'])
+})
+
+test('a provider matched by any face of its localized name still widens', () => {
+  // The real catalog localizes provider names, so `name` may be `{ zh, en }`
+  // rather than a string; every face has to be searchable, not just English.
+  const state = catalogState({
+    current: null,
+    groups: [{
+      id: 'vendor-x',
+      name: { zh: '豆包(doubao)', en: 'Doubao' },
+      models: [{ id: 'unrelated', name: 'Unrelated' }],
+    }],
+  })
+  assert.deepEqual(gridRowNames(openAndSearch(state, 'dou').tree), ['Unrelated'])
+  assert.deepEqual(gridRowNames(openAndSearch(state, '豆包').tree), ['Unrelated'])
+  assert.deepEqual(gridRowNames(openAndSearch(state, 'bao').tree), ['Unrelated'])
+  assert.deepEqual(gridRowNames(openAndSearch(state, 'zzz').tree), [])
+})
+
+test('name hits still rank above models pulled in by their provider', () => {
+  // `skylark` matches no provider, so only that one model shows.
+  const byName = openAndSearch(providerState(), 'skylark')
+  assert.deepEqual(gridRowNames(byName.tree), ['Skylark V3'])
+
+  // `dou` also appears in two model names; they sort ahead of the rest of the
+  // provider's catalog, which arrives in its original order behind them.
+  const mixed = openAndSearch(providerState(), 'dou')
+  const names = gridRowNames(mixed.tree)
+  assert.deepEqual(names.slice(0, 2).sort(), ['Doubao 1.5 Pro', 'Doubao Seed 1.6'])
+  assert.deepEqual(names.slice(2), ['Skylark V3', 'Ark Lite'])
+})
+
+test('a provider-wide hit does not leak into unrelated providers', () => {
+  const { tree } = openAndSearch(providerState(), 'dou')
+  const titles = gridTitles(tree).map(textOf)
+  assert.ok(!titles.includes('Third Party'), 'Grok stays out')
+  assert.ok(!titles.includes('provider.account'), 'the DeepSeek account stays out')
+  assert.ok(!gridRowNames(tree).includes('Grok 4'))
+})
+
+test('an ordered subsequence of a provider name does not pull its catalog in', () => {
+  // `dbao` is a subsequence of `doubao` but neither a prefix nor a substring,
+  // so the provider is not selected wholesale. The two models whose own names
+  // happen to contain it as a subsequence still show on their own merit; the
+  // rest of the catalog (Skylark V3, Ark Lite) stays out.
+  const { tree } = openAndSearch(providerState(), 'dbao')
+  assert.deepEqual(gridRowNames(tree).sort(), ['Doubao 1.5 Pro', 'Doubao Seed 1.6'])
+})
+
+test('a provider-wide hit also widens family grouping', () => {
+  runtime.reset()
+  const { props } = makeProps(providerState())
+  let tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-segBtn'))
+    .find(button => button.props.title === 'group.family').props.onClick()
+  tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => node.props?.role === 'searchbox')[0]
+    .props.onChange({ target: { value: 'dou' } })
+  tree = runtime.render(bundle.__component, props)
+  // Grouping changes the headings only; the same four models stay visible.
+  assert.deepEqual(gridRowNames(tree).sort(),
+    ['Ark Lite', 'Doubao 1.5 Pro', 'Doubao Seed 1.6', 'Skylark V3'])
+  const families = gridTitles(tree).map(textOf)
+  assert.ok(families.includes('Doubao'), 'the dictionary family is used')
+  assert.ok(families.includes('Skylark'), 'an uncovered id still gets its own family')
+  assert.ok(!families.includes('provider.account'))
 })
 
 test('a search with no hits shows the no-match text and no group titles', () => {

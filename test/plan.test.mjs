@@ -55,7 +55,7 @@ function materialize() {
 }
 
 const bundle = materialize()
-const { familyOf, matchScore, buildUnits, columnHeight, planColumns, packColumns } = bundle.__test
+const { familyOf, matchScore, providerScore, buildUnits, columnHeight, planColumns, packColumns } = bundle.__test
 
 test('families come from the dictionary before the id guess', () => {
   assert.equal(familyOf({ id: 'deepseek-chat', name: 'DeepSeek Chat' }), 'DeepSeek')
@@ -82,6 +82,30 @@ test('search ranks prefix above substring above subsequence, and rejects misses'
   assert.equal(matchScore('DeepSeek Chat', 'dsc'), 2)
   assert.equal(matchScore('DeepSeek Chat', 'zzz'), null)
   assert.equal(matchScore('anything', '   '), 0)
+})
+
+test('a provider matches on any face of its id, name, or drawn label', () => {
+  const doubao = { id: 'doubao', name: { zh: '豆包', en: 'Doubao' } }
+  // `dou` is a prefix of the id, so the provider answers even before its label.
+  assert.equal(providerScore(doubao, 'dou'), 0)
+  assert.equal(providerScore(doubao, 'DOU'), 0)
+  // The catalog name is localized; the English face still matches.
+  assert.equal(providerScore(doubao, 'doubao'), 0)
+  // A substring hit inside the id ranks below a prefix hit.
+  assert.equal(providerScore(doubao, 'ub'), 1)
+  // The label the section draws is searched too, so the Chinese name works.
+  assert.equal(providerScore({ id: 'doubao', name: 'Doubao' }, '豆', '豆包(doubao)'), 0)
+  assert.equal(providerScore({ id: 'doubao', name: 'Doubao' }, 'bao'), 1)
+  assert.equal(providerScore(doubao, 'zzz'), null)
+  assert.equal(providerScore(doubao, '   '), null)
+  assert.equal(providerScore(undefined, 'dou'), null)
+})
+
+test('a provider hit never fires on an ordered subsequence', () => {
+  // `dbao` is a subsequence of `doubao` but neither a prefix nor a substring,
+  // so it must not drag a whole provider into the grid.
+  assert.equal(providerScore({ id: 'doubao', name: 'Doubao' }, 'dbao'), null)
+  assert.equal(matchScore('Doubao Seed', 'dbao'), 2, 'model names still allow it')
 })
 
 const entry = (model, providerId) => ({ model, providerId })
