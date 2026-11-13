@@ -55,7 +55,7 @@ function materialize() {
 }
 
 const bundle = materialize()
-const { familyOf, matchScore, providerScore, buildUnits, columnHeight, planColumns, packColumns } = bundle.__test
+const { familyOf, matchScore, buildUnits, columnHeight, planColumns, packColumns } = bundle.__test
 
 test('families come from the dictionary before the id guess', () => {
   assert.equal(familyOf({ id: 'deepseek-chat', name: 'DeepSeek Chat' }), 'DeepSeek')

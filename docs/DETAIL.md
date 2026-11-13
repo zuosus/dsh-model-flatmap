@@ -12,9 +12,7 @@ and the agent teamwork switch are all visible at once.
 - **Global search.** The search box filters across every provider and every
   family. Groups that end up empty are not rendered, so no stray headings
   remain. Prefix matches rank first, then substring matches, then ordered
-  character matches. A query that hits a *provider's* own name or id — `dou`
-  for `豆包(doubao)` — selects that provider as a whole: every model it offers
-  stays in the grid, listed after the models matched by their own name.
+  character matches.
 - **Two grouping modes.** A segment control switches the grid between
   *By provider* and *By family*. Grouping and search are independent: the
   segment only changes how the filtered result is organised.

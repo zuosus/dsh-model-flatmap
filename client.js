@@ -273,35 +273,6 @@ window.__ModuleLoader__.load({
       return 2
     }
 
-    /**
-     * Rank of a model shown because its PROVIDER matched the query rather than
-     * its own name. Below every name hit, and stable inside that band, so a
-     * provider pulled in as a whole keeps its catalog order.
-     */
-    const PROVIDER_MATCH = 3
-
-    /**
-     * Match the query against the provider itself — its id, its catalog name,
-     * or the label the section draws. A hit means "show this provider's whole
-     * catalog", which is how a vendor is found by `dou` for `豆包(doubao)`.
-     * Prefix beats substring; there is no subsequence pass here, because a two
-     * letter query would otherwise light up every provider in the directory.
-     * @param {{id?: string, name?: string}} group - one provider entry.
-     * @param {string} query - raw search text.
-     * @param {unknown} [title] - the label this provider's section draws.
-     * @returns {0|1|null} 0 for a prefix hit, 1 for a substring hit, else null.
-     */
-    function providerScore(group, query, title) {
-      const q = query.trim().toLowerCase()
-      if (q === '') return null
-      const texts = [group?.id, group?.name, title]
-        .map(value => fallbackText(value).toLowerCase())
-        .filter(text => text !== '')
-      if (texts.some(text => text.startsWith(q))) return 0
-      if (texts.some(text => text.includes(q))) return 1
-      return null
-    }
-
     // ---------------------------------------------------------------------
     // Model families: hard-coded dictionary → id-derived guess → Others.
     // Families stay flat; Others always sorts last.
@@ -635,20 +606,12 @@ window.__ModuleLoader__.load({
       /** Provider or family sections, search-filtered; empty groups never appear. */
       const sections = useMemo(() => derive('grouping models', () => {
         const out = []
-        /** A provider's own hit pulls in every model it offers, name-match or not. */
-        const providerHitOf = group => providerScore(group, query,
-          group.id === 'deepseek-account' ? t('provider.account') : group.name)
         if (grouping === 'provider') {
           for (const group of groups) {
-            const providerHit = providerHitOf(group) !== null
             const scored = []
             for (const model of group.models) {
               const score = matchScore(model.name, query)
-              if (score !== null) {
-                scored.push({ entry: { model, providerId: group.id }, score })
-              } else if (providerHit) {
-                scored.push({ entry: { model, providerId: group.id }, score: PROVIDER_MATCH })
-              }
+              if (score !== null) scored.push({ entry: { model, providerId: group.id }, score })
             }
             if (scored.length === 0) continue
             scored.sort((left, right) => left.score - right.score)
@@ -662,13 +625,9 @@ window.__ModuleLoader__.load({
         }
         const buckets = new Map()
         for (const group of groups) {
-          const providerHit = providerHitOf(group) !== null
           for (const model of group.models) {
-            let score = matchScore(model.name, query)
-            if (score === null) {
-              if (!providerHit) continue
-              score = PROVIDER_MATCH
-            }
+            const score = matchScore(model.name, query)
+            if (score === null) continue
             const family = familyOf(model)
             let bucket = buckets.get(family)
             if (bucket === undefined) {
@@ -1286,7 +1245,7 @@ window.__ModuleLoader__.load({
       // Pure layout and grouping derivations plus the component itself,
       // exposed for `node --test` so grouping, filtering and the column
       // algorithm are pinned without a browser. The shell never reads this key.
-      __test: { familyOf, familyRank, matchScore, providerScore, buildUnits, columnHeight, packColumns, planColumns },
+      __test: { familyOf, familyRank, matchScore, buildUnits, columnHeight, packColumns, planColumns },
       __component: ModelFlatMap,
       __seat: Seat,
       apply(ctx) {
