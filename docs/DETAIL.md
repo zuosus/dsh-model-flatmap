@@ -93,6 +93,13 @@ material as the host's own menus (menu fill, backdrop blur, prominent
 elevation, large radius), and hover, focus, selected, and disabled states follow
 the shipped picker's visual language.
 
+Each provider / family label is deliberately set apart from the model rows
+beneath it: it draws as a filled, rounded band using the host's own
+`--dsw-alias-menu-group-header-fill` token (with `--dsw-alias-bg-module-platform`
+as a fallback for older hosts), in smaller but bold type with a stronger label
+colour. The model rows stay 13 px regular text on a transparent background, so
+the band reads as a section header rather than another selectable row.
+
 ## Limitations
 
 - The panel replaces the composer seat only; the `/model` popup is untouched.

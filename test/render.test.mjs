@@ -909,3 +909,31 @@ test('the registered component is the boundary-wrapped seat', () => {
   const seat = registered.find(entry => entry.registration?.name === 'conversation.input.model')
   assert.equal(seat.component, bundle.__seat, 'the boundary wrapper is what the slot holds')
 })
+
+// ---------------------------------------------------------------------------
+// Provider / family labels must be visually distinct from model rows: a filled
+// band with smaller, bold type, using host theme tokens (no hard-coded colour).
+// ---------------------------------------------------------------------------
+test('the group-title label is a distinct filled band, not a plain row-like caption', () => {
+  const css = source.match(/const CSS = `([\s\S]*?)`/)[1]
+  const title = css.match(/\.dshmf-groupTitle \{([\s\S]*?)\}/)[1]
+  const row = css.match(/\.dshmf-row \{([\s\S]*?)\}/)[1]
+  const prop = (block, name) => {
+    const hit = block.match(new RegExp(`${name}:\\s*([^;]+);`))
+    return hit === null ? undefined : hit[1].trim()
+  }
+  const size = value => Number.parseFloat(value, 10)
+
+  // A real background, with a theme-token fallback — never a hard-coded colour.
+  assert.match(prop(title, 'background'), /menu-group-header-fill/, 'uses the host group-header fill token')
+  assert.match(prop(title, 'background'), /bg-module-platform/, 'keeps a token fallback for older hosts')
+  assert.doesNotMatch(prop(title, 'background'), /#[0-9a-f]|rgba?\(/i, 'no hard-coded colour value')
+  assert.match(prop(title, 'border-radius'), /dsw-radius/, 'rounded corners come from a radius token')
+
+  // Smaller than the row, but bold — clearly a label, not model-row text.
+  assert.ok(size(prop(title, 'font-size')) < size(prop(row, 'font-size')),
+    'label font is smaller than the model row font (13px)')
+  assert.ok(Number(prop(title, 'font-weight')) >= 600,
+    'label is bold while the row stays regular (400)')
+  assert.ok(Number(prop(row, 'font-weight')) < 600, 'model row keeps regular weight')
+})

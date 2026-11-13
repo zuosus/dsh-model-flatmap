@@ -121,9 +121,18 @@ window.__ModuleLoader__.load({
 /* The only scrolling region. */
 .dshmf-grid { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; display: grid; align-items: start; }
 .dshmf-col { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+/* Provider / family label: a filled, rounded band that reads as a section
+   header, clearly separated from the model rows below it. The host's own
+   group-header fill keeps it legible in both light and dark themes; smaller
+   but bold type (and a stronger label colour) sets it apart from the 13px
+   regular row text without borrowing from the row's interactive states. */
 .dshmf-groupTitle {
-  height: 20px; padding: 2px 4px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 16px; font-weight: 500;
+  box-sizing: border-box; height: 20px; padding: 0 8px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-menu-group-header-fill, var(--dsw-alias-bg-module-platform));
+  color: var(--dsw-alias-label-secondary);
+  font-size: 10px; line-height: 20px; font-weight: 700; letter-spacing: .02em;
 }
 .dshmf-row {
   box-sizing: border-box; display: flex; align-items: center; gap: 6px; width: 100%;
