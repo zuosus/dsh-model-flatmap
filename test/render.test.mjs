@@ -1315,15 +1315,18 @@ test('the teamwork row packs label and switch to the left', () => {
 
 // ---------------------------------------------------------------------------
 // One obvious grey divider separates the scrolling model grid from the fixed
-// reasoning row; the teamwork row below must NOT draw its own line.
+// footer holding BOTH groups. It belongs to the footer container, so it stays
+// put whether the groups share a line or stack, and neither child draws one.
 // ---------------------------------------------------------------------------
-test("a single grey divider sits between the grid and reasoning, not teamwork", () => {
+test("a single grey divider sits above the whole footer, on neither group", () => {
   const css = source.match(/const CSS = `([\s\S]*?)`/)[1]
+  const footer = css.match(/\.dshmf-footer \{([\s\S]*?)\}/)[1]
   const reason = css.slice(css.indexOf(".dshmf-reason {"), css.indexOf(".dshmf-reasonLabel {"))
   const team = css.slice(css.indexOf(".dshmf-team {"), css.indexOf(".dshmf-teamLabel {"))
 
-  assert.ok(reason.includes("border-top: 1px solid #9CA3AF"), "ordinary grey line above reasoning")
-  assert.ok(css.includes("body[data-ds-dark-theme] .dshmf-reason"), "dark theme switches to a lighter grey")
+  assert.ok(footer.includes("border-top: 1px solid #9CA3AF"), "ordinary grey line above the footer block")
+  assert.ok(css.includes("body[data-ds-dark-theme] .dshmf-footer"), "dark theme switches to a lighter grey")
+  assert.equal(reason.includes("border-top"), false, "the reasoning group does not own the divider")
   assert.equal(team.includes("border-top"), false, "no divider between reasoning and teamwork")
 })
 

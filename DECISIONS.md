@@ -5,6 +5,25 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-016 — 2026-11-13 — 分割线挂在 footer 容器上，而不是推理等级上
+
+**Context.** DEC-011/DEC-012 把分割线画在 `.dshmf-reason` 的 `border-top` 上。
+之后推理等级与团队协作改为同一个 `.dshmf-footer` flex 容器内的两个子块：两者能并排
+时共用一行，放不下时各自一行。线仍挂在 `.dshmf-reason` 上，于是并排时线只盖住推理
+等级那一半，位置显得错位。
+
+**Decision.**
+
+- 把 `border-top: 1px solid #9CA3AF`（深色 `#6B7280`）与 `padding-top: 6px` 上移
+  到 `.dshmf-footer`，深色分支同步改为 `body[data-ds-dark-theme] .dshmf-footer` /
+  `html[data-ds-dark-theme] .dshmf-footer`。
+- `.dshmf-reason` 与 `.dshmf-team` 都不再拥有任何 `border-top`：线永远在两者共同的
+  UI block 上方，与它们在并排/换行哪种排布无关。
+
+**Consequences.** 纯 CSS 变更，DOM/planner 不变。render 测试约束改为「线在
+`.dshmf-footer` 上，两个子块都没有 border-top」。分割线颜色与线宽不变（沿用 DEC-012）。
+
+
 ## DEC-015 — 2026-11-13 — 429 不等于限流：额度判定改由正文决定
 
 **Context.** DEC-014 把额度不足的判定写成「结构化 code 优先，402 其次，正文兜底」。

@@ -240,30 +240,28 @@ window.__ModuleLoader__.load({
    No JS width guessing, so it stays correct across panel resize, theme and
    font changes. A max-width of 100% lets a child that ends up alone on a line
    cap to the panel width and wrap internally instead of overflowing.
-   The teamwork row carries no divider of its own (DEC-011 keeps the single
-   grey rule above the reasoning group only), so a shared line needs no
-   border juggling. */
+   The divider sits on this container, not on a child (DEC-016): the two groups
+   can share a line or stack, and either way the rule belongs above the whole
+   footer block, never between them, so no child carries a border. Host border
+   tokens are faint by design, so the line uses explicit greys: medium grey on
+   the light panel, a lighter near-white grey on the dark panel. */
 .dshmf-footer {
   flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap;
   column-gap: 30px; row-gap: 4px;
+  border-top: 1px solid #9CA3AF;
+  padding-top: 6px;
 }
+body[data-ds-dark-theme] .dshmf-footer,
+html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
 
 /* Reasoning levels: a caption and a multi-segmentation control on one line;
    the track wraps below the caption only when the row cannot fit. The
    segment visual mirrors the header's grouping control, so the panel has
    one visual language for "one of many, exactly one active". */
-/* One obvious grey divider between the scrolling model grid and the fixed
-   reasoning row. Host border tokens are faint by design, so this line uses
-   explicit greys: medium grey on the light panel, a lighter near-white grey
-   on the dark panel. The teamwork row below has no line (DEC-011). */
 .dshmf-reason {
   flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap;
   gap: 2px 6px; max-width: 100%;
-  border-top: 1px solid #9CA3AF;
-  padding-top: 6px;
 }
-body[data-ds-dark-theme] .dshmf-reason,
-html[data-ds-dark-theme] .dshmf-reason { border-top-color: #6B7280; }
 .dshmf-reasonLabel {
   flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px;
   white-space: nowrap;
