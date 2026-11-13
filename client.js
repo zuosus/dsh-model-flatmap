@@ -178,6 +178,12 @@ window.__ModuleLoader__.load({
   color: inherit;
 }
 .dshmf-rowName { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A multiplier marker lifted out of the model name (rate/size tags like
+   "x0.01", "x1.5", "X 2.2"). The characters stay in place and the full name is
+   unchanged; only this run is drawn two sizes smaller and bold, so the
+   multiplier reads as an aside without disturbing the row's text rhythm
+   (see renderRow's nameRuns). */
+.dshmf-rowNameMark { font-size: 11px; line-height: 18px; font-weight: 700; letter-spacing: normal; }
 /* Provider tag inside a family-grouped row: the same family spans several
    providers, so each row says where it comes from. Quieter than the model name
    (caption colour, 11px) and shrinks before the name does, because the model
@@ -1150,6 +1156,31 @@ window.__ModuleLoader__.load({
         return { label, tone: badge.tone ?? 'neutral' }
       }
 
+      /**
+       * Split a model name into React children, lifting any "xN" multiplier
+       * marker (rate/size tags like "x0.01", "x1.5", "X 2.2") into a smaller,
+       * bold span so it reads as an aside while the full name and its order are
+       * preserved. Matches an x (any case, or the multiplication sign) that
+       * STARTS a token — preceded by start-of-string or a non-word character,
+       * so it is not embedded in a word like "GenX5" — followed by optional
+       * whitespace and a number (integer or decimal, optional leading +).
+       * "Claude x3", "GPT x0.1", "Model X 2.2" all get the run; a plain
+       * "Model X" (no number) or "GenX5" (x inside a word) do not.
+       */
+      const MULT_MARKER = /(?<![\p{L}\p{N}])[xX×]\s*[+]?\d+(?:\.\d+)?/gu
+      const nameRuns = rawName => {
+        const name = String(rawName ?? '')
+        const out = []
+        let cursor = 0
+        for (const m of name.matchAll(MULT_MARKER)) {
+          if (m.index > cursor) out.push(name.slice(cursor, m.index))
+          out.push(h('span', { className: 'dshmf-rowNameMark' }, m[0]))
+          cursor = m.index + m[0].length
+        }
+        if (cursor < name.length) out.push(name.slice(cursor))
+        return out
+      }
+
       const renderRow = entry => {
         const { model, providerId, providerLabel } = entry
         const selected = state.current?.provider === providerId && state.current.model === model.id
@@ -1176,7 +1207,7 @@ window.__ModuleLoader__.load({
           disabled: busy,
           onClick: () => { chooseModel(providerId, model) },
         },
-          h('span', { className: 'dshmf-rowName' }, model.name),
+          h('span', { className: 'dshmf-rowName' }, ...nameRuns(model.name)),
           showProvider ? h('span', {
             className: 'dshmf-rowProvider',
             title: providerLabel,
