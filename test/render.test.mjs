@@ -245,6 +245,14 @@ function gridTitles(tree) {
   return grid === undefined ? [] : findAll(grid, node => hasClass(node, 'dshmf-groupTitle'))
 }
 
+// The multiplier markers lifted out of each row name, in grid order: the inner
+// text of every `dshmf-rowNameMark` span, in document order.
+function gridRowNameMarks(tree) {
+  const grid = findAll(tree, node => hasClass(node, 'dshmf-grid'))[0]
+  if (grid === undefined) return []
+  return findAll(grid, node => hasClass(node, 'dshmf-rowNameMark')).map(textOf)
+}
+
 /** The model name of each row, in grid order. */
 function gridRowNames(tree) {
   const grid = findAll(tree, node => hasClass(node, 'dshmf-grid'))[0]
@@ -290,6 +298,39 @@ test('a closed seat renders only the trigger', () => {
   assert.equal(triggers[0].props['aria-expanded'], false)
   assert.equal(findAll(tree, node => hasClass(node, 'dshmf-panel')).length, 0)
   assert.match(textOf(triggers[0]), /DeepSeek Chat/)
+})
+
+test('a model name with a xN multiplier lifts it into a smaller bold run', () => {
+  // Rate/size markers such as "x0.01", "x1.5", "X 2.2" (with or without a
+  // space, any case) are split out of the name into a `dshmf-rowNameMark`
+  // span, drawn two sizes smaller and bold, while the full name is unchanged.
+  runtime.reset()
+  const state = catalogState({
+    groups: [{
+      id: 'mult',
+      name: 'Multipliers',
+      models: [
+        { id: 'a', name: 'Claude x3' },
+        { id: 'b', name: 'GPT x0.01' },
+        { id: 'c', name: 'Model X 2.2' },
+        { id: 'd', name: 'PlainModel' },
+        { id: 'e', name: 'GenX5' },  // x sits inside a word, not a multiplier token
+      ],
+    }],
+  })
+  const { props } = makeProps(state)
+  let tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+  // The reconstructed name stays intact: markers are not removed or reordered.
+  assert.deepEqual(gridRowNames(tree), [
+    'Claude x3', 'GPT x0.01', 'Model X 2.2', 'PlainModel',
+    'GenX5',
+  ])
+  // One marker run per name that actually has one, and no others.
+  assert.deepEqual(gridRowNameMarks(tree), ['x3', 'x0.01', 'X 2.2'])
+  const markSpans = findAll(tree, node => hasClass(node, 'dshmf-rowNameMark'))
+  assert.equal(markSpans.length, 3)
 })
 
 test('opening renders every section with no second-level menu', () => {
