@@ -2247,3 +2247,156 @@ test('a 429 body decides the mark across sessions, not the status', () => {
     'a 429 with a balance body in another session does strike')
 })
 
+
+// ---------------------------------------------------------------------------
+// Model-name marquee (DEC-021).
+//
+// The row's main content is a clipped WINDOW: resting the pointer on a
+// truncated name starts a slow marquee inside that window only. Everything
+// right-aligned after it (the catalog badge — 限时免费, ×0.1 — and the pending
+// spinner) must stay put, so it must never live inside the sliding element.
+// ---------------------------------------------------------------------------
+test('the marquee slides only the name window, never the right-aligned badge', () => {
+  runtime.reset()
+  const { props } = makeProps(catalogState())
+  const tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  const open = runtime.render(bundle.__component, props)
+
+  const rows = gridRows(open)
+  assert.ok(rows.length > 0, 'the grid rendered')
+  for (const row of rows) {
+    const windows = findAll(row, node => hasClass(node, 'dshmf-rowNameWindow'))
+    assert.equal(windows.length, 1, 'each row has exactly one clipped name window')
+
+    // The primary text lives inside the window: that is the only part allowed
+    // to move when the marquee runs.
+    const tracks = findAll(windows[0], node => hasClass(node, 'dshmf-rowNameTrack'))
+    assert.equal(tracks.length, 1, 'the window holds the name track')
+    assert.ok(textOf(tracks[0]).length > 0, 'the track carries the primary text')
+
+    // The right-aligned trailing content is a SIBLING of the window, and the
+    // badge is never inside the window or the track.
+    const badge = findAll(row, node => hasClass(node, 'dshmf-badge'))[0]
+    if (badge !== undefined) {
+      assert.equal(findAll(windows[0], node => hasClass(node, 'dshmf-badge')).length, 0,
+        'the catalog badge (限时免费 / ×0.1) is outside the sliding window')
+      assert.equal(findAll(tracks[0], node => hasClass(node, 'dshmf-badge')).length, 0,
+        'the catalog badge is not part of the marquee content')
+    }
+
+    // Nothing runs until the pointer rests on the row.
+    assert.equal(tracks[0].props['data-running'], undefined, 'a resting row is not animating')
+    assert.equal(tracks[0].props.style, undefined, 'a resting row carries no shift/duration')
+  }
+})
+
+test('a resting pointer starts the marquee only on a clipped name, after the delay', async () => {
+  runtime.reset()
+  const { props } = makeProps(catalogState())
+  let tree = runtime.render(bundle.__component, props)
+  runtime.setRerender(() => { tree = runtime.render(bundle.__component, props) })
+  tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+
+  const rowOf = name => gridRows(tree).find(row => textOf(row).includes(name))
+  const row = rowOf('Grok 4')
+  assert.equal(typeof row.props.onMouseEnter, 'function', 'the row measures itself on pointer entry')
+
+  // A DOM stub: the name is clipped by 40px inside a 100px window.
+  const track = { scrollWidth: 140, clientWidth: 100 }
+  const windowStub = { clientWidth: 100, scrollWidth: 140 }
+  const rowStub = {
+    querySelector: selector => (selector === '.dshmf-rowNameWindow' ? windowStub : track),
+  }
+  row.props.onMouseEnter({ currentTarget: rowStub })
+  // Nothing happens before the delay elapses.
+  assert.equal(gridRows(tree).find(r => textOf(r).includes('Grok 4')).props['data-running'], undefined,
+    'the name does not start moving immediately')
+  await new Promise(resolve => setTimeout(resolve, 700))
+  const running = findAll(gridRows(tree).find(r => textOf(r).includes('Grok 4')),
+    node => hasClass(node, 'dshmf-rowNameTrack'))[0]
+  assert.equal(running.props['data-running'], 'true', 'a clipped name starts the marquee after the delay')
+  assert.equal(running.props.style['--dshmf-marquee-shift'], '-40px',
+    'the pass travels exactly the clipped amount')
+  assert.match(String(running.props.style['--dshmf-marquee-duration']), /^\d+ms$/,
+    'the duration is a time')
+
+  // Leaving the row stops it and drops the shift, so nothing keeps moving
+  // behind the pointer's back.
+  gridRows(tree).find(r => textOf(r).includes('Grok 4')).props.onMouseLeave()
+  const stopped = findAll(gridRows(tree).find(r => textOf(r).includes('Grok 4')),
+    node => hasClass(node, 'dshmf-rowNameTrack'))[0]
+  assert.equal(stopped.props['data-running'], undefined, 'leaving the row stops the marquee')
+  assert.equal(stopped.props.style, undefined, 'and clears the measured shift')
+
+  // A name that FITS must not move, however long the pointer rests on it.
+  const shortRow = gridRows(tree).find(row => textOf(row).includes('Grok 4'))
+  shortRow.props.onMouseEnter({
+    currentTarget: { querySelector: () => ({ clientWidth: 200, scrollWidth: 200 }) },
+  })
+  await new Promise(resolve => setTimeout(resolve, 700))
+  const quiet = findAll(gridRows(tree).find(r => textOf(r).includes('Grok 4')),
+    node => hasClass(node, 'dshmf-rowNameTrack'))[0]
+  assert.equal(quiet.props['data-running'], undefined, 'a name that fits never starts a marquee')
+})
+
+test('the marquee CSS clips the window, animates the track and respects reduced motion', () => {
+  const css = source.match(/const CSS = `([\s\S]*?)`/)[1]
+  const ruleOf = selector => {
+    const at = css.indexOf(selector)
+    assert.ok(at >= 0, `${selector} exists`)
+    return css.slice(at, css.indexOf('}', at) + 1)
+  }
+
+  // The window is what clips: the ellipsis belongs there, and so does the
+  // overflow that turns the name into a marquee candidate.
+  const windowRule = ruleOf('.dshmf-rowNameWindow {')
+  assert.match(windowRule, /overflow:\s*hidden/, 'the window clips its content')
+  assert.match(windowRule, /text-overflow:\s*ellipsis/, 'a clipped name shows an ellipsis')
+  assert.match(windowRule, /white-space:\s*nowrap/, 'the name never wraps')
+
+  // The track is allowed to be wider than the window — that width IS the
+  // overflow signal the pointer handler measures.
+  const nameRule = ruleOf('.dshmf-rowName {')
+  assert.match(nameRule, /width:\s*max-content/, 'the track takes the full name width')
+  assert.doesNotMatch(nameRule, /text-overflow|overflow:\s*hidden/, 'the track itself never clips')
+
+  // One keyframe pass: out to the last glyph, a short hold, and back. The
+  // transform is the only animated property.
+  const keyframes = css.slice(css.indexOf('@keyframes dshmf-rowNameMarquee'), css.indexOf('.dshmf-rowNameTrack[data-running'))
+  assert.match(keyframes, /translateX\(var\(--dshmf-marquee-shift\)\)/, 'the pass travels the measured shift')
+  const running = ruleOf('.dshmf-rowNameTrack[data-running="true"] {')
+  assert.match(running, /animation:\s*dshmf-rowNameMarquee/, 'a running track animates')
+  assert.match(running, /linear/, 'the speed is constant, not eased')
+
+  // Reduced motion wins: no marquee at all.
+  const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'))
+  assert.match(reduced.slice(0, 200), /dshmf-rowNameTrack\[data-running="true"\]\s*\{\s*animation:\s*none/,
+    'the marquee is disabled under prefers-reduced-motion')
+})
+
+test('a pointer that sweeps past a row before the delay starts nothing', async () => {
+  // The 0.5s requirement is a REST requirement: moving across the grid must
+  // never leave a marquee running behind the pointer.
+  runtime.reset()
+  const { props } = makeProps(catalogState())
+  let tree = runtime.render(bundle.__component, props)
+  runtime.setRerender(() => { tree = runtime.render(bundle.__component, props) })
+  tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+
+  const row = () => gridRows(tree).find(r => textOf(r).includes('Grok 4'))
+  const trackOf = () => findAll(row(), node => hasClass(node, 'dshmf-rowNameTrack'))[0]
+  row().props.onMouseEnter({
+    currentTarget: { querySelector: () => ({ clientWidth: 100, scrollWidth: 140 }) },
+  })
+  await new Promise(resolve => setTimeout(resolve, 120))
+  row().props.onMouseLeave()
+  await new Promise(resolve => setTimeout(resolve, 700))
+  assert.equal(trackOf().props['data-running'], undefined,
+    'leaving before the delay elapses aborts the marquee entirely')
+  assert.equal(trackOf().props.style, undefined, 'and no shift is left behind')
+})

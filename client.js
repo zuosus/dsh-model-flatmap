@@ -209,7 +209,37 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
   background: color-mix(in srgb, var(--dsw-static-neutral-bluish-00) 22%, transparent);
   color: inherit;
 }
-.dshmf-rowName { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dshmf-rowNameWindow {
+  flex: 1 1 auto; min-width: 0; display: block;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* The name itself never ellipsises on its own: the window clips it, and the
+   track is what slides when the pointer rests on a truncated row (DEC-021).
+   width: max-content is what lets the track be wider than the window, which is
+   both the overflow signal (scrollWidth) and what the marquee reveals. */
+.dshmf-rowName {
+  width: max-content; max-width: none;
+  white-space: nowrap;
+}
+/* Resting the pointer on a row whose name does not fit starts a slow marquee:
+   out to the last glyph, a short hold, and a glide back. Only the name TRACK
+   moves — the window clips it, so the right-aligned badge (限时免费, ×0.1) and
+   the pending spinner, which sit as siblings AFTER the window, never shift. */
+@keyframes dshmf-rowNameMarquee {
+  0% { transform: translateX(0); }
+  5% { transform: translateX(0); }
+  45% { transform: translateX(var(--dshmf-marquee-shift)); }
+  50% { transform: translateX(var(--dshmf-marquee-shift)); }
+  95% { transform: translateX(0); }
+  100% { transform: translateX(0); }
+}
+.dshmf-rowNameTrack[data-running="true"] {
+  display: inline-block;
+  animation: dshmf-rowNameMarquee var(--dshmf-marquee-duration, 3000ms) linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dshmf-rowNameTrack[data-running="true"] { animation: none; }
+}
 /* The model's last call failed on insufficient balance / credit / quota, and no
    later call for the same model has cleared it. The row text is struck through
    rather than recoloured: the strike survives both themes and the selected
@@ -1511,6 +1541,100 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       watch: () => {},
     }
 
+    /**
+     * How long the pointer must rest on a truncated model name before the
+     * marquee starts. Long enough that sweeping across the grid never starts a
+     * scroll, short enough to feel like a direct response (DEC-021).
+     */
+    const MARQUEE_DELAY = 500
+    /**
+     * One CSS pixel per 20ms — 50px/s. The trailing end of a long name scrolls
+     * at the same pace, so a 300px overflow still finishes in ~6s instead of
+     * crawling, and the speed reads as a considered crawl rather than a ticker.
+     */
+    const MARQUEE_PX_PER_SECOND = 50
+    /** Shortest pass, so a barely-truncated name does not blink past. */
+    const MARQUEE_MIN_MS = 900
+
+    /**
+     * Does this element actually clip its text?
+     *
+     * The measured element is the row's name WINDOW, a plain block-level flex
+     * item with `overflow: hidden; white-space: nowrap`, so `scrollWidth` is the
+     * full width of the name and `clientWidth` the visible part. A one-pixel
+     * slack keeps sub-pixel rounding from starting a marquee on a name that
+     * fits exactly.
+     * @param {Element | null | undefined} element - the name window.
+     * @returns {number} the clipped amount in px; 0 when nothing is cut off.
+     */
+    const nameClippedBy = element => {
+      if (element === null || element === undefined) return 0
+      const clientWidth = Number(element.clientWidth) || 0
+      if (clientWidth <= 0) return 0
+      const clipped = (Number(element.scrollWidth) || 0) - clientWidth
+      return clipped > 1 ? clipped : 0
+    }
+
+    /**
+     * The geometry of one marquee cycle (DEC-021).
+     *
+     * `shift` is how far the name must travel for its LAST glyph to reach the
+     * right edge of the window — exactly the clipped amount, so nothing scrolls
+     * past the point of being readable. The keyframes spend 45% of the cycle
+     * going out and 45% coming back (5% rests at each end), so the cycle lasts
+     * `travel / 0.45` and both legs run at MARQUEE_PX_PER_SECOND.
+     * @param {number} clipped - pixels of the name hidden to the right.
+     * @returns {{shift: number, duration: number}} geometry in px / ms.
+     */
+    const marqueePassGeometry = clipped => {
+      const shift = Number.isFinite(clipped) && clipped > 0 ? Math.ceil(clipped) : 0
+      if (shift === 0) return { shift: 0, duration: 0 }
+      const travel = (shift / MARQUEE_PX_PER_SECOND) * 1000
+      const duration = Math.max(MARQUEE_MIN_MS, Math.round(travel / 0.45))
+      return { shift, duration }
+    }
+
+    /**
+     * Does the user ask the OS to reduce motion? The marquee is decorative, so
+     * it is skipped entirely under that preference — the ellipsis and the row
+     * tooltip already carry the full name.
+     * @returns {boolean} true when motion should be suppressed.
+     */
+    const prefersReducedMotion = () => {
+      try {
+        return typeof window !== 'undefined'
+          && typeof window.matchMedia === 'function'
+          && window.matchMedia('(prefers-reduced-motion: reduce)').matches === true
+      } catch {
+        return false
+      }
+    }
+
+    /**
+     * The sliding part of a row's primary text.
+     *
+     * The row wraps it in the clipped window, so the pass runs on the track
+     * alone: everything AFTER the window (the catalog badge, the pending
+     * spinner) is right-aligned and never pushed along. `shift`/`duration`
+     * arrive as inline values because they depend on this row's measurement.
+     * @param {object} props - `shift` (px), `duration` (ms), `children`.
+     * @returns {object} the track element.
+     */
+    const renderNameTrack = props => {
+      const { shift, duration, children } = props
+      const running = shift > 0
+      return h('span', {
+        className: 'dshmf-rowNameTrack dshmf-rowName',
+        'data-running': running ? 'true' : undefined,
+        style: running
+          ? {
+            '--dshmf-marquee-shift': `-${shift}px`,
+            '--dshmf-marquee-duration': `${duration}ms`,
+          }
+          : undefined,
+      }, children)
+    }
+
     // ---------------------------------------------------------------------
     // Component
     // ---------------------------------------------------------------------
@@ -1578,6 +1702,65 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       const teamErrorRef = useRef(null)
       const confirmRef = useRef(null)
       const id = useId()
+
+      // ---- Model-name marquee (DEC-021)
+      // A name wider than its row is ellipsised ("DeepSeek Reasone…"). Resting
+      // the pointer on such a row for MARQUEE_DELAY starts the marquee; moving
+      // away stops it. Only one row can run at a time, and the sliding element
+      // is the name TRACK only, so right-aligned trailing content (the catalog
+      // badge — 限时免费, ×0.1 — and the pending spinner) never moves.
+      const [marquee, setMarquee] = useState({ key: '', shift: 0, duration: 0 })
+      const marqueeTimer = useRef(null)
+      /** The row whose delay is still running; '' when nothing is armed. */
+      const marqueeArmed = useRef('')
+      const idleMarquee = { key: '', shift: 0, duration: 0 }
+      const clearMarqueeTimer = () => {
+        if (marqueeTimer.current !== null) {
+          clearTimeout(marqueeTimer.current)
+          marqueeTimer.current = null
+        }
+      }
+      /** Drop an armed delay (the pointer left before it fired). */
+      const disarmMarquee = () => {
+        clearMarqueeTimer()
+        marqueeArmed.current = ''
+      }
+      /**
+       * Pointer arrived on a row. Leave any other row first, then arm the
+       * delay. The measurement happens when it fires — the row is laid out by
+       * then, and a name that fits never moves.
+       * @param {string} key - the row's route key (one runner at a time).
+       * @param {Element | null} row - the row the pointer entered.
+       */
+      const enterRow = (key, row) => {
+        disarmMarquee()
+        marqueeArmed.current = key
+        // Leaving the previous row stops its pass immediately.
+        setMarquee(previous => (previous.key === '' ? previous : idleMarquee))
+        marqueeTimer.current = setTimeout(() => {
+          marqueeTimer.current = null
+          if (marqueeArmed.current !== key) return
+          marqueeArmed.current = ''
+          const nameWindow = typeof row?.querySelector === 'function'
+            ? row.querySelector('.dshmf-rowNameWindow')
+            : null
+          if (prefersReducedMotion()) return
+          const geometry = marqueePassGeometry(nameClippedBy(nameWindow))
+          if (geometry.shift === 0) return
+          setMarquee({ key, shift: geometry.shift, duration: geometry.duration })
+        }, MARQUEE_DELAY)
+      }
+      /**
+       * Pointer left a row. An armed delay for THAT row is cancelled (so a
+       * quick sweep never starts anything), and a running pass is dropped.
+       * @param {string} key - the row the pointer left.
+       */
+      const leaveRow = key => {
+        if (marqueeArmed.current === key) disarmMarquee()
+        setMarquee(previous => (previous.key === key ? idleMarquee : previous))
+      }
+      // Unmount safety: a pending timer must not outlive the seat.
+      useEffect(() => () => { clearTimeout(marqueeTimer.current) }, [])
 
       // Standard props always carry these three hooks for a session-scope slot;
       // the fallbacks keep the component renderable (rather than throwing) in a
@@ -2011,8 +2194,12 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         // yet: the row text is struck through until a later call for the same
         // model route returns anything else.
         const insufficientRoute = marks.marks.get(routeKeyOf(providerId, model.id)) === true
+        // The marquee runs one row at a time, keyed by the model route so a
+        // re-render cannot start the wrong row (DEC-021).
+        const routeKey = `${providerId}/${model.id}`
+        const running = marquee.key === routeKey
         return h('button', {
-          key: `${providerId}/${model.id}`,
+          key: routeKey,
           type: 'button',
           className: 'dshmf-row',
           'aria-pressed': selected,
@@ -2020,11 +2207,26 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
           title: rowTitle,
           disabled: busy,
           onClick: () => { chooseModel(providerId, model) },
+          // The pointer must REST for MARQUEE_DELAY before anything moves, so
+          // sweeping across the grid never triggers it. Measuring happens in
+          // the timeout, when the row is laid out and the panel is settled.
+          onMouseEnter: event => { enterRow(routeKey, event?.currentTarget) },
+          onMouseLeave: () => { leaveRow(routeKey) },
+          // Keyboard focus counts as "resting on the row" for the same reason
+          // the tooltip does: a focused row is one the user is looking at.
+          onFocus: event => { enterRow(routeKey, event?.currentTarget) },
+          onBlur: () => { leaveRow(routeKey) },
         },
           // `nameRuns` (xN multiplier markers) is applied to whatever the
           // primary text is: the model name under provider grouping, or the
-          // provider name under family grouping.
-          h('span', { className: 'dshmf-rowName' }, ...nameRuns(primary)),
+          // provider name under family grouping. Only the track (inside the
+          // clipped window) moves; the variant tag, the badge and the spinner
+          // are siblings AFTER the window and stay put on the right.
+          h('span', { className: 'dshmf-rowNameWindow' },
+            running
+              ? renderNameTrack({ shift: marquee.shift, duration: marquee.duration, children: nameRuns(primary) })
+              : h('span', { className: 'dshmf-rowNameTrack dshmf-rowName' }, ...nameRuns(primary)),
+          ),
           showVariant ? h('span', {
             className: 'dshmf-rowProvider',
             title: rowVariant,
@@ -2361,7 +2563,8 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
             h('div', { className: 'dshmf-probe', 'aria-hidden': 'true' },
               h('div', { ref: probeHeadRef, className: 'dshmf-groupTitle' }, 'X'),
               h('div', { ref: probeRowRef, className: 'dshmf-row' },
-                h('span', { className: 'dshmf-rowName' }, 'X'),
+                h('span', { className: 'dshmf-rowNameWindow' },
+                  h('span', { className: 'dshmf-rowNameTrack dshmf-rowName' }, 'X')),
                 h('span', { className: 'dshmf-rowProvider' }, 'X'),
               ),
             ),
@@ -2466,7 +2669,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       // Pure layout and grouping derivations plus the component itself,
       // exposed for `node --test` so grouping, filtering and the column
       // algorithm are pinned without a browser. The shell never reads this key.
-      __test: { familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore },
+      __test: { marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore },
       __component: ModelFlatMap,
       __seat: Seat,
       apply(ctx) {

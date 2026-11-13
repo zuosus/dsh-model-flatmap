@@ -5,6 +5,64 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-021 — 2026-11-13 — 命中截断的模型名行：hover 0.5s 后向左跑马灯，badge 不参与
+
+**Context.** 模型行的主文本（provider 分组下是模型名，family 分组下是 provider 名）在列宽
+不足时会变成 `DeepSeek Reasone…`，唯一的完整文本入口是 `title` tooltip——要等系统 tooltip
+的延迟，读起来很钝。用户要求：名称显示不完（出现 `…`）时，hover 达到 0.5 秒才开始向左跑
+马灯；速度不要太快也不要太慢；**跑马灯内容只包含主内容**，右对齐、始终显示的 `限时免费`
+等 badge 不能跟着动。
+
+**Decision.**
+
+- **分层：窗口 + 轨道。** 行的主文本包进 `.dshmf-rowNameWindow`（`overflow: hidden` +
+  `text-overflow: ellipsis` + `nowrap`），里面是 `.dshmf-rowNameTrack`（
+  `display: inline-block; width: max-content`，所以内容可以比窗口宽）。**只有轨道平移**，
+  `.dshmf-rowProvider`（family 变体标签）、`.dshmf-badge`（限时免费 / ×0.1）、
+  `.dshmf-rowTail`（spinner）都是窗口的**兄弟**，留在原地。这是「跑马灯内容仅限主内容」
+  的结构性保证，而不是靠裁剪尺寸去凑。
+- **触发是「停留」而不是「进入」。** `onMouseEnter` 只负责挂一个 `MARQUEE_DELAY = 500ms`
+  定时器；`onMouseLeave` 会先 `disarm` 再清理，所以**在 0.5s 内划过去的行永远不会启动**
+  （否则快速扫过整个网格会留下一排还在滚的行）。定时器触发时才测量
+  （`clientWidth` / `scrollWidth`），此刻行已完成布局，也不需要首帧就同步读取样式。
+  键盘 `focus` 同样算「停留」，`blur` 同样停止。
+- **只有真的被截断才动。** `nameClippedBy(window)` 返回 `scrollWidth - clientWidth`，
+  ≤1px 视为「放得下」直接不动——短名称 hover 再久也绝不抖。
+- **速度恒定，且与溢出量解耦。** `MARQUEE_PX_PER_SECOND = 50`（1px/20ms）。关键帧把一轮
+  分成 45% 去、5% 停、45% 回、5% 停，所以周期是 `shift / 0.45`，去程与回程速度都恒为
+  50px/s：128px 溢出约 5.7s 一轮，看起来是「缓慢掠过」而不是快闪；再长的名称也不会因为
+  距离变长而变快。`MARQUEE_MIN_MS = 900` 兜底，避免 2px 溢出瞬间滑过。
+- **位移量 = 截断量，而不是内容宽度。** 只滑到最后一个字形刚好贴住窗口右边为止
+  （`translateX(-shift)`，`shift` = 截断像素），所以脚本不会把已经看得见的部分白白再推出去
+  一屏、也不会滑到名称右边的空白里。
+- **CSS 驱动，JS 只给两个数。** `@keyframes dshmf-rowNameMarquee` +
+  `animation: ... linear infinite`，`--dshmf-marquee-shift` / `--dshmf-marquee-duration`
+  由行内 style 传入（每行不同）。JS 里没有逐帧循环，也没有 `requestAnimationFrame`，
+  与这个面板其余部分的「纯 CSS 定布局」风格一致（见 DEC-013）。
+- **`prefers-reduced-motion: reduce` 下完全不动**：此时 `animation: none`，hover 处理器也
+  直接返回。ellipsis + tooltip 仍然提供完整名称，信息不丢。
+- **同一时刻只有一行在跑。** 状态是 `{ key, shift, duration }`，key 是模型 route
+  （`provider/model`），进入新行会把上一行复位。
+
+**Rejected.** 用 `scrollLeft` 或 `rAF` 逐帧推动（会与 CSS 动画抢布局，且每帧触发重排，
+网格里几十行时成本不可接受）；用 `marquee`/`<marquee>` 语义或用负 `text-indent` 动画
+（无法只动主内容，会把 badge 一起拖走）；在 `onMouseEnter` 里立即测量并启动（违背
+「0.5s 停留」的要求，且首帧布局可能未稳定）；把 badge 放进轨道里再反向补偿（两套动画要
+同步，任意一帧错位都会露出来）；无限来回滚动（用户要的是「看不全时能读全」，读完后应当
+安静下来，而不是永久跳动——本实现每轮结束回到起点并在下一轮前停顿，鼠标不移开才继续）。
+
+**Consequences.** 纯渲染/CSS 变更，没有布局、planner、probe 或数据流改动：26px 行高不变，
+列宽算法不变（`width: max-content` 的轨道被 `overflow: hidden` 的窗口约束住，不会往外顶）。
+`.dshmf-rowName` 这个 class 被保留在轨道上，所以删除线（DEC-014）、`x0.1` 小号粗体标记
+（MULT_MARKER）和既有测试仍然作用于同一个元素；ellipsis 移到窗口上。测量探针同步改成
+「窗口 + 轨道」结构，测得的行高仍然覆盖最宽行。测试从 111 条扩到 112 条：新增「badge 在
+窗口/轨道之外」「hover 0.5s 后按截断量启动、离开即停、放得下的名字不动」「0.5s 内划过去
+不启动」「CSS 的裁剪、max-content、线性动画与 reduced-motion」以及纯函数几何用例
+（速度恒定、位移=截断量、最短时长兜底）。已在 headless Chrome 中按 45% 关键帧定格采样：
+轨道 `translateX(-128px)` 后最后一个字形恰好贴住窗口右缘（`trackRight === winRight`），
+badge 左缘在 0ms/450ms/700ms 三个采样点均为 236px 不动。
+
+
 ## DEC-020 — 2026-11-13 — 面板加 1px 浅灰边框；图标改用双主题可见的蓝色
 
 **Context.** 两条独立反馈：(1) 面板浮层没有自己的边框，边缘只靠 elevation 阴影和

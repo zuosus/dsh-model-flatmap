@@ -55,7 +55,7 @@ function materialize() {
 }
 
 const bundle = materialize()
-const { familyOf, familyRank, familyVariant, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, planColumns, packColumns } = bundle.__test
+const { familyOf, familyRank, familyVariant, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, planColumns, packColumns, marqueePassGeometry, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS } = bundle.__test
 
 test('families come from the dictionary before the id guess', () => {
   assert.equal(familyOf({ id: 'deepseek-chat', name: 'DeepSeek Chat' }), 'DeepSeek')
@@ -280,4 +280,33 @@ test('the bundle factory materializes with the plugin face', () => {
   // can read the Session's durable event feed, which is where a model call's
   // insufficient-balance failure is recorded.
   assert.deepEqual(bundle.inject, ['slots', 'locale', 'remote', 'remote.agentTeams', 'sessions'])
+})
+
+// ---------------------------------------------------------------------------
+// Model-name marquee geometry (DEC-021).
+//
+// The name row ellipsises when it cannot fit, and a pointer resting on it
+// starts a slow marquee. The geometry is a pure function so the speed can be
+// pinned: too fast reads as a glitch, too slow as a hang.
+// ---------------------------------------------------------------------------
+test('marquee geometry: shift is the clipped amount, duration keeps the speed fixed', () => {
+  assert.deepEqual(marqueePassGeometry(0), { shift: 0, duration: 0 }, 'a name that fits never moves')
+  assert.deepEqual(marqueePassGeometry(-4), { shift: 0, duration: 0 }, 'a negative measurement is treated as "fits"')
+  assert.deepEqual(marqueePassGeometry(Number.NaN), { shift: 0, duration: 0 }, 'NaN never animates')
+
+  // 128px of hidden name: both legs run at MARQUEE_PX_PER_SECOND with the
+  // keyframes' 45% out / 45% back split.
+  const { shift, duration } = marqueePassGeometry(128)
+  assert.equal(shift, 128, 'the name travels exactly as far as it is clipped')
+  const outLeg = (duration * 0.45) / 1000
+  assert.equal(Math.round((shift / outLeg) * 10) / 10, MARQUEE_PX_PER_SECOND, 'the out-leg runs at the pinned speed')
+
+  // Short overflows are held back by the floor instead of whipping past.
+  assert.equal(marqueePassGeometry(1).shift, 1)
+  assert.ok(marqueePassGeometry(1).duration >= MARQUEE_MIN_MS, 'a 1px overflow still gets the minimum pass')
+
+  // Longer names take longer, monotonically, and never slower than the speed.
+  const long = marqueePassGeometry(400)
+  assert.ok(long.duration > duration, 'a longer overflow takes longer')
+  assert.ok(duration >= 2000 && duration <= 6000, 'a ~128px overflow passes in a calm 2-6s window')
 })
