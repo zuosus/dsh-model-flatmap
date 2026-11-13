@@ -19,6 +19,13 @@ model directory, the teamwork setting, and the host's locale. The host half
 which registers with a negative priority so it shadows the shipped `ModelSelect`
 while active. Disabling the plugin restores the native control with no residue.
 
+## Screenshot
+
+The panel in action — a flat grid of models, the current model's reasoning
+levels, and the agent-teamwork switch on one surface:
+
+![Flat model picker panel](./docs/model-picker.jpeg)
+
 ## Features
 
 - **One surface.** The trigger opens one panel capped at 320 px. The header, the
