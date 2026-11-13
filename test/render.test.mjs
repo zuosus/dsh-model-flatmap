@@ -1479,34 +1479,123 @@ test('the fixed-height measurement counts the footer once, not reason+team twice
 
 const INSUFFICIENT = bundle.__test
 
-test('the insufficient classifier accepts structured quota codes and provider wording', () => {
+// Real recorded failures, harvested from the local DSH session history
+// (~/.dsh/sessions/*/session.v4.jsonl.zstd, 1270 sessions) by folding every
+// `turn/end` whose reason was an error. Each entry is the exact
+// `{ code, status?, message }` the Host stored, so the classifier is pinned
+// against what providers actually send rather than against invented wording.
+//
+// The 429 cases matter most: several providers answer an exhausted balance
+// with HTTP 429 rather than 402, and the Host classifies that as RATE_LIMIT —
+// which is normally transient. The message has to decide in that case.
+const REAL_INSUFFICIENT = [
+  // modelscope-token-plan — the user's own example, 71 occurrences in history.
+  { code: 'RATE_LIMIT', message: '429: {"message":"insufficient balance","request_id":"4f188d7b-3798-417c-93c3-b93a32bdbb4e"}' },
+  // The same fact carried as the structured status.
+  { code: 'RATE_LIMIT', status: 429, message: '429: {"message":"insufficient balance"}' },
+  // codebuddy-cli — 额度已用尽 (soft_rate).
+  { code: 'RATE_LIMIT', message: '429: {"message":"codebuddy upstream soft_rate (http 429): {\\"error\\":{\\"data\\":{\\"code\\":14018,\\"msg\\":\\"额度已用尽，请访问以下链接，购买加量包以获取更多额度：https://www.codebuddy.cn/profile/usage \\"}}}","type":"soft_rate","code":"soft_rate"}' },
+  // minimax — 402 with insufficient_balance_error.
+  { code: 'QUOTA_EXCEEDED', status: 402, message: 'minimax: HTTP 402 — {"type":"error","error":{"type":"insufficient_balance_error","message":"insufficient balance (1008)"},"request_id":"0739b52b09c5d5907484ac17d0a644dc"}' },
+  // openai — no credits remaining.
+  { code: 'PI_AI_ERROR', message: 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.' },
+  // xai — 403 with no credits or licenses.
+  { code: 'AUTH', message: 'xai API error (403): 403 "Your newly created team doesn\'t have any credits or licenses yet. You can purchase those on https://console.x.ai/team/c46f64e1-a11b-4813-a49c-fe002cc0d912."' },
+  // bamboo — new-api gateway refusing to pre-consume an insufficient quota.
+  { code: 'AUTH', message: '403: {"message":"Not enough quota to pre-consume for this request: ＄0.009740 remaining, ＄0.059864 required (request id: 202611020742226305085428268d9d6otJmysNm)","type":"new_api_error","param":"","code":"insufficient_user_quota"}' },
+  // trae — SOLO quota exhausted (hard_credit).
+  { code: 'QUOTA', message: '402: {"message":"Trae reports the account\'s SOLO quota is exhausted for this request · Trae code 4008 · upstream: Your requests have exceeded the quota.","type":"hard_credit","code":"hard_credit"}' },
+  // workbuddy — quota_exceeded with a reset time.
+  { code: 'QUOTA', message: '429: {"message":"workbuddy 上游失败：被限流（http 429）：池中已无可用账号（1 个账号被限流）（code 6004，requestId 01a1d3c0de1b762f916ed17cb1f78a82）。您的使用量已超出频率限制，将在 2026-11-14 10:32:55 UTC+8 重置，您也可以切换其他模型继续使用。建议换一个模型继续，或稍后等待该账号的额度恢复","type":"soft_rate","code":"quota_exceeded"}' },
+  // doubao / workbuddy — the day's budget is spent.
+  { code: 'BUDGET_EXHAUSTED', message: '今日学习调用预算已用完' },
+  // qoder — billing daily count.
+  { code: 'QUOTA_EXCEEDED', message: 'qoder: Billing daily count exceeded' },
+  // Plain wording the Host did not classify, kept for the fallback path.
+  { code: 'UNKNOWN', message: 'insufficient balance' },
+  { code: 'UNKNOWN', message: 'Insufficient credits for this request' },
+  { code: 'UNKNOWN', message: 'You are out of credits' },
+  { code: 'UNKNOWN', message: 'quota exceeded' },
+  { code: 'UNKNOWN', message: '账户余额不足' },
+  { code: 'UNKNOWN', message: '额度不足' },
+]
+
+// Failures that must NOT strike. These are real too: the first two are genuine
+// rate limits from the same providers that also emit balance failures, so a
+// naive "429 means out of balance" rule would wrongly strike a healthy model.
+const REAL_TRANSIENT = [
+  // opencode2dsh — a real rate limit.
+  { code: 'RATE_LIMIT', message: '429: {"type":"FreeUsageLimitError","message":"Rate limit exceeded. Please try again later."}' },
+  // codebuddy-cli — 使用量已超出频率限制 (a limit that resets, not an empty balance).
+  { code: 'RATE_LIMIT', message: '429: {"message":"codebuddy upstream soft_rate (http 429): {\\"code\\":6004,\\"msg\\":\\"您的使用量已超出频率限制，将在 2026-10-07 08:00:00 UTC+8 重置，您也可以切换其他模型继续使用。\\"}","type":"soft_rate","code":"soft_rate"}' },
+  // bigmodel — 访问量过大 (load, not balance).
+  { code: 'RATE_LIMIT', message: '429: {"code":"1305","message":"该模型当前访问量过大，请您稍后再试"}' },
+  // modelscope — an explicit rate limit with a commercial hint.
+  { code: 'RATE_LIMIT', message: '429: {"message":"We have to rate limit you for model deepseek-ai/DeepSeek-V4.1-Flash-1017. If you need higher limits, please consider other (commercial) options."}' },
+  // workbuddy — context overflow, whose text says 额度都无关.
+  { code: 'CONTEXT_WINDOW_EXCEEDED', message: '400: {"message":"workbuddy 上游失败：请求被上游拒绝（http 400）（code 11115，requestId b92c66e9-4a9d-4758-94bb-7b62adf9f073）。prompt is too long (upstream code 11115)。本次输入加上历史对话超过了模型上限。请精简内容、删掉大附件，或新建任务。该请求被上游按参数拒绝：与网络、账号、额度都无关，换账号也不会改变结果，请按上面的提示调整后重试","type":"client","code":"client"}' },
+  // workbuddy — a transport failure that merely *suggests* waiting for quota.
+  { code: 'SERVER', message: '502: {"message":"workbuddy 上游失败：上游异常（http 0）：池中其余账号本次请求都已尝试过。transport error: TypeError: fetch failed。建议换一个模型继续，或稍后等待该账号的额度恢复","type":"server","code":"server"}' },
+  // A credential that cannot use this model — not a balance problem.
+  { code: 'AUTH', message: '{"message":"your current account does not have access to this model","request_id":"abc"}' },
+  { code: 'TIMEOUT', message: 'opencode2dsh: first stream event timeout (exit silent before any response)' },
+  { code: 'SERVER', message: 'HTTP 500' },
+  { code: 'AUTH', message: 'invalid api key' },
+  // A 402-shaped number inside ordinary text must not be read as the status.
+  { code: 'UNKNOWN', message: 'model v402 retired' },
+]
+
+test('the classifier strikes every balance failure found in real session history', () => {
   const isInsufficient = INSUFFICIENT.isInsufficientBalance
-  // The Host's own provider-neutral codes.
+  for (const error of REAL_INSUFFICIENT) {
+    assert.equal(
+      isInsufficient(error),
+      true,
+      `must strike: [${error.code}] ${String(error.message).slice(0, 110)}`,
+    )
+  }
+})
+
+test('the classifier leaves real transient failures alone', () => {
+  const isInsufficient = INSUFFICIENT.isInsufficientBalance
+  for (const error of REAL_TRANSIENT) {
+    assert.equal(
+      isInsufficient(error),
+      false,
+      `must not strike: [${error.code}] ${String(error.message).slice(0, 110)}`,
+    )
+  }
+})
+
+test('a 429 is decided by its body, not by the status alone', () => {
+  const isInsufficient = INSUFFICIENT.isInsufficientBalance
+  // Same status, opposite meanings — this is the distinction the requirement
+  // turns on. The Host codes both as RATE_LIMIT.
+  assert.equal(
+    isInsufficient({ code: 'RATE_LIMIT', status: 429, message: '429: {"message":"insufficient balance"}' }),
+    true,
+    'a 429 whose body says the balance is empty strikes',
+  )
+  assert.equal(
+    isInsufficient({ code: 'RATE_LIMIT', status: 429, message: '429: {"message":"Rate limit exceeded. Please try again later."}' }),
+    false,
+    'a plain 429 rate limit does not',
+  )
+})
+
+test('the structured codes and a bare 402 stay authoritative', () => {
+  const isInsufficient = INSUFFICIENT.isInsufficientBalance
+  // The Host's own provider-neutral codes need no wording.
   assert.equal(isInsufficient({ code: 'QUOTA', message: 'nope' }), true)
   assert.equal(isInsufficient({ code: 'ACCOUNT_QUOTA', message: 'nope' }), true)
+  assert.equal(isInsufficient({ code: 'BUDGET_EXHAUSTED', message: 'nope' }), true)
   // A bare 402: the structured status, or the flattened HTTP_ code.
   assert.equal(isInsufficient({ code: 'UNKNOWN', message: 'failed', status: 402 }), true)
   assert.equal(isInsufficient({ code: 'HTTP_402', message: 'failed' }), true)
-  // Provider wording that survived an unclassified failure.
-  assert.equal(isInsufficient({ code: 'UNKNOWN', message: 'insufficient balance' }), true)
-  assert.equal(isInsufficient({ code: 'UNKNOWN', message: 'Insufficient credits for this request' }), true)
-  assert.equal(isInsufficient({ code: 'UNKNOWN', message: 'You are out of credits' }), true)
-  assert.equal(isInsufficient({ code: 'UNKNOWN', message: 'quota exceeded' }), true)
-  assert.equal(isInsufficient({ code: 'UNKNOWN', message: '账户余额不足' }), true)
-  assert.equal(isInsufficient({ code: 'UNKNOWN', message: '额度不足' }), true)
-})
-
-test('the insufficient classifier rejects transient and unrelated failures', () => {
-  const isInsufficient = INSUFFICIENT.isInsufficientBalance
-  // A rate limit is NOT an exhausted balance: the account still has credit.
-  assert.equal(isInsufficient({ code: 'RATE_LIMIT', message: 'rate limit reached' }), false)
-  assert.equal(isInsufficient({ code: 'TIMEOUT', message: 'timed out' }), false)
-  assert.equal(isInsufficient({ code: 'SERVER', message: 'HTTP 500' }), false)
-  assert.equal(isInsufficient({ code: 'AUTH', message: 'invalid api key' }), false)
-  // A 402-shaped number inside ordinary text must not be read as the status.
-  assert.equal(isInsufficient({ code: 'UNKNOWN', message: 'model v402 retired' }), false)
+  // Non-object inputs degrade instead of throwing.
   assert.equal(isInsufficient(null), false)
   assert.equal(isInsufficient(undefined), false)
+  assert.equal(isInsufficient('insufficient balance'), true)
 })
 
 test('the header route names the model a request was dispatched to', () => {
@@ -1695,6 +1784,45 @@ test('a 402 status and provider wording both strike the row', () => {
   tree = runtime.render(bundle.__component, props)
   assert.equal(rowOf('Kimi K2').props[ROW_INSUFFICIENT], 'true', 'provider wording strikes the row')
   assert.equal(rowOf('GLM 4.6').props[ROW_INSUFFICIENT], 'true', 'an earlier mark survives another model failing')
+})
+
+test('a 429 whose body says the balance is empty strikes the row, a plain 429 does not', () => {
+  // The user's case: providers such as modelscope-token-plan answer an empty
+  // balance with HTTP 429 and a body that says so. The Host codes it
+  // RATE_LIMIT, which is normally transient, so the panel must read the body —
+  // and must NOT strike when the same 429 really is a rate limit.
+  runtime.reset()
+  const feed = sessionsWithFeed([])
+  const { ctx, seat } = makeCtx({ sessions: feed.sessions })
+  bundle.apply(ctx)
+  const face = seat().registration.inject('session-1')
+  const props = {
+    ...face,
+    locked: false,
+    t: key => TEMPLATES[key] ?? key,
+    useProjection: key => (key === 'agentTeam' ? { enabled: false, tasks: [] } : { lastUsed: null, pending: null }),
+    useSession: () => null,
+    useSessions: () => undefined,
+  }
+  props.directory = snapshotStore(catalogState())
+  props.resolveDirectory = () => ({ store: props.directory })
+
+  let tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+  const rowOf = name => gridRows(tree).find(row => textOf(row).includes(name))
+
+  // 1. A genuine 429 rate limit must leave the row alone.
+  feed.append({ type: 'request/header', data: { header: { config: { provider: 'third-party', model: 'glm-4.6' } }, reason: 'initial' } })
+  feed.append({ type: 'turn/end', data: { turn: 1, reason: { kind: 'error', error: { code: 'RATE_LIMIT', message: '429: {"type":"FreeUsageLimitError","message":"Rate limit exceeded. Please try again later."}' } } } })
+  tree = runtime.render(bundle.__component, props)
+  assert.equal(rowOf('GLM 4.6').props[ROW_INSUFFICIENT], undefined, 'a plain 429 rate limit does not strike')
+
+  // 2. The same status with a balance body DOES strike.
+  feed.append({ type: 'request/header', data: { header: { config: { provider: 'third-party', model: 'glm-4.6' } }, reason: 'change' } })
+  feed.append({ type: 'turn/end', data: { turn: 2, reason: { kind: 'error', error: { code: 'RATE_LIMIT', message: '429: {"message":"insufficient balance","request_id":"4f188d7b-3798-417c-93c3-b93a32bdbb4e"}' } } } })
+  tree = runtime.render(bundle.__component, props)
+  assert.equal(rowOf('GLM 4.6').props[ROW_INSUFFICIENT], 'true', 'a 429 with an insufficient-balance body strikes')
 })
 
 test('the strike decoration is a line-through on the row text only', () => {

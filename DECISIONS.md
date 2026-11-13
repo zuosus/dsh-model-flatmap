@@ -5,6 +5,39 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-015 — 2026-11-13 — 429 不等于限流：额度判定改由正文决定
+
+**Context.** DEC-014 把额度不足的判定写成「结构化 code 优先，402 其次，正文兜底」。
+用户随后指出一个反例：`429: {"message":"insufficient balance","request_id":"…"}` ——
+同一个 429 状态既可能是真正的限流，也可能是余额耗尽，宿主对两者都给出 `RATE_LIMIT`。
+按 DEC-014 的写法，`RATE_LIMIT` 不划线，于是这类真实欠费会被漏掉。
+
+**Decision.**
+
+- **429 的状态不再具有判定权。** 402 仍可直接判定（payment required）；429 以及其它
+  状态一律交给正文判断：正文说明余额/额度耗尽就划线，纯限流就不划线。
+- **用真实数据校准判定词表。** 折叠本地 `~/.dsh/sessions` 全部 1270 个会话日志中
+  每一条 `turn/end` 失败（共 486 条无 status、21 条 402、15 条 400、9 条 403、
+  5 条 429），按 message 形状去重后得到 27 个与额度相关的形状：其中 20 个确属额度
+  不足，7 个是真正的限流/无关失败。词表据此扩充：`insufficient_user_quota`、
+  `not enough quota`、`no credits remaining`、`credits or licenses`、
+  `quota is exhausted`、`requests have exceeded the quota`、
+  `billing daily count exceeded`，以及 `额度已用尽` / `预算已用完` 等中文写法。
+- **新增 `BUDGET_EXHAUSTED` 代码**（真实会话中出现 50 次，如「今日学习调用预算已用完」）。
+- **把真实样本固化成测试。** render 测试新增 `REAL_INSUFFICIENT` / `REAL_TRANSIENT`
+  两张表，条目是原样粘贴的真实 `{ code, status?, message }`，逐条断言判定结果；另有
+  一条端到端用例证明「同一个 429，正文说余额不足则划线，纯限流则不划线」。
+
+**Rejected.** 只加一条「429 也算额度不足」的规则——那会把真正的限流也划上线，正好与
+需求相反。把判定放宽成「正文里出现 额度/balance 就算」——真实数据里有两条反例：
+上下文超限的消息写着「与网络、账号、额度都无关」，传输失败的消息只是「建议等待额度
+恢复」，两者都不该划线，现已作为反例固化在 `REAL_TRANSIENT` 里。
+
+**Consequences.** `client.js`：`INSUFFICIENT_TEXT` 扩充并加入中文预算/额度句式，
+`INSUFFICIENT_CODES` 增加 `BUDGET_EXHAUSTED`，`isInsufficientBalance` 注释明确 429
+由正文决定。测试从 2 条分类器用例扩展为 4 条 + 1 条端到端，总数 95 条全绿。判定结果
+在全部真实数据上复核：20 个欠费形状全部命中，7 个限流/无关形状全部不命中。
+
 ## DEC-014 — 2026-11-13 — 额度不足的模型行加删除线，直到该模型下一次返回非额度不足
 
 **Context.** 用户要求：模型调用的返回结果如果表示没有额度（402、message 里含

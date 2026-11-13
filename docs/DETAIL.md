@@ -106,12 +106,27 @@ and the agent teamwork switch are all visible at once.
   - **What counts.** The Host already classifies an exhausted account into the
     provider-neutral `QUOTA` / `ACCOUNT_QUOTA` codes and maps a provider HTTP
     `402` to `QUOTA`. The panel accepts those codes, a structured `status: 402`
-    (or an `HTTP_402` code), and — for a failure the Host flattened to
-    `UNKNOWN` with the provider's wording kept — the provider text itself
+    (or an `HTTP_402` code), and — for a failure the Host flattened to another
+    code with the provider's wording kept — the provider text itself
     (`insufficient balance` / `insufficient credits` / `quota exceeded` /
-    `out of credits` / `余额不足` / `额度不足`, among others). A rate limit is
-    deliberately NOT an insufficient balance: the account still has credit, so
-    `RATE_LIMIT` and the other transient codes never strike a row.
+    `out of credits` / `not enough quota` / `no credits remaining` /
+    `额度已用尽` / `余额不足` / `预算已用完`, among others).
+  - **A `429` is decided by its body, not by the status.** Several providers
+    answer an exhausted balance with HTTP **429** rather than 402 — for example
+    `429: {"message":"insufficient balance","request_id":"…"}`, which the Host
+    classifies as `RATE_LIMIT`. A `429` therefore neither strikes nor clears on
+    its status alone: the message decides, so a 429 carrying balance wording
+    strikes while a genuine rate limit (`Rate limit exceeded`,
+    `访问量过大`, `使用量已超出频率限制`) does not. The rule is pinned against
+    real recorded failures (see the `REAL_INSUFFICIENT` / `REAL_TRANSIENT`
+    tables in the render tests, harvested from local session history).
+  - **What does not count.** A transient limit leaves the account usable, so
+    `RATE_LIMIT` with rate-limit wording, `TIMEOUT`, `TRANSPORT`,
+    `CONTEXT_WINDOW_EXCEEDED`, a `SERVER` failure, and a credential that simply
+    cannot use the model never strike a row. Nor does a message that only
+    *mentions* 额度 — a context-overflow failure says “与网络、账号、额度都无关”
+    and a transport failure merely suggests waiting for quota to recover; both
+    are excluded, and the tests pin them.
   - **Which model.** The failing call's model is read from the `request/header`
     event that immediately precedes the failing `turn/end`, so the mark lands
     on the route (`provider/model`) the request was actually dispatched to —

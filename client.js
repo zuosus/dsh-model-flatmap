@@ -459,40 +459,71 @@ html[data-ds-dark-theme] .dshmf-reason { border-top-color: #6B7280; }
     // `turn/end` event as `reason.error` = `{ code, message, status? }`, so the
     // panel does not need a Host change: it folds the session event feed.
     //
-    // The wording pass exists because a failure can be flattened to `UNKNOWN`
-    // with the provider's text kept in `message` (an adapter that does not
-    // classify, or a transport wrapper). It is deliberately narrow: a bare
-    // "402" only counts when it reads as the status, never as a number inside
-    // another message.
+    // The wording pass exists because a failure can be flattened to a
+    // transient-looking code with the provider's text kept in `message`. The
+    // provider-status code is NOT authoritative for the account state: several
+    // providers answer an exhausted balance with **HTTP 429** rather than 402 —
+    // e.g. `429: {"message":"insufficient balance","request_id":"…"}` — and the
+    // Host classifies that as `RATE_LIMIT`, which is normally transient. The
+    // message therefore has to decide in that case, so a 429 with balance
+    // wording strikes while a 429 that is a real rate limit does not.
+    //
+    // The wording pass is deliberately narrow: a bare "402"/"429" only counts
+    // when it reads as the leading status, never as a number inside another
+    // message, and every example below is taken from a real recorded session.
     // ---------------------------------------------------------------------
 
     /** Failure codes that mean "this account has no usable balance left". */
-    const INSUFFICIENT_CODES = new Set(['QUOTA', 'ACCOUNT_QUOTA', 'INSUFFICIENT_QUOTA', 'INSUFFICIENT_BALANCE'])
+    const INSUFFICIENT_CODES = new Set([
+      'QUOTA', 'ACCOUNT_QUOTA', 'INSUFFICIENT_QUOTA', 'INSUFFICIENT_BALANCE', 'BUDGET_EXHAUSTED',
+    ])
 
     /**
      * Provider wording for an exhausted balance, credit, or account quota.
-     * Kept close to the Host's own classifier so the panel and the Chat's
-     * quota notice agree about what counts; the Host's regexes are not
-     * importable from a browser bundle, so the shapes are mirrored here.
+     * Mirrors the Host's own classifier so the panel and the Chat's quota notice
+     * agree about what counts, plus the provider-specific shapes seen in real
+     * sessions (the Host's regexes are not importable from a browser bundle).
      */
     const INSUFFICIENT_TEXT = [
-      /\binsufficient[\s_-]+(?:quota|balance|credits?|funds?)\b/i,
+      // "insufficient balance" / "insufficient_balance_error" / "insufficient credits".
+      /\binsufficient[\s_-]+(?:quota|balance|credits?|funds?|user[\s_-]+quota)\b/i,
+      // "quota exceeded" / "usage limit reached" / "quota_exceeded".
       /\b(?:quota|usage[\s_-]+limit)[\s_-]+(?:exceeded|exhausted|reached)\b/i,
+      // "exceeded your current quota".
       /\bexceed(?:ed|s)?[\s_-]+(?:(?:your|the)[\s_-]+)?(?:current[\s_-]+)?quota\b/i,
+      // "balance exhausted" / "credits depleted" / "credit too low".
       /\b(?:balance|credits?)[\s_-]+(?:exhausted|depleted|too[\s_-]+low)\b/i,
+      // "out of credits" / "out of budget".
       /\bout[\s_-]+of[\s_-]+(?:credits?|budget|balance)\b/i,
+      // "no credits remaining" (OpenAI) / "no available balance".
       /\bno[\s_-]+(?:available[\s_-]+)?(?:credits?|balance|quota)\b/i,
+      /\bno[\s_-]+credits?[\s_-]+remaining\b/i,
+      // "Not enough quota to pre-consume" (new-api gateways).
+      /\bnot[\s_-]+enough[\s_-]+quota\b/i,
+      // "doesn't have any credits or licenses yet" (xAI).
+      /\b(?:any|no)[\s_-]+credits?[\s_-]+or[\s_-]+licen[cs]es?\b/i,
+      // "Billing daily count exceeded" / billing hard limit.
+      /\bbilling[\s_-]+(?:daily[\s_-]+count[\s_-]+exceeded|hard[\s_-]+limit)\b/i,
+      // "Your requests have exceeded the quota" / "quota is exhausted" (Trae).
+      /\bquota[\s_-]+is[\s_-]+exhausted\b/i,
+      /\brequests?[\s_-]+have[\s_-]+exceeded[\s_-]+the[\s_-]+quota\b/i,
       /\bpayment[\s_-]+required\b/i,
-      /额度不足|余额不足|额度已用尽|余额已用尽|欠费|账户余额/,
+      // Chinese provider wording: 额度已用尽 / 余额不足 / 预算已用完 / 欠费.
+      /额度不足|余额不足|额度已用尽|余额已用尽|欠费|账户余额|额度已耗尽/,
+      /(?:预算|额度)[^。；;]{0,12}(?:已用完|已用尽|不足|耗尽)/,
     ]
 
     /**
      * Decide whether one recorded failure means the account ran out of
      * balance rather than hitting a transient limit.
      *
-     * A structured code is authoritative when the Host classified the failure.
-     * Otherwise the message text is checked, which covers a provider whose
-     * wording survived as `UNKNOWN` and a bare HTTP 402 reported as the status.
+     * A structured balance code is authoritative. A provider status of `402`
+     * ("payment required") is too. **`429` is NOT authoritative either way:**
+     * some providers report an exhausted balance with 429 and a body that says
+     * so (`429: {"message":"insufficient balance",…}`), which the Host
+     * classifies as `RATE_LIMIT`. For every other case the message decides, so
+     * a 429 carrying balance wording strikes while a genuine rate limit does
+     * not.
      * @param {unknown} error - a `turn/end` `reason.error` (`{ code, message, status }`), or a thrown value.
      * @returns {boolean} true only for an exhausted balance, credit, or quota.
      */
@@ -506,8 +537,13 @@ html[data-ds-dark-theme] .dshmf-reason { border-top-color: #6B7280; }
       // the account running dry. The structured `status` field is preferred; a
       // code shaped `HTTP_402` carries the same fact.
       if (error.status === 402 || code === 'HTTP_402') return true
+      // A 429 (or any other status) is decided by the text: providers use 429
+      // for BOTH a transient rate limit and an exhausted balance.
       const message = typeof error.message === 'string' ? error.message : ''
-      return INSUFFICIENT_TEXT.some(pattern => pattern.test(message))
+      if (INSUFFICIENT_TEXT.some(pattern => pattern.test(message))) return true
+      // `insufficient_user_quota` and friends can arrive only as a structured
+      // code inside the message body rather than as the failure code.
+      return /\binsufficient[\s_-]+user[\s_-]+quota\b/i.test(message)
     }
 
     /**

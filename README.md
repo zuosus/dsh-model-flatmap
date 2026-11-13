@@ -54,8 +54,9 @@ while active. Disabling the plugin restores the native control with no residue.
 - **Out-of-balance models are struck through.** A model whose last call failed
   on insufficient balance, credit, or quota keeps a `line-through` on its row
   text until a later call for that same model returns anything else. The strike
-  covers both the Host's `QUOTA` / `ACCOUNT_QUOTA` codes and a provider `402`,
-  and follows the model the failing request actually used.
+  follows the model the failing request actually used, and covers the Host's
+  `QUOTA` / `ACCOUNT_QUOTA` codes, a provider `402`, and a `429` whose body
+  reports an empty balance — a plain rate limit never strikes.
 - **Theme-aware.** Styled with host theme tokens only; looks correct in both
   light and dark themes.
 
