@@ -1285,3 +1285,18 @@ test('the teamwork row packs label and switch to the left', () => {
   assert.match(prop('display'), /flex/, 'the row is a flex line')
   assert.match(prop('align-items'), /center/, 'label and switch stay vertically centred')
 })
+
+
+// ---------------------------------------------------------------------------
+// One obvious grey divider separates the scrolling model grid from the fixed
+// reasoning row; the teamwork row below must NOT draw its own line.
+// ---------------------------------------------------------------------------
+test("a single grey divider sits between the grid and reasoning, not teamwork", () => {
+  const css = source.match(/const CSS = `([\s\S]*?)`/)[1]
+  const reason = css.slice(css.indexOf(".dshmf-reason {"), css.indexOf(".dshmf-reasonLabel {"))
+  const team = css.slice(css.indexOf(".dshmf-team {"), css.indexOf(".dshmf-teamLabel {"))
+
+  assert.ok(reason.includes("border-top: 2px solid #6B7280"), "obvious medium-grey line above reasoning")
+  assert.ok(css.includes("body[data-ds-dark-theme] .dshmf-reason"), "dark theme switches to a lighter grey")
+  assert.equal(team.includes("border-top"), false, "no divider between reasoning and teamwork")
+})

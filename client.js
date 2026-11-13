@@ -216,10 +216,18 @@ window.__ModuleLoader__.load({
    the track wraps below the caption only when the row cannot fit. The
    segment visual mirrors the header's grouping control, so the panel has
    one visual language for "one of many, exactly one active". */
+/* One obvious grey divider between the scrolling model grid and the fixed
+   reasoning row. Host border tokens are faint by design, so this line uses
+   explicit greys: medium grey on the light panel, a lighter near-white grey
+   on the dark panel. The teamwork row below has no line (DEC-011). */
 .dshmf-reason {
   flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap;
   gap: 2px 6px;
+  border-top: 2px solid #6B7280;
+  padding-top: 6px;
 }
+body[data-ds-dark-theme] .dshmf-reason,
+html[data-ds-dark-theme] .dshmf-reason { border-top-color: #D1D5DB; }
 .dshmf-reasonLabel {
   flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px;
   white-space: nowrap;
@@ -257,7 +265,6 @@ window.__ModuleLoader__.load({
 .dshmf-team {
   flex: 0 0 auto; display: flex; align-items: center; justify-content: flex-start; gap: 8px;
   min-height: 30px; padding: 0 6px; margin-top: 1px;
-  border-top: 0.5px solid var(--dsw-alias-border-l1);
   color: var(--dsw-alias-label-primary); font-size: 12px; line-height: 18px;
 }
 .dshmf-teamLabel { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
