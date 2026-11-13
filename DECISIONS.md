@@ -5,6 +5,43 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-022 — 2026-11-13 — 跑马灯只跑一趟、ease-in-out、离开即无动画归位
+
+取代: DEC-021 中「一轮 = 去 + 停 + 回、`linear`、`infinite`」的三条结论。
+DEC-021 的其余部分（窗口/轨道分层、0.5s 停留触发、badge 不参与、位移=截断量、
+reduced-motion 关闭）全部继续有效，条目本身按 append-only 规则保留原文。
+
+**Context.** 用户看完 DEC-021 的实现后提了两点：动画曲线要用 ease-in-ease-out，不要
+linear；并且不要来回跑，「第一次跑完就停止」，鼠标挪开后立即恢复原样、不需要动画。
+
+**Decision.**
+
+- **一趟，单向，停在末尾。** 关键帧只剩 `from { translateX(0) }` 和
+  `to { translateX(var(--dshmf-marquee-shift)) }` 两个点，`animation: ... 1 forwards`：
+  跑完就停在「最后一个字形贴住窗口右缘」的位置，不回程、不重复。
+  `forwards` 很关键——没有它，动画结束后会立刻跳回起点，鼠标一停住就会看到名字「闪回」。
+- **`ease-in-out`，速度口径改为「平均速度」。** 单程 + 对称缓动，所以周期就是
+  `shift / MARQUEE_PX_PER_SECOND`（原来的 `shift / 0.45` 是为「去+回各占 45%」留的预算，
+  现在没有回程了）。ease-in-out 让起步和到达都变柔和，而不改变平均速度——用户说的
+  「不要太快也不要太慢」约束的还是这个平均值。128px 溢出约 2.6s，比原来的 5.7s 短，
+  因为它只需走一趟。
+- **鼠标离开 = 立刻归位，无过渡。** `data-running` 一去掉，整条 `animation` 就从元素上
+  消失，transform 直接回到初始值。轨道上没有 `transition`（`transition-duration: 0s`），
+  所以不会出现「慢慢退回去」的动画——这正是用户要求的「立即变回原来的样子」。
+
+**Rejected.** 保留回程但把回程放到鼠标离开时触发（会与「立即恢复」直接冲突，且离开时
+还要一个动画，用户明确说不要）；用 `linear` 只改时长（第二条要求就是「不要 linear」）；
+用 `animation-direction: alternate` 做来回（等价于 infinite，被明确否掉）；在 JS 里用
+`transitionend` 把末尾状态固化成 inline style（多一套状态同步，且 `forwards` 已经够用）。
+
+**Consequences.** 仍是纯 CSS + 一个纯函数：`marqueePassGeometry` 的 duration 公式去掉
+`/0.45`，其余（shift、最小时长、reduced-motion、触发/取消路径）不变。测试同步改为钉住
+「关键帧只有一个 0px 起点」「`ease-in-out`、不带 `linear`、`1` 次、`forwards`、不带
+`infinite`」「duration == shift / speed」，并在 headless Chrome 里按 0/10/25/50/75/90/100%
+采样确认：位移单调增加到恰好 171px（`trackRight === winRight`），末尾 `dx=171` 且
+`playState: finished`，去掉 `data-running` 后 `dx=0`、`animations.length === 0`、
+`transition-duration: 0s`，badge 左缘全程 165px 不动。
+
 ## DEC-021 — 2026-11-13 — 命中截断的模型名行：hover 0.5s 后向左跑马灯，badge 不参与
 
 **Context.** 模型行的主文本（provider 分组下是模型名，family 分组下是 provider 名）在列宽

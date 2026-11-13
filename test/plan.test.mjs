@@ -289,24 +289,27 @@ test('the bundle factory materializes with the plugin face', () => {
 // starts a slow marquee. The geometry is a pure function so the speed can be
 // pinned: too fast reads as a glitch, too slow as a hang.
 // ---------------------------------------------------------------------------
-test('marquee geometry: shift is the clipped amount, duration keeps the speed fixed', () => {
+test('marquee geometry: one one-way pass at a fixed average speed', () => {
   assert.deepEqual(marqueePassGeometry(0), { shift: 0, duration: 0 }, 'a name that fits never moves')
   assert.deepEqual(marqueePassGeometry(-4), { shift: 0, duration: 0 }, 'a negative measurement is treated as "fits"')
   assert.deepEqual(marqueePassGeometry(Number.NaN), { shift: 0, duration: 0 }, 'NaN never animates')
 
-  // 128px of hidden name: both legs run at MARQUEE_PX_PER_SECOND with the
-  // keyframes' 45% out / 45% back split.
+  // ONE pass, no return leg: the duration is exactly the shift divided by the
+  // pinned average velocity (ease-in-out is symmetric, so it softens the ends
+  // around that average without changing it).
   const { shift, duration } = marqueePassGeometry(128)
   assert.equal(shift, 128, 'the name travels exactly as far as it is clipped')
-  const outLeg = (duration * 0.45) / 1000
-  assert.equal(Math.round((shift / outLeg) * 10) / 10, MARQUEE_PX_PER_SECOND, 'the out-leg runs at the pinned speed')
+  assert.equal(duration, Math.round((128 / MARQUEE_PX_PER_SECOND) * 1000),
+    'the single pass lasts exactly shift / speed — there is no return trip to budget for')
+  assert.equal(Math.round((shift / (duration / 1000)) * 10) / 10, MARQUEE_PX_PER_SECOND,
+    'the average velocity is the pinned speed')
 
   // Short overflows are held back by the floor instead of whipping past.
   assert.equal(marqueePassGeometry(1).shift, 1)
   assert.ok(marqueePassGeometry(1).duration >= MARQUEE_MIN_MS, 'a 1px overflow still gets the minimum pass')
 
-  // Longer names take longer, monotonically, and never slower than the speed.
+  // Longer names take longer, monotonically, and stay in a readable window.
   const long = marqueePassGeometry(400)
   assert.ok(long.duration > duration, 'a longer overflow takes longer')
-  assert.ok(duration >= 2000 && duration <= 6000, 'a ~128px overflow passes in a calm 2-6s window')
+  assert.ok(duration >= 2000 && duration <= 4000, 'a ~128px overflow passes in a calm 2-4s window')
 })
