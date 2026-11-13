@@ -5,6 +5,29 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## LES-012 — 2026-11-13 — Let flex-wrap own "does it fit on one line"
+
+When the requirement is "put A and B on one line if they fit, otherwise keep
+two lines", the tempting implementation is a measured pixel threshold: read
+`A.offsetWidth + B.offsetWidth + gap` and compare it to the container. That is
+a second, hand-rolled copy of a computation the browser already performs
+exactly and continuously. It adds a first-paint flash (measure happens after
+paint), it goes stale on font load, locale change, scrollbar appearance and
+theme switch, and its breakpoint is off by sub-pixel rounding.
+
+The robust shape is to give the two items one flex container with
+`flex-wrap: wrap` and the required `column-gap`, let each item keep `flex: 0 0
+auto` and `max-width: 100%`, and let the browser break the line. The gap
+requirement is then stated once, as CSS. JS is only needed for facts CSS cannot
+express — here, whether the two ended up on the same line — and that flag must
+be *derived after layout* and must never feed back into layout, otherwise a
+stale flag can pin the wrong state.
+
+Also: when two previously separate fixed rows become one container, fix the
+height accounting in the same change. Summing the children's heights still
+"works" in the two-row state but double-counts a shared line, silently
+shrinking the scrolling grid. Measure the container, not the parts.
+
 ## LES-011 — 2026-11-13 — "Smart, flexible" row text means conditional, not just restyled
 
 Three traps from reworking family rows, worth remembering before the next

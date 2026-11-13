@@ -1389,3 +1389,87 @@ test('a missing localStorage still yields the default without throwing', () => {
   assert.equal(bundle.__test.readGrouping(), bundle.__test.GROUPING_DEFAULT, 'default without storage')
   assert.doesNotThrow(() => bundle.__test.writeGrouping('family'), 'writing is a no-op without storage')
 })
+
+// Adaptive footer: the reasoning group and the teamwork group share one line
+// when both fit with a 30px gap, otherwise each keeps its own line. The
+// decision is CSS flex-wrap, so the DOM always holds both in ONE footer.
+// ---------------------------------------------------------------------------
+function openPanel(state, options) {
+  runtime.reset()
+  const made = makeProps(state, options)
+  let tree
+  runtime.setRerender(() => { tree = runtime.render(bundle.__component, made.props) })
+  tree = runtime.render(bundle.__component, made.props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, made.props)
+  return { tree, made }
+}
+
+test('reason and team live in one footer container, strips stay outside', () => {
+  const { tree } = openPanel(catalogState())
+  const footers = findAll(tree, node => hasClass(node, 'dshmf-footer'))
+  assert.equal(footers.length, 1, 'one adaptive footer wraps both groups')
+  const reason = findAll(tree, node => hasClass(node, 'dshmf-reason'))[0]
+  const team = findAll(tree, node => hasClass(node, 'dshmf-team'))[0]
+  assert.ok(reason && team, 'both groups render')
+  assert.ok(findAll(footers[0], node => node === reason).length === 1,
+    'the reasoning group is inside the footer')
+  assert.ok(findAll(footers[0], node => node === team).length === 1,
+    'the teamwork group is inside the footer')
+  // Failure/confirmation strips are NOT footer children: they keep their own
+  // full-width rows and the footer stays the bottom-most fixed block.
+  assert.equal(findAll(footers[0], node => hasClass(node, 'dshmf-error')).length, 0)
+  assert.equal(findAll(footers[0], node => hasClass(node, 'dshmf-confirm')).length, 0)
+})
+
+test('the footer is a wrapping flex line with a 30px gap between the groups', () => {
+  const css = source.match(/const CSS = `([\s\S]*?)`/)[1]
+  const footer = css.match(/\.dshmf-footer \{([\s\S]*?)\}/)[1]
+  const prop = name => {
+    const hit = footer.match(new RegExp(`${name}:\\s*([^;]+);`))
+    return hit === null ? undefined : hit[1].trim()
+  }
+  assert.match(prop('display'), /flex/, 'the footer is a flex line')
+  assert.match(prop('flex-wrap'), /wrap/, 'it wraps to two lines when they do not fit')
+  assert.match(prop('column-gap'), /30px/, 'at least 30px is guaranteed between the two groups')
+})
+
+test('the footer renders neither group when both are absent, and one when only one exists', () => {
+  // No reasoning metadata and no agentTeams projection: no footer at all.
+  const noTeam = catalogState({ current: { provider: 'third-party', model: 'glm-4.6' } })
+  const a = openPanel(noTeam, { inject: { useProjection: () => undefined, teamAvailable: () => false } })
+  assert.equal(findAll(a.tree, node => hasClass(node, 'dshmf-footer')).length, 0,
+    'no groups means no empty footer')
+
+  // Reasoning present, teamwork absent: footer still wraps the reasoning group.
+  const b = openPanel(catalogState(), { inject: { useProjection: () => undefined, teamAvailable: () => false } })
+  const footers = findAll(b.tree, node => hasClass(node, 'dshmf-footer'))
+  assert.equal(footers.length, 1)
+  assert.equal(findAll(footers[0], node => hasClass(node, 'dshmf-reason')).length, 1)
+  assert.equal(findAll(footers[0], node => hasClass(node, 'dshmf-team')).length, 0)
+
+  // Teamwork present, no reasoning: footer still wraps the team group.
+  const c = openPanel(catalogState({ current: { provider: 'third-party', model: 'glm-4.6' } }))
+  const cf = findAll(c.tree, node => hasClass(node, 'dshmf-footer'))
+  assert.equal(cf.length, 1)
+  assert.equal(findAll(cf[0], node => hasClass(node, 'dshmf-reason')).length, 0)
+  assert.equal(findAll(cf[0], node => hasClass(node, 'dshmf-team')).length, 1)
+})
+
+test('the teamwork row draws no divider and layout stays CSS-owned', () => {
+  const css = source.match(/const CSS = `([\s\S]*?)`/)[1]
+  const team = css.match(/\.dshmf-team \{([\s\S]*?)\}/)[1]
+  assert.equal(team.includes('border-top'), false,
+    'the teamwork row never draws its own divider, in either state')
+  // No JS width threshold decides the layout: only the footer wrap + gap do.
+  const footer = css.match(/\.dshmf-footer \{([\s\S]*?)\}/)[1]
+  assert.doesNotMatch(footer, /width:/, 'the footer does not hard-code a width')
+  assert.doesNotMatch(source, /footerInline.*px|px.*footerInline/, 'no pixel guess in JS')
+})
+
+test('the fixed-height measurement counts the footer once, not reason+team twice', () => {
+  const heights = source.match(/const heights = \[([^\]]+)\]/)[1]
+  assert.ok(heights.includes('footerRef'), 'the composed footer is measured')
+  assert.ok(!heights.includes('reasonRef') && !heights.includes('teamRef'),
+    'the two overlapping children are not double-counted')
+})

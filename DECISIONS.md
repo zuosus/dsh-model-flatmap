@@ -5,6 +5,62 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-013 — 2026-11-13 — Reasoning group and teamwork switch share one adaptive footer line
+
+**Context.** The reasoning group ("推理等级" + segment track) and the agent
+teamwork row (label + info + switch) each owned their own fixed row at the
+bottom of the panel, so the panel always spent two lines on them. The user
+asked for them to sit on ONE line when a line can hold both — with at least
+30 px between them — and to keep the current two-row look when it cannot.
+
+**Decision.**
+
+- Both groups now live inside a single `dshmf-footer` flex container. The
+  footer is `display: flex; flex-wrap: wrap; column-gap: 30px; row-gap: 4px`,
+  and each child keeps `flex: 0 0 auto` + `max-width: 100%` so it renders at
+  its natural width and caps (rather than overflows) when it ends up alone.
+- The one-line/two-line decision is **CSS flex wrapping**, not a JS pixel
+  threshold: the footer takes the panel width, and the children share a line
+  exactly when `reason + 30 + team <= panel inner width`. This stays correct
+  across window resize, font loading, locale text length and both themes, with
+  no measurement race and no second source of truth. It also degrades to the
+  exact previous two-row layout automatically, which is what "keep it as it is
+  when it does not fit" means.
+- `column-gap: 30px` is the required middle margin; in the wrapped state it
+  contributes nothing (no cross-axis gap), and `row-gap: 4px` preserves the
+  original stacking rhythm.
+- No divider juggling was needed: DEC-011 (merged independently on `main`
+  while this change was in progress) already removed the teamwork row's own
+  border and keeps a single grey rule above the reasoning group, so a shared
+  line needs no conditional hairline. The teamwork row's old `margin-top: 1px`
+  was dropped too, because inside the footer the `row-gap` supplies that
+  spacing and a stray top margin would misalign the two groups on a shared
+  line.
+- Fixed-height accounting changed with it: the panel used to measure
+  `reasonRef` and `teamRef` separately and sum them. On a shared line those two
+  heights overlap, so summing would over-subtract from the grid budget and
+  shrink the scroll area for no reason. The measurement now sums `footerRef`
+  once instead.
+- Failure strips (`dshmf-error`) and the disable-confirmation (`dshmf-confirm`)
+  stay OUTSIDE the footer: they are full-width, conditional rows that must not
+  be squeezed into a half-line next to the groups. The footer only ever holds
+  the reasoning group and the teamwork row.
+
+**Rejected.** A `ResizeObserver` + JS width comparison that flips a class at a
+threshold: it duplicates a breakpoint the browser already computes exactly,
+adds a first-paint flash, and drifts when fonts or the locale change.
+Setting the footer to `width: max-content` so `flex-wrap` is decided by
+shrink-to-fit: the footer would then never wrap, because `max-content` is by
+definition the no-wrap width. Giving the children `flex: 1 1 0` or a shared
+`gap` on the panel: either stretches a group to fill half the line when only
+one is present, or makes the 30 px apply between unrelated sections.
+
+**Consequences.** One shared line is used whenever it fits, so the grid gains
+a row of height in that state. Rendering order, radio semantics, switch
+semantics, keyboard handling and the disable confirmation are unchanged; the
+DOM now nests the two groups under one extra wrapper, which the render tests
+pin (both groups inside one footer, strips outside, footer measured once).
+
 ## DEC-012 — ⛔️ 2026-11-13 — Family rows are provider-primary, and a brand's generations stay distinct
 
 推翻: DEC-004 的两点结论（"每行以次级文字显示 provider" 与 "hy3/hy4 合并进一个 HY 家族"）。

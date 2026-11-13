@@ -7,8 +7,9 @@ and the agent teamwork switch are all visible at once.
 ## What it does
 
 - **One surface.** The trigger opens one panel capped at 320 px. The header,
-  the reasoning row, and the teamwork row stay fixed; only the model grid
-  scrolls.
+  and one adaptive footer holding the reasoning group and the teamwork row,
+  stay fixed; only the model grid scrolls. The two footer groups share a single
+  line when both fit with a 30 px gap, and otherwise fall back to one row each.
 - **Global search.** The search box filters across every provider and every
   family. Groups that end up empty are not rendered, so no stray headings
   remain. Prefix matches rank first, then substring matches, then ordered
@@ -71,6 +72,15 @@ and the agent teamwork switch are all visible at once.
   unmistakable. A click submits through `session.selectModel` and the group
   refreshes from the directory once it updates. A model without reasoning
   metadata hides the whole group, and it costs no height.
+  The group shares a wrapping footer line with the teamwork row: when
+  reasoning + 30 px + teamwork fits the panel's inner width they sit side by
+  side, otherwise the footer wraps back to the original two-line stack. The
+  break is decided by CSS flex wrapping and the 30 px `column-gap`, never by a
+  JS width threshold, so it stays correct across panel resizes, font loads and
+  both themes. The single grey rule above the reasoning group stays where it
+  is in both states; the teamwork row draws no divider of its own (DEC-011).
+  The fixed height budget measures the footer container once, not its two
+  children, so a shared line is not double-counted against the grid.
 - **Selected model.** The current model reads as a solid deep-blue band with
   white, bold text — no checkmark on the right. Selection lives on the row
   itself (`aria-pressed="true"`), so nothing is reserved at the trailing edge:
@@ -86,7 +96,9 @@ and the agent teamwork switch are all visible at once.
   translucent white chip so it stays legible on the blue fill.
 - **Agent teamwork.** The switch keeps the host's semantics: the same label,
   the same confirmation before disabling it mid-conversation, and no optimistic
-  update — the state comes from the `agentTeam` projection.
+  update — the state comes from the `agentTeam` projection. The row lives in
+  the shared footer line described under *Reasoning levels*, immediately right
+  of the reasoning group when both fit on one line.
 
 ## Data and interaction
 

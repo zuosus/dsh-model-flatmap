@@ -220,6 +220,23 @@ window.__ModuleLoader__.load({
 .dshmf-empty { grid-column: 1 / -1; padding: 10px 8px; color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; }
 .dshmf-failure { grid-column: 1 / -1; padding: 2px 6px; color: var(--dsw-alias-state-warn-label); font-size: 11px; line-height: 16px; overflow-wrap: anywhere; }
 
+/* Adaptive footer: the reasoning group and the teamwork group share one line
+   when BOTH fit side by side with a guaranteed 30px gap, and otherwise fall
+   back to one row each (the original two-line look). The decision is pure CSS:
+   the footer stretches to the panel width, each child keeps its natural
+   max-content width (flex 0 0 auto), and flex-wrap plus a 30px column-gap
+   puts them on one line exactly when reason + 30 + team <= panel width.
+   No JS width guessing, so it stays correct across panel resize, theme and
+   font changes. A max-width of 100% lets a child that ends up alone on a line
+   cap to the panel width and wrap internally instead of overflowing.
+   The teamwork row carries no divider of its own (DEC-011 keeps the single
+   grey rule above the reasoning group only), so a shared line needs no
+   border juggling. */
+.dshmf-footer {
+  flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap;
+  column-gap: 30px; row-gap: 4px;
+}
+
 /* Reasoning levels: a caption and a multi-segmentation control on one line;
    the track wraps below the caption only when the row cannot fit. The
    segment visual mirrors the header's grouping control, so the panel has
@@ -230,7 +247,7 @@ window.__ModuleLoader__.load({
    on the dark panel. The teamwork row below has no line (DEC-011). */
 .dshmf-reason {
   flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap;
-  gap: 2px 6px;
+  gap: 2px 6px; max-width: 100%;
   border-top: 1px solid #9CA3AF;
   padding-top: 6px;
 }
@@ -272,7 +289,8 @@ html[data-ds-dark-theme] .dshmf-reason { border-top-color: #6B7280; }
    so the switch sits immediately to the right of the title. */
 .dshmf-team {
   flex: 0 0 auto; display: flex; align-items: center; justify-content: flex-start; gap: 8px;
-  min-height: 30px; padding: 0 6px; margin-top: 1px;
+  max-width: 100%;
+  min-height: 30px; padding: 0 6px;
   color: var(--dsw-alias-label-primary); font-size: 12px; line-height: 18px;
 }
 .dshmf-teamLabel { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
@@ -950,6 +968,7 @@ html[data-ds-dark-theme] .dshmf-reason { border-top-color: #6B7280; }
       const errorRef = useRef(null)
       const reasonRef = useRef(null)
       const teamRef = useRef(null)
+      const footerRef = useRef(null)
       const teamErrorRef = useRef(null)
       const confirmRef = useRef(null)
       const id = useId()
@@ -1134,11 +1153,15 @@ html[data-ds-dark-theme] .dshmf-reason { border-top-color: #6B7280; }
       const busy = state.pending !== null
 
       // ---- measurement: probe metrics + fixed-section heights
+      // The reasoning group and the teamwork row now share ONE footer flex
+      // container, so measure that container once instead of the two children
+      // separately: when they sit on the same line the two heights overlap,
+      // and summing them would over-subtract from the grid's budget.
       useLayoutEffect(() => {
         if (!open) return
         const rowH = probeRowRef.current?.getBoundingClientRect().height ?? 26
         const headH = probeHeadRef.current?.getBoundingClientRect().height ?? 20
-        const heights = [headRef, errorRef, reasonRef, confirmRef, teamErrorRef, teamRef]
+        const heights = [headRef, errorRef, footerRef, confirmRef, teamErrorRef]
           .map(ref => ref.current?.offsetHeight ?? 0)
           .filter(height => height > 0)
         const fixed = heights.reduce((sum, height) => sum + height, 0)
@@ -1586,38 +1609,68 @@ html[data-ds-dark-theme] .dshmf-reason { border-top-color: #6B7280; }
 
             // ---- fixed: reasoning levels of the current model, rendered as
             // one labelled group of mutually exclusive choices
-            effortChoices.length === 0 ? null : h('div', {
-              className: 'dshmf-reason',
-              ref: reasonRef,
-              role: 'radiogroup',
-              'aria-labelledby': `${id}-effort-label`,
-              onKeyDown: onEffortKeyDown,
-            },
-              h('span', {
-                className: 'dshmf-reasonLabel',
-                id: `${id}-effort-label`,
-                title: t('effort.hint'),
-              }, svg(PATH_SPARK, 12), t('effort.label')),
-              h('div', { className: 'dshmf-pills' }, effortChoices.map(level => {
-                const selected = effectiveEffort === level.id
-                const pendingThis = state.pending !== null
-                  && state.pending.provider === state.current?.provider
-                  && state.pending.model === state.current.model
-                  && state.pending.reasoningEffort === level.id
-                return h('button', {
-                  key: level.id,
-                  type: 'button',
-                  role: 'radio',
-                  className: 'dshmf-pill',
-                  'aria-checked': selected,
-                  title: level.description ?? level.name,
-                  disabled: busy || state.current === null,
-                  onClick: () => { chooseEffort(level.id) },
-                }, pendingThis
-                  ? h('span', { className: 'dshmf-spin' })
-                  : h('span', { className: 'dshmf-pillName' }, level.name))
-              })),
-            ),
+            // ---- fixed, bottom: the agent teamwork switch. `teamAvailable`
+            // is evaluated per render because the remote scope may bind late.
+            // Both live in ONE footer flex container: they share a line when
+            // they fit with the 30px gap, otherwise each takes its own line.
+            (effortChoices.length === 0 && (teamMode === undefined || !teamAvailable()))
+              ? null
+              : h('div', { className: 'dshmf-footer', ref: footerRef },
+                effortChoices.length === 0 ? null : h('div', {
+                  className: 'dshmf-reason',
+                  ref: reasonRef,
+                  role: 'radiogroup',
+                  'aria-labelledby': `${id}-effort-label`,
+                  onKeyDown: onEffortKeyDown,
+                },
+                  h('span', {
+                    className: 'dshmf-reasonLabel',
+                    id: `${id}-effort-label`,
+                    title: t('effort.hint'),
+                  }, svg(PATH_SPARK, 12), t('effort.label')),
+                  h('div', { className: 'dshmf-pills' }, effortChoices.map(level => {
+                    const selected = effectiveEffort === level.id
+                    const pendingThis = state.pending !== null
+                      && state.pending.provider === state.current?.provider
+                      && state.pending.model === state.current.model
+                      && state.pending.reasoningEffort === level.id
+                    return h('button', {
+                      key: level.id,
+                      type: 'button',
+                      role: 'radio',
+                      className: 'dshmf-pill',
+                      'aria-checked': selected,
+                      title: level.description ?? level.name,
+                      disabled: busy || state.current === null,
+                      onClick: () => { chooseEffort(level.id) },
+                    }, pendingThis
+                      ? h('span', { className: 'dshmf-spin' })
+                      : h('span', { className: 'dshmf-pillName' }, level.name))
+                  })),
+                ),
+                teamMode === undefined || !teamAvailable()
+                  ? null
+                  : h('div', { className: 'dshmf-team', ref: teamRef },
+                    h('span', { className: 'dshmf-teamLabel' },
+                      h('span', { className: 'dshmf-teamName' }, t('team.label')),
+                      h('span', {
+                        className: 'dshmf-info',
+                        title: t('team.description'),
+                        'aria-hidden': 'true',
+                      }, svg(PATH_INFO, 12)),
+                    ),
+                    h('button', {
+                      type: 'button',
+                      role: 'switch',
+                      className: 'dshmf-switch',
+                      'aria-checked': teamMode.enabled,
+                      'aria-label': t('team.label'),
+                      title: t('team.description'),
+                      disabled: locked || busy || teamPending || modelSelection === undefined,
+                      onClick: () => { changeTeamMode(!teamMode.enabled) },
+                    }, h('span', { className: 'dshmf-thumb' })),
+                  ),
+              ),
 
             // ---- fixed: teamwork disable confirmation
             confirming ? h('div', {
@@ -1653,31 +1706,6 @@ html[data-ds-dark-theme] .dshmf-reason { border-top-color: #6B7280; }
               ref: teamErrorRef,
               role: 'status',
             }, teamFailure),
-
-            // ---- fixed, bottom: the agent teamwork switch. `teamAvailable`
-            // is evaluated per render because the remote scope may bind late.
-            teamMode === undefined || !teamAvailable()
-              ? null
-              : h('div', { className: 'dshmf-team', ref: teamRef },
-                h('span', { className: 'dshmf-teamLabel' },
-                  h('span', { className: 'dshmf-teamName' }, t('team.label')),
-                  h('span', {
-                    className: 'dshmf-info',
-                    title: t('team.description'),
-                    'aria-hidden': 'true',
-                  }, svg(PATH_INFO, 12)),
-                ),
-                h('button', {
-                  type: 'button',
-                  role: 'switch',
-                  className: 'dshmf-switch',
-                  'aria-checked': teamMode.enabled,
-                  'aria-label': t('team.label'),
-                  title: t('team.description'),
-                  disabled: locked || busy || teamPending || modelSelection === undefined,
-                  onClick: () => { changeTeamMode(!teamMode.enabled) },
-                }, h('span', { className: 'dshmf-thumb' })),
-              ),
 
             // ---- measurement probe (never painted). It mirrors a family-
             // grouped row (provider primary + variant tag), the widest row

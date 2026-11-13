@@ -48,6 +48,9 @@ while active. Disabling the plugin restores the native control with no residue.
 - **Reasoning effort.** The current model's reasoning levels render as an
   exclusive, keyboard-operable group ("推理等级" / "Reasoning effort") driven by
   radio semantics.
+- **Adaptive footer.** The reasoning group and the agent-teamwork switch share
+  one line when both fit with a 30 px gap, and fall back to one row each when
+  they do not — the break is CSS flex wrapping, not a measured pixel threshold.
 - **Theme-aware.** Styled with host theme tokens only; looks correct in both
   light and dark themes.
 
