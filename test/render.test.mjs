@@ -190,12 +190,33 @@ const TEMPLATES = {
   'failure.group': 'failure.group:{name}/{message}',
   'trigger.aria': 'trigger.aria:{model}',
   'trigger.ariaEffort': 'trigger.ariaEffort:{model}/{effort}',
-  'team.failed': 'team.failed:{message}',
+}
+
+/**
+ * Stand-in for the host's `conversation.input.model.options` child slot. The
+ * real slot renders `TeamModeToggle` (label + info button + a Switch with
+ * role="switch"); this stub draws the same shape so the panel's bottom row can
+ * be asserted, and records every dispatch so owner props are inspectable.
+ */
+function stubOptionsSlot(calls) {
+  return (key, owner) => {
+    calls.push({ key, owner })
+    return {
+      type: 'div',
+      props: { className: 'host-team-toggle' },
+      children: [{
+        type: 'button',
+        props: { type: 'button', role: 'switch', 'aria-checked': false, 'aria-label': 'host.team.label' },
+        children: [],
+      }],
+    }
+  }
 }
 
 function makeProps(state, options = {}) {
   const directory = snapshotStore(state)
   const t = key => TEMPLATES[key] ?? key
+  const slotCalls = []
   return {
     props: {
       locked: false,
@@ -206,14 +227,13 @@ function makeProps(state, options = {}) {
       load: () => {},
       select: () => Promise.resolve({ ok: true, value: undefined }),
       resolveText: text => (typeof text === 'string' ? text : text.en),
-      teamAvailable: true,
-      setTeamMode: () => Promise.resolve({ ok: true, value: undefined }),
-      useProjection: key => (key === 'agentTeam' ? { enabled: false, tasks: [] } : { lastUsed: null, pending: null }),
+      renderSlot: stubOptionsSlot(slotCalls),
       useSession: () => null,
       useSessions: () => undefined,
       ...options.inject,
     },
     directory,
+    slotCalls,
   }
 }
 
@@ -329,10 +349,14 @@ test('opening renders every section with no second-level menu', () => {
   assert.equal(pills.every(pill => pill.props.role === 'radio'), true)
   assert.equal(pills.filter(pill => pill.props['aria-checked'] === true).length, 1)
 
-  // teamwork switch on the same surface
+  // the host's OWN options slot is the fixed bottom row, on the same surface
+  const optionsRows = findAll(tree, node => hasClass(node, 'dshmf-options'))
+  assert.equal(optionsRows.length, 1, 'one fixed options row')
   const switches = findAll(tree, node => node.props?.role === 'switch')
   assert.equal(switches.length, 1)
   assert.equal(switches[0].props['aria-checked'], false)
+  // and the row sits after the grid, not inside it
+  assert.equal(findAll(grid, node => node.props?.role === 'switch').length, 0)
 })
 
 test('provider grouping shows one title per provider', () => {
@@ -645,7 +669,8 @@ test('an empty catalog shows the empty-catalog text and no reasoning row', () =>
   tree = runtime.render(bundle.__component, props)
   assert.equal(textOf(findAll(tree, node => hasClass(node, 'dshmf-empty'))[0]), 'empty.models')
   assert.equal(findAll(tree, node => hasClass(node, 'dshmf-reason')).length, 0)
-  // the teamwork row keeps its own rule: it renders when the projection exists
+  // the host options row is independent of the catalog and stays visible
+  assert.equal(findAll(tree, node => hasClass(node, 'dshmf-options')).length, 1)
   assert.equal(findAll(tree, node => node.props?.role === 'switch').length, 1)
 })
 
@@ -765,28 +790,68 @@ test('re-clicking the checked reasoning level submits nothing', () => {
   assert.deepEqual(calls, [])
 })
 
-test('disabling teamwork asks for confirmation before it submits', () => {
+test('the host options slot gets the shipped picker owner share', () => {
   runtime.reset()
-  const calls = []
-  const { props } = makeProps(catalogState(), {
-    inject: {
-      useProjection: key => (key === 'agentTeam'
-        ? { enabled: true, tasks: [] }
-        : { lastUsed: { provider: 'p', model: 'm' }, pending: null }),
-      setTeamMode: enabled => { calls.push(enabled); return Promise.resolve({ ok: true }) },
-    },
-  })
+  const { props, slotCalls } = makeProps(catalogState())
   let tree = runtime.render(bundle.__component, props)
   findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
   tree = runtime.render(bundle.__component, props)
-  findAll(tree, node => node.props?.role === 'switch')[0].props.onClick()
+  assert.equal(slotCalls.length, 1, 'the options slot is dispatched exactly once')
+  const { key, owner } = slotCalls[0]
+  assert.equal(key, 'conversation.input.model.options')
+  assert.equal(owner.locked, false)
+  assert.equal(typeof owner.dismiss, 'function')
+  assert.equal(typeof owner.reportFailure, 'function')
+  // no hand-rolled switch/confirmation copy remains: the host owns all of it
+  assert.equal(findAll(tree, node => hasClass(node, 'dshmf-confirm')).length, 0)
+  assert.equal(findAll(tree, node => hasClass(node, 'dshmf-switch')).length, 0)
+})
+
+test('the options slot locked share folds in an in-flight selection', () => {
+  runtime.reset()
+  const { props, slotCalls } = makeProps(catalogState({
+    pending: { provider: 'deepseek-account', model: 'deepseek-chat' },
+  }))
+  let tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
   tree = runtime.render(bundle.__component, props)
-  assert.deepEqual(calls, [], 'nothing is submitted before confirmation')
-  assert.equal(findAll(tree, node => hasClass(node, 'dshmf-confirm')).length, 1)
-  const confirm = findAll(tree, node => hasClass(node, 'dshmf-confirmBtn'))
-    .find(button => button.props['data-primary'] === 'true')
-  confirm.props.onClick()
-  assert.deepEqual(calls, [false])
+  assert.equal(slotCalls[0].owner.locked, true)
+})
+
+test('dismiss closes the panel before the host opens its confirmation', () => {
+  runtime.reset()
+  const { props, slotCalls } = makeProps(catalogState())
+  let tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+  assert.equal(findAll(tree, node => hasClass(node, 'dshmf-panel')).length, 1)
+  slotCalls[0].owner.dismiss()
+  tree = runtime.render(bundle.__component, props)
+  assert.equal(findAll(tree, node => hasClass(node, 'dshmf-panel')).length, 0)
+})
+
+test('reportFailure surfaces the host-provided message in the error strip', () => {
+  runtime.reset()
+  const { props, slotCalls } = makeProps(catalogState())
+  let tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+  slotCalls[0].owner.reportFailure('无法确认智能体团队协作设置已保存')
+  tree = runtime.render(bundle.__component, props)
+  const strips = findAll(tree, node => hasClass(node, 'dshmf-error'))
+  assert.equal(strips.length, 1)
+  assert.match(textOf(strips[0]), /无法确认智能体团队协作设置已保存/)
+})
+
+test('without a renderSlot face the panel still renders (no host options)', () => {
+  runtime.reset()
+  const { props } = makeProps(catalogState())
+  delete props.renderSlot
+  let tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+  assert.equal(findAll(tree, node => hasClass(node, 'dshmf-panel')).length, 1)
+  assert.equal(findAll(tree, node => hasClass(node, 'dshmf-options')).length, 0)
 })
 
 test('a Session whose directory is not bound yet still renders a trigger', () => {
@@ -954,8 +1019,19 @@ test('apply registers the seat when optional services are absent', () => {
   assert.ok(registeredSeat)
   const face = registeredSeat.registration.inject('session-1')
   assert.equal(face.available, true)
-  assert.equal(face.teamAvailable, false)
   assert.equal(typeof face.select, 'function')
+  assert.equal(typeof face.resolveText, 'function')
+})
+
+test('the seat declares the same child slots as the shipped picker', () => {
+  runtime.reset()
+  const { ctx, seat } = makeCtx()
+  bundle.apply(ctx)
+  const children = seat().registration.children
+  assert.deepEqual(children, {
+    'conversation.input.model.label': { kind: 'single', scope: 'session', inline: true },
+    'conversation.input.model.options': { kind: 'list', scope: 'session' },
+  })
 })
 
 test('a directory that cannot resolve yet still yields a renderable seat', () => {
@@ -993,9 +1069,6 @@ test('a crashing panel degrades to a minimal chip instead of throwing', () => {
     load: () => {},
     select: () => Promise.resolve(undefined),
     resolveText: value => (typeof value === 'string' ? value : value.en),
-    teamAvailable: false,
-    setTeamMode: () => Promise.resolve(undefined),
-    useProjection: () => undefined,
     useSession: selector => selector({}),
     useSessions: selector => selector({ byId: {} }),
   }

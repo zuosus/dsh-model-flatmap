@@ -65,9 +65,19 @@ and the agent teamwork switch are all visible at once.
 - **Badges.** A model's catalog badge (for example a third-party rate
   multiplier such as `×0.1`) renders inside its row. A model with no badge
   renders no empty slot.
-- **Agent teamwork.** The switch keeps the host's semantics: the same label,
-  the same confirmation before disabling it mid-conversation, and no optimistic
-  update — the state comes from the `agentTeam` projection.
+- **Agent teamwork.** The fixed bottom row is the host's OWN model-picker
+  options slot: the panel declares `conversation.input.model.options` as a child
+  slot (the same declaration the shipped `ModelSelect` makes) and renders it via
+  `renderSlot`. That slot is where `dsh-client-ui-agent-team` registers its
+  `TeamModeToggle`, so what appears here IS the shipped switch — identical label
+  and description in every locale, the same info tooltip, the same Switch
+  primitive chrome and on/off state, the same session-owned `agentTeam`
+  projection with no optimistic update, and the host's own shell-overlay
+  confirmation before disabling it mid-conversation. The panel supplies the
+  same owner share the shipped picker does (`locked`, `dismiss`,
+  `reportFailure`); a failed save is shown in the panel's error strip using the
+  host's already-localized message. No copy, styling or confirmation flow is
+  reimplemented.
 
 ## Data and interaction
 
@@ -78,9 +88,11 @@ Everything goes through public Client APIs:
   `select()` submits.
 - The directory store is subscribed through `useSyncExternalStore`, so a
   catalog update — including one caused by a selection — repaints the panel.
-- `ctx.get('remote').agentTeams.setEnabled()` writes the teamwork selection.
-- `ctx.locale` supplies the copy, resolves catalog badge text, and prefers the
-  host's own `agent-team` wording when that namespace is registered.
+- `renderSlot('conversation.input.model.options', { locked, dismiss,
+  reportFailure })` delegates the teamwork selection entirely to the host's
+  `TeamModeToggle` (which itself writes through `remote.agentTeams.setEnabled`
+  using its own `agent-team` locale namespace).
+- `ctx.locale` supplies the panel's own copy and resolves catalog badge text.
 
 No host component, stylesheet, or DOM is read or restyled.
 
@@ -125,10 +137,13 @@ across columns, so only its label is framed (see DEC-003).
 ## Limitations
 
 - The panel replaces the composer seat only; the `/model` popup is untouched.
-- The panel does not host the `conversation.input.model.label` and
-  `conversation.input.model.options` child slots. The shipped registration keeps
-  those declarations alive, so other plugins' contributions stay valid; their
-  content simply is not drawn inside this panel.
-- Addressed subagent sessions hide the seat, matching the shipped selector.
+- The panel declares both child slots the shipped seat declares, so every other
+  plugin's contribution to them stays valid, and it renders the
+  `conversation.input.model.options` list slot as its bottom row. It does not
+  render the inline `conversation.input.model.label` slot — flat rows use the
+  catalog's own model name and badge instead; that slot is declared only to keep
+  the registration's child contract identical to the shipped one.
+- Addressed and listed subagent sessions hide the seat; the host's own
+  `TeamModeToggle` hides itself for those sessions too, so the two agree.
 - The badge comes from the catalog entry, so a provider that publishes no badge
   shows none.
