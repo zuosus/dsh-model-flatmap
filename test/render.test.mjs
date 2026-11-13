@@ -1322,7 +1322,7 @@ test("a single grey divider sits between the grid and reasoning, not teamwork", 
   const reason = css.slice(css.indexOf(".dshmf-reason {"), css.indexOf(".dshmf-reasonLabel {"))
   const team = css.slice(css.indexOf(".dshmf-team {"), css.indexOf(".dshmf-teamLabel {"))
 
-  assert.ok(reason.includes("border-top: 2px solid #6B7280"), "obvious medium-grey line above reasoning")
+  assert.ok(reason.includes("border-top: 1px solid #9CA3AF"), "ordinary grey line above reasoning")
   assert.ok(css.includes("body[data-ds-dark-theme] .dshmf-reason"), "dark theme switches to a lighter grey")
   assert.equal(team.includes("border-top"), false, "no divider between reasoning and teamwork")
 })

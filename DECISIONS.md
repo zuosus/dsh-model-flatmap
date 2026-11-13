@@ -65,6 +65,14 @@ on-demand variant; plan tests pin `familyOf`/`familyRank`/variant helpers.
 
 **Consequences.** 纯 CSS 变更；无布局、DOM、planner 改动。render 测试固定分割线的位置、颜色与团队协作无边框。
 
+## DEC-012 — 2026-11-13 — 分割线色调降为普通灰
+
+**Context.** DEC-011 的 `#6B7280`(浅)/`#D1D5DB`(深) 在 2px 下用户反馈"太深"。
+
+**Decision.** 调弱为普通灰：浅色 `#9CA3AF`、深色 `#6B7280`，线宽由 2px 降为 1px（更接近常规分隔线）。位置与"团队协作无边框"约束不变。
+
+**Consequences.** 纯色调微调；render 测试约束同步更新为 `#9CA3AF`/1px。
+
 ## DEC-010 — 2026-11-13 — Selected model: deep-blue band with white bold text, no checkmark
 
 **Context.** The selected model was marked only by a 14px checkmark at the

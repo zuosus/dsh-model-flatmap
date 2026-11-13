@@ -231,11 +231,11 @@ window.__ModuleLoader__.load({
 .dshmf-reason {
   flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap;
   gap: 2px 6px;
-  border-top: 2px solid #6B7280;
+  border-top: 1px solid #9CA3AF;
   padding-top: 6px;
 }
 body[data-ds-dark-theme] .dshmf-reason,
-html[data-ds-dark-theme] .dshmf-reason { border-top-color: #D1D5DB; }
+html[data-ds-dark-theme] .dshmf-reason { border-top-color: #6B7280; }
 .dshmf-reasonLabel {
   flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px;
   white-space: nowrap;
