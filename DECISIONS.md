@@ -5,6 +5,28 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-020 — 2026-11-13 — 面板加 1px 浅灰边框；图标改用双主题可见的蓝色
+
+**Context.** 两条独立反馈：(1) 面板浮层没有自己的边框，边缘只靠 elevation 阴影和
+`--dsw-elevation-stroke-color`，在浅色背景上边界不够明确；(2) `icon.svg` 用
+`currentColor` 绘制且整体 opacity 偏低，在深色模式下几乎看不到。
+
+**Decision.**
+
+- `.dshmf-panel` 的 `border: 0` 改为 `border: 1px solid #D1D5DB`（Tailwind
+  gray-300，浅灰）。与 DEC-011/DEC-012 同理，**不**使用 `--dsw-alias-border-*`
+  token：它们设计上就极淡，达不到"看得见的边框"的要求。深色模式下由
+  `body[data-ds-dark-theme]` / `html[data-ds-dark-theme]` 覆盖为 `#6B7280`
+  （与 DEC-012 的深色分割线同一灰阶），宽度保持 1px。
+- `icon.svg` 不再依赖 `currentColor`：主结构用 `#3B82F6`（蓝 500），次级行用
+  `#60A5FA`（蓝 400），底部最弱一行用 `#93C5FD`（蓝 300）。三档蓝色在白底和
+  近黑底（#1e1e1e / #2b2b2b / #15161a）上都保持清晰，层级仍由深浅表达，
+  不再用 opacity 表达层级（opacity 正是深色下看不见的原因）。
+
+**Consequences.** 纯 CSS / SVG 变更，无布局、DOM、planner 改动。render 测试新增
+一条约束：`.dshmf-panel` 带 `1px solid` 的显式灰边框、且深色分支存在。已在 headless
+Chrome 中渲染图标于白/浅灰/深灰/近黑四种底色核对可见性。
+
 ## DEC-019 — 2026-11-13 — ⛔️ 编号更正：额度不足全局状态的条目为 DEC-017，与列间分割线条目撞号
 
 取代: DEC-017（指「额度不足的删除线是全局状态，不绑定 session / workspace」那条；

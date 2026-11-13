@@ -1443,9 +1443,24 @@ test("a single grey divider sits above the whole footer, on neither group", () =
 })
 
 // ---------------------------------------------------------------------------
+// The panel itself carries a 1px light-grey frame. It deliberately does NOT
+// borrow a host `border-*` token: those are near-invisible hairlines, and the
+// frame has to read against the blurred translucent menu surface.
+// ---------------------------------------------------------------------------
+test('the panel draws its own 1px light-grey frame in both themes', () => {
+  const css = source.match(/const CSS = `([\s\S]*?)`/)[1]
+  const panel = css.match(/\.dshmf-panel \{([\s\S]*?)\}/)[1]
+  assert.match(panel, /border: 1px solid #[0-9A-Fa-f]{6}/, 'a 1px explicit-grey frame')
+  assert.doesNotMatch(panel, /border: 0\b/, 'the frame is not suppressed')
+  assert.match(panel, /border-radius: var\(--dsw-radius-lg\)/, 'corners keep their radius token')
+  assert.ok(css.includes('body[data-ds-dark-theme] .dshmf-panel'), 'dark theme keeps the frame visible')
+  assert.ok(css.includes('html[data-ds-dark-theme] .dshmf-panel'), 'html-scoped dark theme too')
+})
+
+// ---------------------------------------------------------------------------
 // The grouping choice must persist across sessions and workgroups. The Web GUI
 // runs on a stable origin, so the choice is kept in `localStorage` and read
-// back on every mount. These tests drive the same read/write helpers the
+// back on every mount. The tests below drive the same read/write helpers the
 // component uses, with a `localStorage` shim, and confirm the
 // default-without-storage path.
 // ---------------------------------------------------------------------------

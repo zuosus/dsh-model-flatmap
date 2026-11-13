@@ -59,12 +59,15 @@ window.__ModuleLoader__.load({
 .dshmf-chevronOpen { transform: rotate(180deg); }
 
 /* Panel: the host menu surface (menu fill + blur + prominent elevation + lg
-   corners), capped at 320px; only the grid scrolls. */
+   corners), capped at 320px; only the grid scrolls. A 1px light-grey frame
+   traces the panel edge in both themes — explicitly NOT a border token: the
+   border-* tokens are near-invisible hairlines (see DEC-011/DEC-012), and the
+   frame has to be readable on the blurred translucent surface. */
 .dshmf-panel {
   box-sizing: border-box; position: fixed; z-index: 1100;
   display: flex; flex-direction: column; gap: 4px; padding: 6px;
   max-height: 320px; overflow: hidden;
-  border: 0; border-radius: var(--dsw-radius-lg);
+  border: 1px solid #D1D5DB; border-radius: var(--dsw-radius-lg);
   background: var(--dsw-menu-surface-fill);
   -webkit-backdrop-filter: var(--dsw-menu-backdrop-filter, none);
   backdrop-filter: var(--dsw-menu-backdrop-filter, none);
@@ -74,6 +77,11 @@ window.__ModuleLoader__.load({
   --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
   --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
 }
+/* The same light-grey frame, stepped to the footer divider's dark-theme grey
+   (#6B7280, DEC-012) so it stays a light frame on the near-black surface
+   without glaring: the width stays 1px in both themes. */
+body[data-ds-dark-theme] .dshmf-panel,
+html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
 
 /* Fixed sections. */
 .dshmf-head { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; height: 28px; }
