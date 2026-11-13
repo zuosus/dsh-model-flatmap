@@ -5,6 +5,23 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## LES-004 — 2026-11-13 — Verify a fill's *composited* contrast, not just its name or value
+
+`--dsw-alias-menu-group-header-fill` is designed for the host's own menus,
+where it sits against a different surface. On this panel — whose rows sit on
+translucent `--dsw-menu-surface-fill` — the two are nearly the same colour (a
+few levels apart) in both themes, so the bare token (even with DEC-003's frame)
+does not buy separation. Two traps: (1) judge a fill by the **composited**
+result over the actual surface/backdrop, not by its raw value; (2) do not
+assume mixing toward `--dsw-alias-label-primary` helps — that token is dark in
+light themes, but a light-theme header band must get *lighter* than the surface
+to stand out, so that tint actually reduced separation. The robust fix was the
+panel's own floating-segment recipe: an opaque `--dsw-alias-bg-layer-1` fill
+(white in light / near-black in dark) with `--dsw-elevation-soft`, which
+separates in both themes with no hard-coded colour or second theme branch.
+Also: when concurrent writers already took DEC-003/LES-003, append with the
+next free IDs instead of reusing or renumbering theirs.
+
 ## LES-003 — 2026-11-13 — Verify a row-layout change against the REAL panel width, not a guessed one
 
 `PANEL_MAX = 320` is the panel's **height** cap, not its width: the placement

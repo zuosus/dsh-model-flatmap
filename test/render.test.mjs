@@ -1027,9 +1027,15 @@ test('the group-title label is a distinct filled band, not a plain row-like capt
   }
   const size = value => Number.parseFloat(value, 10)
 
-  // A real background, with a theme-token fallback — never a hard-coded colour.
-  assert.match(prop(title, 'background'), /menu-group-header-fill/, 'uses the host group-header fill token')
-  assert.match(prop(title, 'background'), /bg-module-platform/, 'keeps a token fallback for older hosts')
+  // An opaque theme-token fill — never a hard-coded colour. The near-surface
+  // group-header fill was too close to the panel surface; the opaque layer-1
+  // fill steps the band away from the transparent rows (see DEC-005).
+  assert.match(prop(title, 'background'), /var\(--dsw-alias-bg-layer-1\)/,
+    'band floats on the opaque layer-1 fill')
+  assert.match(prop(title, 'box-shadow'), /dsw-elevation-soft/,
+    'soft elevation lifts the band off the surface')
+  assert.doesNotMatch(prop(title, 'background'), /menu-group-header-fill|bg-module-platform/,
+    'the near-surface group-header fill is no longer the standing background')
   assert.doesNotMatch(prop(title, 'background'), /#[0-9a-f]|rgba?\(/i, 'no hard-coded colour value')
   assert.match(prop(title, 'border-radius'), /dsw-radius/, 'rounded corners come from a radius token')
 
@@ -1048,4 +1054,32 @@ test('the group-title label is a distinct filled band, not a plain row-like capt
   assert.ok(Number(prop(title, 'font-weight')) >= 600,
     'label is bold while the row stays regular (400)')
   assert.ok(Number(prop(row, 'font-weight')) < 600, 'model row keeps regular weight')
+})
+
+// DEC-005: the bare host group-header fill is only a few levels away from the
+// translucent panel surface, so the band must sit on an opaque layer-1 fill
+// (white in light / near-black in dark) to stay clearly apart from the rows in
+// BOTH themes. Pin the opaque fill and the transparent row background so a
+// regression to the near-identical plain fill cannot slip back in.
+test('the group-title band steps away from the row surface with an opaque layer fill', () => {
+  const css = source.match(/const CSS = `([\s\S]*?)`/)[1]
+  const title = css.match(/\.dshmf-groupTitle \{([\s\S]*?)\}/)[1]
+  const row = css.match(/\.dshmf-row \{([\s\S]*?)\}/)[1]
+  const prop = (block, name) => {
+    const hit = block.match(new RegExp(`${name}:\\s*([^;]+);`))
+    return hit === null ? undefined : hit[1].trim()
+  }
+
+  assert.match(prop(title, 'background'), /var\(--dsw-alias-bg-layer-1\)/,
+    'band floats on the opaque layer-1 fill theme token')
+  assert.doesNotMatch(prop(title, 'background'), /menu-group-header-fill/,
+    'the near-surface group-header fill is no longer the standing background')
+  assert.match(prop(title, 'box-shadow'), /dsw-elevation-soft/,
+    'soft elevation lifts the band off the surface like the active segment')
+  assert.doesNotMatch(prop(title, 'background'), /#[0-9a-f]|rgba?\(/i,
+    'no hard-coded colour value')
+
+  // The model rows stay transparent (background only on hover/focus), so the
+  // filled band is the only standing separation from the surface.
+  assert.equal(prop(row, 'background'), 'transparent', 'model rows keep a transparent background')
 })

@@ -105,11 +105,16 @@ elevation, large radius), and hover, focus, selected, and disabled states follow
 the shipped picker's visual language.
 
 Each provider / family label is deliberately set apart from the model rows
-beneath it: it draws as a filled, rounded band using the host's own
-`--dsw-alias-menu-group-header-fill` token (with `--dsw-alias-bg-module-platform`
-as a fallback for older hosts), in smaller but bold type with a stronger label
-colour. The model rows stay 13 px regular text on a transparent background, so
-the band reads as a section header rather than another selectable row.
+beneath it: it draws as a filled, rounded band that floats on
+`--dsw-alias-bg-layer-1` with `--dsw-elevation-soft` — the same recipe as the
+active segment. That fill is opaque white in light themes and near-black in
+dark, so it steps clearly away from the translucent panel surface (and the
+transparent model rows) in both themes, with no hard-coded colour. The bare
+`--dsw-alias-menu-group-header-fill` token was only a few levels from the
+surface and read as almost the same background as the rows (see DEC-005). The
+label keeps smaller but bold type with a stronger label colour. The model rows
+stay 13 px regular text on a transparent background, so the band reads as a
+section header rather than another selectable row.
 
 The band also carries a low-key frame: a hairline border
 (`--dsw-alias-border-l2`) and a short brand-blue left edge

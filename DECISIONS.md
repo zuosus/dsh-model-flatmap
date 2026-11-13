@@ -5,6 +5,40 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-005 — 2026-11-13 — Float the group-title band on an opaque layer fill
+
+**Context.** DEC-003 added a low-key frame to the group label but kept its
+`--dsw-alias-menu-group-header-fill` background. The user then reported the
+grouping title's background was still too close to the row / panel background.
+In both themes that fill is only a few levels from the panel/menu surface the
+rows sit on (light: `rgba(248,249,250,.94)` band vs `rgba(252,253,254,.7)`
+surface; dark: `rgba(48,49,54,.94)` vs `rgba(48,49,54,.64)`), so the band did
+not read as a separate section header.
+
+**Decision.** Keep the DEC-003 frame (hairline + brand left edge) untouched and
+change only the band's fill to `--dsw-alias-bg-layer-1` plus
+`--dsw-elevation-soft` — the exact recipe the panel already uses for its
+active segment (`.dshmf-segBtn[aria-pressed]`, `.dshmf-pill[aria-checked]`).
+`bg-layer-1` is opaque white in light and near-black in dark, so the band steps
+clearly away from the translucent panel surface in both themes with no
+hard-coded colour and no second theme branch. Rows stay transparent (background
+only on hover/focus), so the band is the only standing separation.
+
+**Rejected.** A `color-mix` tint toward `--dsw-alias-label-primary`
+(compositing math showed it *reduces* separation in most cases — that token is
+dark in light themes, but a light-theme band must get *lighter* than the
+surface to stand out), a tint toward `bg-layer-1` (only a few levels of gain
+and worse on dark pages), a hard-coded darker/lighter fill (breaks theme token
+purity), and `interactive-bg-hover` (a translucent hover tint that would blur
+the row's own hover state).
+
+**Consequences.** CSS-only on `.dshmf-groupTitle`; the frame, height, padding,
+and line-height from DEC-003 are preserved, so the probe-measured `headH` and
+the column planner stay valid. The render tests pin the opaque layer-1 fill, the
+absence of the near-surface group-header fill, the soft elevation, the DEC-003
+frame, and the row's transparent background so the old near-identical fill
+cannot regress.
+
 ## DEC-004 — 2026-11-13 — Family grouping: rows name their provider, and a family is a brand not a version
 
 **Context.** Two problems with model-family grouping, both reported from the

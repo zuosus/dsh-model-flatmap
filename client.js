@@ -122,20 +122,25 @@ window.__ModuleLoader__.load({
 .dshmf-grid { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; display: grid; align-items: start; }
 .dshmf-col { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 /* Provider / family label: a filled, rounded band that reads as a section
-   header, clearly separated from the model rows below it. The host's own
-   group-header fill keeps it legible in both light and dark themes; smaller
-   but bold type (and a stronger label colour) sets it apart from the 13px
-   regular row text without borrowing from the row's interactive states.
+   header, clearly separated from the model rows below it. Bare host
+   group-header fill is only a few levels from the translucent panel surface,
+   so the band floats on an opaque layer-1 fill with soft elevation — the
+   same recipe the active segment uses. Opaque white in light / near-black in
+   dark, it steps away from the rows in both themes with no hard-coded colour.
+   Smaller but bold type (and a stronger label colour) sets it apart from the
+   13px regular row text without borrowing from the row's interactive states.
    A hairline frame plus a short brand-blue left edge — the panel's own
    accent — marks each group start: visible, never loud. The rows themselves
-   stay borderless, so the dense flow across columns is kept (see DEC-003). */
+   stay borderless, so the dense flow across columns is kept (see DEC-003,
+   DEC-005). */
 .dshmf-groupTitle {
   box-sizing: border-box; height: 20px; padding: 0 8px 0 6px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   border: 1px solid var(--dsw-alias-border-l2);
   border-left: 3px solid var(--dsw-alias-state-business-primary);
   border-radius: var(--dsw-radius-xs);
-  background: var(--dsw-alias-menu-group-header-fill, var(--dsw-alias-bg-module-platform));
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: var(--dsw-elevation-soft);
   color: var(--dsw-alias-label-secondary);
   font-size: 10px; line-height: 18px; font-weight: 700; letter-spacing: .02em;
 }
