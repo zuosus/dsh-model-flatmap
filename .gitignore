@@ -1,2 +1,16 @@
+# Dependencies
 node_modules/
+
+# OS metadata
 .DS_Store
+Thumbs.db
+
+# Editor / IDE
+.idea/
+.vscode/*
+!.vscode/settings.json
+*.swp
+
+# Logs and local scratch
+*.log
+npm-debug.log*
