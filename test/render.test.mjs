@@ -206,7 +206,7 @@ function makeProps(state, options = {}) {
       load: () => {},
       select: () => Promise.resolve({ ok: true, value: undefined }),
       resolveText: text => (typeof text === 'string' ? text : text.en),
-      teamAvailable: true,
+      teamAvailable: () => true,
       setTeamMode: () => Promise.resolve({ ok: true, value: undefined }),
       useProjection: key => (key === 'agentTeam' ? { enabled: false, tasks: [] } : { lastUsed: null, pending: null }),
       useSession: () => null,
@@ -954,8 +954,80 @@ test('apply registers the seat when optional services are absent', () => {
   assert.ok(registeredSeat)
   const face = registeredSeat.registration.inject('session-1')
   assert.equal(face.available, true)
-  assert.equal(face.teamAvailable, false)
+  assert.equal(face.teamAvailable(), false)
   assert.equal(typeof face.select, 'function')
+})
+
+// Regression guard for the bug where the teamwork switch never rendered:
+// the Host's `remote.agentTeams` namespace service must be read by its full
+// service name, and a present service must make the row appear.
+test('a present remote.agentTeams makes the teamwork row render', () => {
+  runtime.reset()
+  const calls = []
+  const { ctx, seat } = makeCtx({
+    services: {
+      'remote.agentTeams': {
+        setEnabled: (sessionId, enabled) => { calls.push({ sessionId, enabled }); return Promise.resolve({ ok: true }) },
+      },
+    },
+  })
+  bundle.apply(ctx)
+  const face = seat().registration.inject('session-1')
+  assert.equal(face.teamAvailable(), true, 'the service is resolved by full name, not as ctx.remote')
+  const props = {
+    ...face,
+    locked: false,
+    t: key => key,
+    // The host's own TeamModeToggle hides itself unless the session projects
+    // `agentTeam`; the panel mirrors that contract.
+    useProjection: key => (key === 'agentTeam' ? { enabled: false, tasks: [] } : undefined),
+  }
+  const closed = runtime.render(bundle.__component, props)
+  findAll(closed, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  const open = runtime.render(bundle.__component, props)
+  const switches = findAll(open, node => node.props?.role === 'switch')
+  assert.equal(switches.length, 1, 'the host-shaped teamwork switch renders')
+  assert.equal(switches[0].props['aria-checked'], false)
+})
+
+// The Host's TeamModeToggle calls
+//   scope.remote.agentTeams.setEnabled(sessionId, enabled)
+// with the slot's sessionId and a boolean. Pin that exact contract: the same
+// endpoint, the same two arguments, no extra/missing parameters.
+test('turning the teamwork switch ON calls setEnabled(sessionId, true)', () => {
+  runtime.reset()
+  const calls = []
+  const { ctx, seat } = makeCtx({
+    services: {
+      'remote.agentTeams': {
+        setEnabled: (...args) => { calls.push(args); return Promise.resolve({ ok: true, value: undefined }) },
+      },
+    },
+  })
+  bundle.apply(ctx)
+  const face = seat().registration.inject('session-1')
+  const props = {
+    ...face,
+    locked: false,
+    t: key => key,
+    useProjection: key => (key === 'agentTeam' ? { enabled: false, tasks: [] } : undefined),
+  }
+  const closed = runtime.render(bundle.__component, props)
+  findAll(closed, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  const open = runtime.render(bundle.__component, props)
+  findAll(open, node => node.props?.role === 'switch')[0].props.onClick()
+  assert.deepEqual(calls, [['session-1', true]])
+})
+
+test('the teamwork row is omitted when remote.agentTeams is absent', () => {
+  runtime.reset()
+  const { ctx, seat } = makeCtx({ services: {} })
+  bundle.apply(ctx)
+  const face = seat().registration.inject('session-1')
+  const tree = runtime.render(bundle.__component, { ...face, locked: false, t: key => key })
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  const open = runtime.render(bundle.__component, { ...face, locked: false, t: key => key })
+  assert.equal(findAll(open, node => node.props?.role === 'switch').length, 0)
 })
 
 test('a directory that cannot resolve yet still yields a renderable seat', () => {
@@ -993,7 +1065,7 @@ test('a crashing panel degrades to a minimal chip instead of throwing', () => {
     load: () => {},
     select: () => Promise.resolve(undefined),
     resolveText: value => (typeof value === 'string' ? value : value.en),
-    teamAvailable: false,
+    teamAvailable: () => false,
     setTeamMode: () => Promise.resolve(undefined),
     useProjection: () => undefined,
     useSession: selector => selector({}),
