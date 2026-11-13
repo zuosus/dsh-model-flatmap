@@ -1,6 +1,6 @@
 {
   "name": "dsh-model-flatmap",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Flat, two-level-free model picker for the DSH composer: every model and reasoning level on one surface.",
   "type": "module",
   "exports": {
@@ -19,7 +19,9 @@
     "icon.svg"
   ],
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "platform": "web",
       "immediately": true
