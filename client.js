@@ -121,6 +121,13 @@ window.__ModuleLoader__.load({
 /* The only scrolling region. */
 .dshmf-grid { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; display: grid; align-items: start; }
 .dshmf-col { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+/* When more than one column is laid out, separate adjacent columns with a
+   faint vertical hairline so the eye can tell the dense model flows apart.
+   The line uses the lightest border token to stay subtle, and the divided
+   column keeps a little right padding so model text never hugs the line.
+   Only columns that actually sit before another one get it (see renderColumn),
+   so a single-column layout stays borderless. */
+.dshmf-col--divided { border-right: 1px solid var(--dsw-alias-border-l3); padding-right: 10px; }
 /* Provider / family label: a filled, rounded band that reads as a section
    header, clearly separated from the model rows below it. Bare host
    group-header fill is only a few levels from the translucent panel surface.
@@ -1242,7 +1249,7 @@ html[data-ds-dark-theme] .dshmf-reason { border-top-color: #D1D5DB; }
         : renderRow(block.entry))
 
       const renderColumn = (column, columnIndex) => h('div', {
-        className: 'dshmf-col',
+        className: 'dshmf-col' + (plan.count > 1 && columnIndex < plan.count - 1 ? ' dshmf-col--divided' : ''),
         key: `col-${columnIndex}`,
       }, column.map(unit => unit.blocks.map(renderBlock)))
 
