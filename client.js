@@ -3,30 +3,25 @@
  *
  * Replaces the composer's `conversation.input.model` seat with ONE flat panel:
  * search, a provider/family grouping switch, the whole model grid, the current
- * model's reasoning levels, and the host's own agent-teamwork switch — no
- * second-level menus anywhere.
+ * model's reasoning levels, and the agent-teamwork switch — no second-level
+ * menus anywhere.
  *
  * Everything is read and written through public Client APIs only:
  *   - `ctx.modelDirectories.directoryFor(sessionId)` → the per-Session directory
  *     (`store` for data + change subscription, `load()`, `select()`);
- *   - `renderSlot('conversation.input.model.options', …)` → the host's OWN
- *     teamwork switch (`TeamModeToggle`, registered by `dsh-client-ui-agent-team`
- *     into this child slot). Rendering it here — rather than reimplementing it —
- *     is what keeps the label, description, info tooltip, disable confirmation,
- *     switch chrome and on/off state identical to the shipped picker, in every
- *     locale, with no duplicated copy or styling;
- *   - `ctx.locale` → copy and catalog badge text resolution;
- *   - the slot's standard props (`sessionId`, `useSession`, `useSessions`)
- *     → Session state.
+ *   - `ctx.get('remote').agentTeams.setEnabled()` → the teamwork selection;
+ *   - `ctx.locale` → copy, catalog badge text resolution, and the host's own
+ *     wording for the teamwork row;
+ *   - the slot's standard props (`sessionId`, `useProjection`, `useSession`,
+ *     `useSessions`) → Session state.
  *
  * Registration uses a negative priority so this entry shadows the shipped
  * `ModelSelect` while it is active; disabling the plugin restores the native
- * control with no residue. The entry declares the SAME child slots the shipped
- * one does (`conversation.input.model.label` / `.options`), which is what
- * authorises `renderSlot` and keeps every other plugin's contribution to them
- * valid. The `options` slot is drawn as the panel's fixed bottom row; the
- * `label` slot is intentionally not drawn (the flat rows use the catalog's own
- * model name + badge instead). No host component, stylesheet or DOM is read.
+ * control with no residue. The shipped entry keeps its own child-slot
+ * declarations (`conversation.input.model.label` / `.options`) alive, so no
+ * other plugin's registration is invalidated by this replacement; this panel
+ * simply does not host them, and draws the catalog's own model badge instead.
+ * No host component, stylesheet or DOM is read.
  */
 window.__ModuleLoader__.load({
   id: 'dsh-model-flatmap',
@@ -229,14 +224,39 @@ window.__ModuleLoader__.load({
 .dshmf-pill:disabled[aria-checked="true"] { opacity: .5; }
 .dshmf-pill:focus-visible { outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: -2px; }
 
-/* Fixed bottom row hosting the host's own model-options child slot (the
-   shipped picker's agent-teamwork TeamModeToggle). The slot renders its own
-   label, info tooltip and Switch primitive; this wrapper only supplies the
-   separator and keeps the row out of the scrolling grid. A composition with no
-   contribution to the slot leaves its display:contents anchor empty, so the
-   wrapper — separator included — is hidden instead of painting a stray line. */
-.dshmf-options { flex: 0 0 auto; margin-top: 1px; border-top: 0.5px solid var(--dsw-alias-border-l1); }
-.dshmf-options:has(> [data-slot="conversation.input.model.options"]:empty) { display: none; }
+/* Teamwork row: the host's row rhythm — label + switch on one line. */
+.dshmf-team {
+  flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  min-height: 30px; padding: 0 6px; margin-top: 1px;
+  border-top: 0.5px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-label-primary); font-size: 12px; line-height: 18px;
+}
+.dshmf-teamLabel { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+.dshmf-teamName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dshmf-info {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; color: var(--dsw-alias-label-caption);
+}
+.dshmf-switch {
+  box-sizing: border-box; position: relative; flex: 0 0 auto; width: 36px; height: 20px; padding: 2px;
+  border: 0; border-radius: 999px; corner-shape: round; background: var(--dsw-alias-border-l3); cursor: pointer;
+}
+.dshmf-switch[aria-checked="true"] { background: var(--dsw-alias-brand-primary); }
+.dshmf-switch:disabled { cursor: default; opacity: .5; }
+.dshmf-switch:focus-visible { outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: 2px; }
+.dshmf-thumb { display: block; width: 16px; height: 16px; border-radius: 50%; corner-shape: round; background: var(--dsw-alias-label-primary-foreground); transition: transform .12s ease; }
+.dshmf-switch[aria-checked="false"] .dshmf-thumb { background: var(--dsw-alias-switch-thumb); }
+.dshmf-switch[aria-checked="true"] .dshmf-thumb { transform: translate(16px); }
+
+/* Inline disable confirmation, with the host's confirmation copy. */
+.dshmf-confirm { flex: 0 0 auto; display: flex; flex-direction: column; gap: 3px; padding: 6px 8px; border-radius: var(--dsw-radius-sm); background: var(--dsw-alias-bg-module-platform); }
+.dshmf-confirmTitle { color: var(--dsw-alias-label-primary); font-size: 12px; line-height: 18px; font-weight: 500; }
+.dshmf-confirmBody { color: var(--dsw-alias-label-secondary); font-size: 11px; line-height: 16px; }
+.dshmf-confirmActions { display: flex; justify-content: flex-end; gap: 6px; }
+.dshmf-confirmBtn { height: 22px; padding: 0 9px; border: 0; border-radius: var(--dsw-radius-xs); background: transparent; color: var(--dsw-alias-label-secondary); font-family: inherit; font-size: 11px; line-height: 16px; cursor: pointer; }
+.dshmf-confirmBtn:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.dshmf-confirmBtn[data-primary="true"] { background: var(--dsw-alias-interactive-bg-active); color: var(--dsw-alias-label-primary); }
+.dshmf-confirmBtn:focus-visible { outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: 1px; }
 
 /* Off-screen probe: measures one group title and one model row at the real
    font scale, so column fit uses this browser's metrics, not a guess. */
@@ -244,7 +264,7 @@ window.__ModuleLoader__.load({
 
 @media (prefers-reduced-motion: reduce) {
   .dshmf-spin { animation-duration: 2s; }
-  .dshmf-chevron, .dshmf-pill, .dshmf-segBtn { transition: none; }
+  .dshmf-thumb, .dshmf-chevron, .dshmf-pill, .dshmf-segBtn { transition: none; }
 }
 `
     const STYLE_TAG = 'dsh-model-flatmap/panel.css'
@@ -271,6 +291,7 @@ window.__ModuleLoader__.load({
     const PATH_CHECK = 'M2.5 7.4 5.6 10.5 11.5 3.8'
     const PATH_CHEVRON = 'M3.2 5.6 7 9.4 10.8 5.6'
     const PATH_CLOSE = 'M4 4 10 10M10 4 4 10'
+    const PATH_INFO = 'M7 6.4v4.1M7 3.7v.8'
     const PATH_SPARK = 'M7 1.6 8.3 5.7 12.4 7 8.3 8.3 7 12.4 5.7 8.3 1.6 7 5.7 5.7 7 1.6Z'
     const PATH_MODELS = 'M7 2.1 11.9 4.7 7 7.3 2.1 4.7 7 2.1Zm-4.9 5.1L7 9.8l4.9-2.6M2.1 10.3 7 12.9l4.9-2.6'
 
@@ -615,9 +636,8 @@ window.__ModuleLoader__.load({
     }
 
     // ---------------------------------------------------------------------
-    // Dictionaries (this namespace owns ONLY the panel's own copy; the
-    // teamwork row is the host's own child-slot content and carries its own
-    // `agent-team` namespace, so none of its wording is duplicated here).
+    // Dictionaries (this namespace owns the panel's own copy; the teamwork
+    // row prefers the host's `agent-team` wording when it is registered).
     //
     // The namespace id is minted per module generation. The locale registry
     // keeps a namespace's slot after its disposer runs, and a re-registration
@@ -646,6 +666,14 @@ window.__ModuleLoader__.load({
         'effort.default': 'Default',
         'effort.label': '推理等级',
         'effort.hint': '调整模型的思考强度：档位越高，思考越深入，但速度更慢、token 开销更大。',
+        'team.label': '启用智能体团队协作',
+        'team.description': '通过共享任务板协调多个智能体的分工与进度，复杂任务表现更佳，token 开销也相应更高。',
+        'team.failed': '无法确认智能体团队协作设置已保存，请重试：{message}',
+        'team.disable.title': '确认停用智能体团队协作？',
+        'team.disable.description': '对话过程中停用智能体团队协作，将停止共享任务工具和团队协调指令。',
+        'team.disable.warning': '停用后可能影响缓存复用、增加后续 token 用量与开销，并影响当前任务的协作效果。',
+        'team.disable.cancel': '取消',
+        'team.disable.confirm': '确认停用',
         'failure.group': '{name} 加载失败：{message}',
         'error.action': '模型操作失败：{message}',
         'error.sessionInUse': '当前会话已被占用，可能是其他正在运行的 DSH 导致的，请退出其他正在运行的 DSH 后重试。',
@@ -668,6 +696,14 @@ window.__ModuleLoader__.load({
         'effort.default': 'Default',
         'effort.label': 'Reasoning effort',
         'effort.hint': 'Adjusts how deeply the model thinks: higher levels reason more deeply, but are slower and cost more tokens.',
+        'team.label': 'Enable agent teamwork',
+        'team.description': 'Coordinate work and progress across agents with a shared task board for better results on complex tasks, with correspondingly higher token costs.',
+        'team.failed': 'Could not confirm the agent teamwork setting was saved. Try again: {message}',
+        'team.disable.title': 'Disable agent teamwork?',
+        'team.disable.description': 'Disabling agent teamwork during a conversation stops the use of shared task tools and team coordination instructions.',
+        'team.disable.warning': 'Disabling it may affect cache reuse, increase subsequent token usage and costs, and affect collaboration on the current task.',
+        'team.disable.cancel': 'Cancel',
+        'team.disable.confirm': 'Disable',
         'failure.group': '{name} failed to load: {message}',
         'error.action': 'Model operation failed: {message}',
         'error.sessionInUse': 'This session is already in use, possibly by another running DSH instance. Quit other running DSH instances and try again.',
@@ -707,7 +743,7 @@ window.__ModuleLoader__.load({
       const {
         locked, sessionId, t,
         available, directory, load, select, resolveText, resolveDirectory,
-        renderSlot, useSession, useSessions,
+        teamAvailable, setTeamMode, useProjection, useSession, useSessions,
       } = props
 
       // The store may arrive after the first render (the Session binds later),
@@ -726,10 +762,9 @@ window.__ModuleLoader__.load({
       const [grouping, setGrouping] = useState('provider')
       const [selectionFocus, setSelectionFocus] = useState(false)
       const [metrics, setMetrics] = useState({ rowH: 26, headH: 20, fixed: 0, fixedCount: 0, box: null })
-      // A failed `setEnabled` is reported by the host's own TeamModeToggle
-      // through the options slot's `reportFailure` owner callback. The panel
-      // only has to surface that message; it never phrases the failure itself.
-      const [optionsFailure, setOptionsFailure] = useState(null)
+      const [teamPending, setTeamPending] = useState(false)
+      const [teamFailure, setTeamFailure] = useState(null)
+      const [confirming, setConfirming] = useState(false)
       const [replan, setReplan] = useState(0)
 
       const rootRef = useRef(null)
@@ -741,17 +776,21 @@ window.__ModuleLoader__.load({
       const headRef = useRef(null)
       const errorRef = useRef(null)
       const reasonRef = useRef(null)
-      const optionsRef = useRef(null)
-      const optionsErrorRef = useRef(null)
+      const teamRef = useRef(null)
+      const teamErrorRef = useRef(null)
+      const confirmRef = useRef(null)
       const id = useId()
 
-      // Standard props always carry these two hooks for a session-scope slot;
+      // Standard props always carry these three hooks for a session-scope slot;
       // the fallbacks keep the component renderable (rather than throwing) in a
       // composition that omits one, and they are plain values so the hook order
       // below never changes.
+      const useProjectionSafe = typeof useProjection === 'function' ? useProjection : () => undefined
       const useSessionSafe = typeof useSession === 'function' ? useSession : () => null
       const useSessionsSafe = typeof useSessions === 'function' ? useSessions : () => undefined
 
+      const teamMode = useProjectionSafe('agentTeam')
+      const modelSelection = useProjectionSafe('modelSelection')
       // Both hooks may hand back `undefined` before the Session binds, so the
       // selectors never assume an object.
       const addressedChild = useSessionSafe(
@@ -895,7 +934,7 @@ window.__ModuleLoader__.load({
         if (!open) return
         const rowH = probeRowRef.current?.getBoundingClientRect().height ?? 26
         const headH = probeHeadRef.current?.getBoundingClientRect().height ?? 20
-        const heights = [headRef, errorRef, reasonRef, optionsErrorRef, optionsRef]
+        const heights = [headRef, errorRef, reasonRef, confirmRef, teamErrorRef, teamRef]
           .map(ref => ref.current?.offsetHeight ?? 0)
           .filter(height => height > 0)
         const fixed = heights.reduce((sum, height) => sum + height, 0)
@@ -983,7 +1022,8 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         if (!open) return undefined
         setQuery('')
-        setOptionsFailure(null)
+        setConfirming(false)
+        setTeamFailure(null)
         load()
         const timer = window.setTimeout(() => { searchRef.current?.focus() }, 0)
         return () => { window.clearTimeout(timer) }
@@ -991,6 +1031,7 @@ window.__ModuleLoader__.load({
 
       const close = useCallback((restoreFocus = false) => {
         setOpen(false)
+        setConfirming(false)
         if (restoreFocus) queueMicrotask(() => { triggerRef.current?.focus() })
       }, [])
 
@@ -1021,19 +1062,30 @@ window.__ModuleLoader__.load({
         })
       }, [effectiveEffort, state.current, submit])
 
-      // Owner share handed to the host's `conversation.input.model.options`
-      // slot — the SAME three keys the shipped ModelSelect supplies. `dismiss`
-      // closes this panel (and focuses the trigger) before the host opens its
-      // own disable-confirmation overlay; `reportFailure` carries the host's
-      // already-localized failure text into this panel's strip. `locked` folds
-      // in the directory's in-flight selection, exactly as the shipped picker
-      // does. The object is rebuilt per render but the host's TeamModeToggle
-      // only reads scalars from it, so no memoisation is required.
-      const optionsOwner = {
-        locked: locked || busy,
-        dismiss: () => { close(true) },
-        reportFailure: message => { setOptionsFailure(message) },
-      }
+      const applyTeamMode = useCallback(enabled => {
+        setTeamPending(true)
+        setTeamFailure(null)
+        void setTeamMode(enabled).then(result => {
+          if (result !== undefined && result.ok === false) {
+            const message = result.error?.code === 'session/writer-held'
+              ? t('error.sessionInUse')
+              : `${result.error?.code ?? 'error'}: ${result.error?.message ?? ''}`
+            setTeamFailure(fill(t, 'team.failed', { message }))
+          }
+        }, error => {
+          setTeamFailure(fill(t, 'team.failed', {
+            message: error instanceof Error ? error.message : String(error),
+          }))
+        }).finally(() => { setTeamPending(false) })
+      }, [setTeamMode, t])
+
+      const changeTeamMode = useCallback(enabled => {
+        if (!enabled && modelSelection !== undefined && modelSelection.lastUsed !== null) {
+          setConfirming(true)
+          return
+        }
+        applyTeamMode(enabled)
+      }, [applyTeamMode, modelSelection])
 
       // ---- column planning (the whole point of the layout)
       // The grid is the only flexible child, so the space it may occupy is the
@@ -1146,6 +1198,10 @@ window.__ModuleLoader__.load({
       const onPanelKeyDown = event => {
         if (event.key !== 'Escape') return
         event.preventDefault()
+        if (confirming) {
+          setConfirming(false)
+          return
+        }
         close(true)
       }
 
@@ -1328,27 +1384,64 @@ window.__ModuleLoader__.load({
               })),
             ),
 
-            // ---- fixed: a failed teamwork selection, reported by the host's
-            // own TeamModeToggle through `reportFailure`. The strip sits above
-            // the bottom row so the switch never shifts under the pointer.
-            optionsFailure === null ? null : h('div', {
-              className: 'dshmf-error',
-              ref: optionsErrorRef,
-              role: 'status',
-            }, optionsFailure),
+            // ---- fixed: teamwork disable confirmation
+            confirming ? h('div', {
+              className: 'dshmf-confirm',
+              ref: confirmRef,
+              role: 'alertdialog',
+              'aria-label': t('team.disable.title'),
+            },
+              h('span', { className: 'dshmf-confirmTitle' }, t('team.disable.title')),
+              h('span', { className: 'dshmf-confirmBody' },
+                `${t('team.disable.description')} ${t('team.disable.warning')}`),
+              h('div', { className: 'dshmf-confirmActions' },
+                h('button', {
+                  type: 'button',
+                  className: 'dshmf-confirmBtn',
+                  onClick: () => { setConfirming(false) },
+                }, t('team.disable.cancel')),
+                h('button', {
+                  type: 'button',
+                  className: 'dshmf-confirmBtn',
+                  'data-primary': 'true',
+                  onClick: () => {
+                    setConfirming(false)
+                    applyTeamMode(false)
+                  },
+                }, t('team.disable.confirm')),
+              ),
+            ) : null,
 
-            // ---- fixed, bottom, single row: the host's OWN model-picker
-            // options slot. `dsh-client-ui-agent-team` registers TeamModeToggle
-            // here, so rendering the slot (rather than a look-alike) is what
-            // keeps semantics, copy, info tooltip, disable confirmation, switch
-            // chrome and on/off state identical to the shipped picker. When the
-            // host contributes nothing (plugin not installed), the slot renders
-            // empty and the row costs no height.
-            typeof renderSlot === 'function'
-              ? h('div', { className: 'dshmf-options', ref: optionsRef },
-                renderSlot('conversation.input.model.options', optionsOwner),
-              )
-              : null,
+            // ---- fixed: teamwork failure strip
+            teamFailure === null ? null : h('div', {
+              className: 'dshmf-error',
+              ref: teamErrorRef,
+              role: 'status',
+            }, teamFailure),
+
+            // ---- fixed, bottom: the agent teamwork switch
+            teamMode === undefined || !teamAvailable
+              ? null
+              : h('div', { className: 'dshmf-team', ref: teamRef },
+                h('span', { className: 'dshmf-teamLabel' },
+                  h('span', { className: 'dshmf-teamName' }, t('team.label')),
+                  h('span', {
+                    className: 'dshmf-info',
+                    title: t('team.description'),
+                    'aria-hidden': 'true',
+                  }, svg(PATH_INFO, 12)),
+                ),
+                h('button', {
+                  type: 'button',
+                  role: 'switch',
+                  className: 'dshmf-switch',
+                  'aria-checked': teamMode.enabled,
+                  'aria-label': t('team.label'),
+                  title: t('team.description'),
+                  disabled: locked || busy || teamPending || modelSelection === undefined,
+                  onClick: () => { changeTeamMode(!teamMode.enabled) },
+                }, h('span', { className: 'dshmf-thumb' })),
+              ),
 
             // ---- measurement probe (never painted). It mirrors a family-
             // grouped row (name + provider tag + tail), the tallest row shape,
@@ -1512,8 +1605,18 @@ window.__ModuleLoader__.load({
               return undefined
             }
           }
+          // Reading the remote namespace is the risky part: a namespace whose
+          // package is absent from the client composition can throw on access.
+          const teamService = () => {
+            try {
+              return safeRead('remote')?.agentTeams
+            } catch {
+              return undefined
+            }
+          }
           const models = safeRead('modelDirectories')
           const sessions = safeRead('sessions')
+          const agentTeams = teamService()
 
           const resolve = () => {
             try {
@@ -1555,6 +1658,10 @@ window.__ModuleLoader__.load({
                 : current.directory.select(selection)
             },
             resolveText,
+            teamAvailable: agentTeams !== undefined,
+            setTeamMode: enabled => (agentTeams === undefined
+              ? Promise.resolve(undefined)
+              : agentTeams.setEnabled(sessionId, enabled)),
           }
         }
 
@@ -1580,23 +1687,10 @@ window.__ModuleLoader__.load({
               load: () => {},
               select: () => Promise.resolve(undefined),
               resolveText,
+              teamAvailable: false,
+              setTeamMode: () => Promise.resolve(undefined),
             }
           }
-        }
-
-        /**
-         * The child slots the shipped ModelSelect entry declares. Declaring the
-         * SAME specs here is what authorises `renderSlot` for this shadowing
-         * entry (`boundRenderSlot` refuses any key absent from `entry.children`)
-         * and keeps every other plugin's contribution to those slots valid.
-         * The `options` slot is drawn as the panel's fixed bottom row; the
-         * inline `label` slot is declared for parity with the shipped entry but
-         * deliberately not drawn (flat rows use the catalog name + badge).
-         * Both are `session`-scoped, matching the seat itself.
-         */
-        const children = {
-          'conversation.input.model.label': { kind: 'single', scope: 'session', inline: true },
-          'conversation.input.model.options': { kind: 'list', scope: 'session' },
         }
 
         /**
@@ -1611,7 +1705,6 @@ window.__ModuleLoader__.load({
                 name: 'conversation.input.model',
                 priority,
                 locale: NS,
-                children,
                 inject: sessionId => safeFace(sessionId, buildFace),
               }, Seat)
             } catch (error) {
