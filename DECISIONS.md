@@ -5,6 +5,28 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-017 — 2026-11-13 — 列间分割线是 grid 的一个独立子项，而不是列的 border
+
+**Context.** DEC-003 给每列加分割线时用的是 `.dshmf-col--divided` 的
+`border-right`。border 只能跟随它所属盒子的高度，于是分割线的长度永远等于左边那一列
+的行内容高度：列比网格矮时，线就短一截，看上去像是「挂在列上」。
+
+**Decision.**
+
+- 删掉 `.dshmf-col--divided`，新增 `.dshmf-colDivider`：它是 `.dshmf-grid` 的**直接
+  子项**，与各 `.dshmf-col` 同级，占据列与列之间一条独立的 `1px` 轨道
+  （`gridTemplateColumns` 由 `minmax(0,1fr)` 逐个拼接，中间以 `1px` 相连）。
+- `.dshmf-grid` 保持 `align-items: start`（文本列按内容高度自然排布），分割线单独
+  `align-self: stretch` 撑满整行网格高度，并用自己的 `margin: 6px 0` 留出上下边距；
+  线宽 `1px`、颜色沿用 `--dsw-alias-border-l3`。
+- 只有真正落在两列之间的空隙才渲染分割线（`renderColumns` 在每列之前插入），单列
+  布局依然无边框；空态与 failure 条不参与该轨道。
+
+**Consequences.** 纯结构与 CSS 变更，planner/DOM 语义不变（行仍然只在 `.dshmf-col`
+里）。render 测试约束：分割线数量 = 列数 - 1、grid 子项按 col/divider 交替、分割线不是
+任何列的子孙、`.dshmf-colDivider` 上 `align-self: stretch` 且没有 border。
+
+
 ## DEC-016 — 2026-11-13 — 分割线挂在 footer 容器上，而不是推理等级上
 
 **Context.** DEC-011/DEC-012 把分割线画在 `.dshmf-reason` 的 `border-top` 上。
