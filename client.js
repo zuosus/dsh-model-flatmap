@@ -150,6 +150,17 @@ window.__ModuleLoader__.load({
 .dshmf-row:focus-visible { background: var(--dsw-alias-interactive-bg-hover); outline: none; }
 .dshmf-row:disabled { color: var(--dsw-alias-label-dimmed); cursor: default; }
 .dshmf-rowName { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Provider tag inside a family-grouped row: the same family spans several
+   providers, so each row says where it comes from. Quieter than the model name
+   (caption colour, 11px) and shrinks before the name does, because the model
+   name is what identifies the row. No width cap: a cap truncates a perfectly
+   readable provider label ("CodeBuddy …") in a column that had room for it. */
+.dshmf-rowProvider {
+  flex: 0 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--dsw-alias-label-caption);
+  font-size: 11px; line-height: 16px; font-weight: 400;
+}
 .dshmf-rowTail { display: grid; place-items: center; flex: 0 0 14px; color: var(--dsw-alias-label-primary); }
 .dshmf-rowTail svg { width: 14px; height: 14px; }
 
@@ -430,7 +441,9 @@ window.__ModuleLoader__.load({
 
     // ---------------------------------------------------------------------
     // Model families: hard-coded dictionary → id-derived guess → Others.
-    // Families stay flat; Others always sorts last.
+    // Families stay flat; Others always sorts last. A family is a BRAND, not a
+    // version: `hy3`, `hy4-preview` and `hy4free` are one `HY` family, not
+    // three, so a version tail never splits a heading.
     // ---------------------------------------------------------------------
     const FAMILY_DICTIONARY = [
       ['DeepSeek', ['deepseek']],
@@ -456,12 +469,43 @@ window.__ModuleLoader__.load({
       ['Nova', ['nova-']],
       ['Step', ['step-']],
     ]
-    const FAMILY_ORDER = FAMILY_DICTIONARY.map(entry => entry[0])
     const OTHERS = 'Others'
     const FAMILY_ALIASES = new Map([
       ['gpt', 'GPT'], ['glm', 'GLM'], ['qwen', 'Qwen'], ['kimi', 'Kimi'],
     ])
     const VERSION_ONLY = /^(v|ver|r)?\d+([.-]\d+)*$/i
+    /**
+     * A brand token followed by a version tail: `hy3`, `hy4-preview`,
+     * `hy4free`, `qwen2.5`. The family is the brand; the tail is a version,
+     * and a version must never split one brand into several headings —
+     * `hy3` and `hy4free` are the same family.
+     */
+    const BRAND_WITH_VERSION = /^([a-z][a-z]*?)(\d[\w.-]*)$/i
+    /**
+     * Brands the versioned rule has to own, mapped to the exact heading they
+     * draw. They sort with the dictionary families instead of after them.
+     * `HY` is the case that prompted this: its ids (`hy3`, `hy4-preview`,
+     * `hy4free`) share no name needle, and the brand is an acronym, so the
+     * generic title-casing would draw it as `Hy`.
+     */
+    const FAMILY_BRANDS = new Map([['hy', 'HY']])
+    const FAMILY_ORDER = [
+      ...FAMILY_DICTIONARY.map(entry => entry[0]),
+      ...FAMILY_BRANDS.values(),
+    ]
+
+    /**
+     * The brand part of one versioned id token, or '' when the token carries
+     * no version tail.
+     * @param {string} token - one lowercased id segment.
+     * @returns {string} the lowercased brand, or ''.
+     */
+    function brandOf(token) {
+      const hit = BRAND_WITH_VERSION.exec(token)
+      if (hit === null) return ''
+      const brand = hit[1]
+      return brand.length < 2 ? '' : brand
+    }
 
     /**
      * Resolve one model's family.
@@ -473,13 +517,26 @@ window.__ModuleLoader__.load({
       for (const entry of FAMILY_DICTIONARY) {
         if (entry[1].some(needle => haystack.includes(needle))) return entry[0]
       }
-      const first = String(model.id).split(/[/:]/).pop().split(/[-_.]/).filter(Boolean)[0]
-      if (first === undefined) return OTHERS
-      const token = first.toLowerCase()
+      // Id-derived guess. The provider prefix is dropped, then every remaining
+      // segment is checked for a registered brand, so an id that prefixes the
+      // brand with its provider (`codebuddy-hy3`) still lands in `HY`, and a
+      // bare brand id (`hy`) does not fall through to the generic casing.
+      const segments = String(model.id).split(/[/:]/).pop().split(/[-_.]/).filter(Boolean)
+      if (segments.length === 0) return OTHERS
+      for (const segment of segments) {
+        const lower = segment.toLowerCase()
+        const known = FAMILY_BRANDS.get(lower) ?? FAMILY_BRANDS.get(brandOf(lower))
+        if (known !== undefined) return known
+      }
+      const token = segments[0].toLowerCase()
       if (token.length < 2 || VERSION_ONLY.test(token)) return OTHERS
       const alias = FAMILY_ALIASES.get(token)
       if (alias !== undefined) return alias
-      return token.charAt(0).toUpperCase() + token.slice(1)
+      // A versioned segment collapses onto its brand, so `acme4-turbo` and
+      // `acme-7b` share one heading instead of two.
+      const brand = brandOf(token)
+      const stem = brand === '' ? token : brand
+      return stem.charAt(0).toUpperCase() + stem.slice(1)
     }
 
     function familyRank(family) {
@@ -764,13 +821,28 @@ window.__ModuleLoader__.load({
       const sections = useMemo(() => derive('grouping models', () => {
         const out = []
         /**
+         * The provider's display label. Catalog names arrive localized
+         * (`{ zh: '豆包(doubao)', en: 'Doubao' }`), so the label is resolved
+         * once here and reused as the section title, the search face, and the
+         * per-row provider tag. The account provider has no catalog name of
+         * its own and borrows the localized "DeepSeek Account" wording.
+         * @param {{id: string, name: unknown}} group - one provider entry.
+         * @returns {string} a display-ready label; never empty.
+         */
+        const providerLabelOf = group => {
+          if (group.id === 'deepseek-account') return t('provider.account')
+          const resolved = resolveText === undefined ? undefined : resolveText(group.name)
+          if (typeof resolved === 'string' && resolved.trim() !== '') return resolved
+          const fallback = fallbackText(group.name)
+          return fallback.trim() === '' ? group.id : fallback
+        }
+        /**
          * A provider whose own name or id matches the query keeps its whole
          * catalog: `dou` shows the `豆包(doubao)` provider with every model it
          * offers. Models matched by their own name still rank first, so a
          * provider-wide hit only widens the result, never reorders it.
          */
-        const providerHitOf = group => providerScore(group, query,
-          group.id === 'deepseek-account' ? t('provider.account') : group.name)
+        const providerHitOf = group => providerScore(group, query, providerLabelOf(group))
         /** One model's rank, or null when neither it nor its provider matched. */
         const scoreOf = (model, providerHit) => {
           const byName = matchScore(model.name, query)
@@ -780,16 +852,19 @@ window.__ModuleLoader__.load({
         if (grouping === 'provider') {
           for (const group of groups) {
             const providerHit = providerHitOf(group) !== null
+            const providerLabel = providerLabelOf(group)
             const scored = []
             for (const model of group.models) {
               const score = scoreOf(model, providerHit)
-              if (score !== null) scored.push({ entry: { model, providerId: group.id }, score })
+              if (score !== null) {
+                scored.push({ entry: { model, providerId: group.id, providerLabel }, score })
+              }
             }
             if (scored.length === 0) continue
             scored.sort((left, right) => left.score - right.score)
             out.push({
               key: group.id,
-              title: group.id === 'deepseek-account' ? t('provider.account') : group.name,
+              title: providerLabel,
               models: scored.map(item => item.entry),
             })
           }
@@ -798,6 +873,7 @@ window.__ModuleLoader__.load({
         const buckets = new Map()
         for (const group of groups) {
           const providerHit = providerHitOf(group) !== null
+          const providerLabel = providerLabelOf(group)
           for (const model of group.models) {
             const score = scoreOf(model, providerHit)
             if (score === null) continue
@@ -807,7 +883,7 @@ window.__ModuleLoader__.load({
               bucket = { key: family, title: family, scored: [] }
               buckets.set(family, bucket)
             }
-            bucket.scored.push({ entry: { model, providerId: group.id }, score })
+            bucket.scored.push({ entry: { model, providerId: group.id, providerLabel }, score })
           }
         }
         const families = [...buckets.values()]
@@ -818,7 +894,7 @@ window.__ModuleLoader__.load({
           out.push({ key: family.key, title: family.title, models: family.scored.map(item => item.entry) })
         }
         return out
-      }, []), [grouping, groups, query, t])
+      }, []), [grouping, groups, query, t, resolveText])
 
       const totalModels = useMemo(
         () => groups.reduce((sum, group) => sum + group.models.length, 0),
@@ -1048,20 +1124,36 @@ window.__ModuleLoader__.load({
       }
 
       const renderRow = entry => {
-        const { model, providerId } = entry
+        const { model, providerId, providerLabel } = entry
         const selected = state.current?.provider === providerId && state.current.model === model.id
         const pendingThis = state.pending?.provider === providerId && state.pending.model === model.id
         const badge = badgeOf(model)
+        /**
+         * In family grouping a heading says what the models ARE, not where
+         * they come from — the same family can hold models from several
+         * providers — so each row names its own provider. In provider grouping
+         * the heading already is the provider, and repeating it per row would
+         * be pure noise.
+         */
+        const showProvider = grouping === 'family'
+          && typeof providerLabel === 'string' && providerLabel !== ''
+        const rowTitle = model.description === undefined
+          ? model.name
+          : `${model.name}\n${model.description}`
         return h('button', {
           key: `${providerId}/${model.id}`,
           type: 'button',
           className: 'dshmf-row',
           'aria-pressed': selected,
-          title: model.description === undefined ? model.name : `${model.name}\n${model.description}`,
+          title: showProvider ? `${rowTitle}\n${providerLabel}` : rowTitle,
           disabled: busy,
           onClick: () => { chooseModel(providerId, model) },
         },
           h('span', { className: 'dshmf-rowName' }, model.name),
+          showProvider ? h('span', {
+            className: 'dshmf-rowProvider',
+            title: providerLabel,
+          }, providerLabel) : null,
           badge === null ? null : h('span', {
             className: 'dshmf-badge',
             'data-tone': badge.tone,
@@ -1346,11 +1438,14 @@ window.__ModuleLoader__.load({
                 }, h('span', { className: 'dshmf-thumb' })),
               ),
 
-            // ---- measurement probe (never painted)
+            // ---- measurement probe (never painted). It mirrors a family-
+            // grouped row (name + provider tag + tail), the tallest row shape,
+            // so the measured row height covers every mode.
             h('div', { className: 'dshmf-probe', 'aria-hidden': 'true' },
               h('div', { ref: probeHeadRef, className: 'dshmf-groupTitle' }, 'X'),
               h('div', { ref: probeRowRef, className: 'dshmf-row' },
                 h('span', { className: 'dshmf-rowName' }, 'X'),
+                h('span', { className: 'dshmf-rowProvider' }, 'X'),
                 h('span', { className: 'dshmf-rowTail' }),
               ),
             ),

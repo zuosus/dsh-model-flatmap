@@ -5,6 +5,50 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-004 — 2026-11-13 — Family grouping: rows name their provider, and a family is a brand not a version
+
+**Context.** Two problems with model-family grouping, both reported from the
+real catalog:
+
+1. A family heading says what a model *is*, but one family can hold models
+   from several providers. Under family grouping the grid therefore gave no
+   way to tell two same-named models from different providers apart.
+2. Grouping was too fine. `hy3`, `hy4-preview` and `hy4free` arrived as three
+   separate headings even though they are three versions of one brand.
+
+**Decision.**
+
+- Every row under *By provider* stays as it was. Under *By family* each row
+  draws its provider as secondary text (`.dshmf-rowProvider`: caption colour,
+  11 px, shrinks and ellipsises before the model name, no fixed width cap),
+  and the row's `title` tooltip gains the provider on its own line. Under
+  *By provider* the heading already is the provider, so no tag is drawn.
+- The provider label is resolved ONCE per group and reused as the section
+  title, the search face, and the per-row tag, so a localized catalog name
+  (`{ zh, en }`) cannot make the heading and the tag disagree.
+- A family is the brand, not the version. `BRAND_WITH_VERSION` strips a
+  version tail (`hy4free` → `hy`), so every version of a brand lands in one
+  heading. A registered brand list (`FAMILY_BRANDS`, currently `HY`) pins the
+  exact heading casing and keeps that family in the normal sort order; the
+  brand is looked up on every id segment, so a provider-prefixed id
+  (`codebuddy-hy3`) still resolves to `HY`.
+- The measurement probe now mirrors a family-grouped row (name + provider tag
+  + tail), so the measured row height covers the tallest row shape.
+
+**Rejected.** Showing the provider tag in *By provider* mode (the heading
+already says it, so it would be pure noise); a fixed `max-width` on the tag
+(it truncated "CodeBuddy CLI" to "CodeBuddy …" in a column that had room);
+upper-casing every short brand (it would draw `phi-4` as `PHI` instead of the
+dictionary's `Phi`).
+
+**Consequences.** The three `hy*` headings collapse into one `HY` heading, so
+the grid gets shorter and the column planner fits more models per column. A
+family-grouped row is unchanged in height (26 px) because the tag shares the
+model-name line. Render tests pin the tag's presence under family grouping,
+its absence under provider grouping, the one-heading outcome for three `hy`
+versions across two providers, and the localized-label agreement between
+heading and tag.
+
 ## DEC-003 — 2026-11-13 — Groups get a low-key framed label; the rows stay unboxed
 
 **Context.** The flat grid listed each provider/family as a tinted title band

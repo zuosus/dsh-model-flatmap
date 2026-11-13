@@ -253,6 +253,23 @@ function gridRowNames(tree) {
     : findAll(grid, node => hasClass(node, 'dshmf-rowName')).map(textOf)
 }
 
+/** The provider tag of each row, in grid order; `null` where a row has none. */
+function gridRowProviders(tree) {
+  const grid = findAll(tree, node => hasClass(node, 'dshmf-grid'))[0]
+  if (grid === undefined) return []
+  return findAll(grid, node => hasClass(node, 'dshmf-row')).map(row => {
+    const tag = findAll(row, node => hasClass(node, 'dshmf-rowProvider'))[0]
+    return tag === undefined ? null : textOf(tag)
+  })
+}
+
+/** Switch the open panel to family grouping and return the new tree. */
+function switchToFamily(tree, props) {
+  findAll(tree, node => hasClass(node, 'dshmf-segBtn'))
+    .find(button => button.props.title === 'group.family').props.onClick()
+  return runtime.render(bundle.__component, props)
+}
+
 function textOf(node) {
   if (node === null || node === undefined) return ''
   if (typeof node === 'string' || typeof node === 'number') return String(node)
@@ -340,6 +357,92 @@ test('family grouping regroups the same models and sorts Others last', () => {
   const titles = gridTitles(tree).map(textOf)
   assert.deepEqual(titles, ['DeepSeek', 'Grok', 'GLM', 'Kimi', 'Mystery'])
   assert.equal(gridRows(tree).length, 6)
+})
+
+test('a family-grouped row names the provider it comes from', () => {
+  // A family heading says what the models ARE; the same family can hold models
+  // from several providers, so each row has to name its own provider.
+  runtime.reset()
+  const { props } = makeProps(catalogState())
+  let tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+  tree = switchToFamily(tree, props)
+  assert.deepEqual(gridRowProviders(tree), [
+    'provider.account', 'provider.account', // DeepSeek family
+    'Third Party', 'Third Party', 'Third Party', 'Third Party',
+  ])
+  // The tag is secondary text, not part of the model name.
+  assert.deepEqual(gridRowNames(tree), [
+    'DeepSeek Chat', 'DeepSeek Reasoner',
+    'Grok 4', 'GLM 4.6', 'Kimi K2', 'Mystery',
+  ])
+})
+
+test('provider grouping draws no per-row provider tag', () => {
+  // The heading already is the provider, so repeating it on every row is noise.
+  runtime.reset()
+  const { props } = makeProps(catalogState())
+  let tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+  assert.deepEqual(gridRowProviders(tree), [null, null, null, null, null, null])
+})
+
+test('a family spanning two providers tags each row with its own provider', () => {
+  // One `HY` family, three ids that differ only by version, offered by two
+  // providers: one heading, one row per model, each row naming its provider.
+  const state = catalogState({
+    current: null,
+    groups: [
+      {
+        id: 'codebuddy-cli',
+        name: 'CodeBuddy CLI',
+        models: [
+          { id: 'hy3', name: 'hy3' },
+          { id: 'hy4-preview', name: 'hy4-preview' },
+        ],
+      },
+      {
+        id: 'workbuddy-global',
+        name: 'WorkBuddy Global',
+        models: [{ id: 'hy4free', name: 'hy4free' }],
+      },
+    ],
+  })
+  runtime.reset()
+  const { props } = makeProps(state)
+  let tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+  tree = switchToFamily(tree, props)
+  // The three versions share ONE heading.
+  assert.deepEqual(gridTitles(tree).map(textOf), ['HY'])
+  assert.deepEqual(gridRowNames(tree), ['hy3', 'hy4-preview', 'hy4free'])
+  assert.deepEqual(gridRowProviders(tree),
+    ['CodeBuddy CLI', 'CodeBuddy CLI', 'WorkBuddy Global'])
+})
+
+test('a localized provider name is resolved once for heading and row tag', () => {
+  // Catalog provider names arrive localized; both faces of the panel have to
+  // draw the resolved label, not the raw `{ zh, en }` record.
+  const state = catalogState({
+    current: null,
+    groups: [{
+      id: 'vendor-x',
+      name: { zh: '豆包(doubao)', en: 'Doubao' },
+      models: [{ id: 'doubao-seed-1.6', name: 'Doubao Seed 1.6' }],
+    }],
+  })
+  runtime.reset()
+  const { props } = makeProps(state)
+  let tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+  assert.deepEqual(gridTitles(tree).map(textOf), ['Doubao'])
+  tree = switchToFamily(tree, props)
+  assert.deepEqual(gridTitles(tree).map(textOf), ['Doubao'])
+  assert.deepEqual(gridRowProviders(tree), ['Doubao'])
 })
 
 test('search filters across providers and hides empty group titles', () => {

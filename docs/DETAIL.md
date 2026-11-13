@@ -33,9 +33,20 @@ and the agent teamwork switch are all visible at once.
   segment only changes how the filtered result is organised.
 - **Model families.** A built-in dictionary recognises DeepSeek, Grok, Opus,
   Haiku, Sonnet, Claude, Qwen, GLM, Kimi, GPT, Gemini, Llama, Mistral and
-  others. A model the dictionary does not cover is inferred from the first
-  segment of its id; anything unjudgeable falls into *Others*, which always
-  sorts last. Families stay flat — no nesting.
+  others. A model the dictionary does not cover is inferred from its id;
+  anything unjudgeable falls into *Others*, which always sorts last. Families
+  stay flat — no nesting.
+- **A family is a brand, not a version.** A version tail never splits one
+  brand into several headings, so `hy3`, `hy4-preview` and `hy4free` share a
+  single `HY` family instead of producing three. The same rule covers
+  `acme4-turbo` and `acme-7b`. A provider prefix on the id does not hide the
+  brand either (`codebuddy-hy3` is still `HY`), and a registered brand keeps
+  its own casing so `HY` does not read as the word "Hy".
+- **Rows name their provider under family grouping.** A family heading says
+  what the models *are*, and one family can hold models from several
+  providers, so each row carries its provider as quiet secondary text (caption
+  colour, 11 px, ellipsised before the model name). Under *By provider* the
+  heading already is the provider, so the tag is not drawn.
 - **Adaptive columns.** The panel measures one group title and one model row,
   subtracts the fixed sections from the 320 px cap, and picks the smallest
   column count from 1 to 3 that fits. If even three columns overflow, it keeps

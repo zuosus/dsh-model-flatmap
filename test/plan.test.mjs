@@ -70,6 +70,27 @@ test('an uncovered model id falls back to its first id segment', () => {
   assert.equal(familyOf({ id: 'vendor/acme-7b', name: 'Acme 7B' }), 'Acme')
 })
 
+test('versions of one brand collapse into one family', () => {
+  // A family is a brand, not a version: `hy3`, `hy4-preview` and `hy4free`
+  // are one HY family, so they must not produce three headings.
+  assert.equal(familyOf({ id: 'hy3', name: 'hy3' }), 'HY')
+  assert.equal(familyOf({ id: 'hy4-preview', name: 'hy4-preview' }), 'HY')
+  assert.equal(familyOf({ id: 'hy4free', name: 'hy4free' }), 'HY')
+  // A provider-prefixed id still finds the brand behind the prefix.
+  assert.equal(familyOf({ id: 'codebuddy-hy3', name: 'hy3' }), 'HY')
+  assert.equal(familyOf({ id: 'codebuddy-cli:hy4-preview', name: 'hy4' }), 'HY')
+  // A bare brand id keeps the registered heading, not generic title case.
+  assert.equal(familyOf({ id: 'hy', name: 'HY' }), 'HY')
+  // The same rule generalises: a version tail never splits a brand.
+  assert.equal(familyOf({ id: 'acme4-turbo', name: 'Acme 4 Turbo' }), 'Acme')
+})
+
+test('a bare version is not a brand', () => {
+  // A version-only id names no brand, so it cannot become a heading of its own.
+  assert.equal(familyOf({ id: 'v2', name: 'V2' }), 'Others')
+  assert.equal(familyOf({ id: '2024', name: '2024' }), 'Others')
+})
+
 test('an unjudgeable id lands in Others', () => {
   assert.equal(familyOf({ id: '2024', name: '2024' }), 'Others')
   assert.equal(familyOf({ id: 'v2', name: 'V2' }), 'Others')

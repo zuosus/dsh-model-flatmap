@@ -5,6 +5,18 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## LES-003 — 2026-11-13 — Verify a row-layout change against the REAL panel width, not a guessed one
+
+`PANEL_MAX = 320` is the panel's **height** cap, not its width: the placement
+effect sets `width = clamp(280, vw - 24, 560)`, so the panel is normally much
+wider than 320 px. Previewing the new per-row provider tag in a 320 px mock
+therefore showed "CodeBuddy …" truncation that does not happen in the product,
+and it took a `max-width: 45%` cap — which *caused* real truncation at the true
+width — to notice the mistake. Read the placement code for the real geometry
+before judging a dense layout, and drop width caps on secondary text: flex
+already shrinks it, and a cap truncates labels that had room.
+
+
 ## LES-002 — 2026-11-13 — "Multi-segmentation" means reusing the panel's own segment recipe
 
 When the user asks for a "multi-segmentation 控件" visual, do not invent a
