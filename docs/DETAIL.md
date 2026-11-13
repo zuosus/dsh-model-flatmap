@@ -77,8 +77,9 @@ and the agent teamwork switch are all visible at once.
   side, otherwise the footer wraps back to the original two-line stack. The
   break is decided by CSS flex wrapping and the 30 px `column-gap`, never by a
   JS width threshold, so it stays correct across panel resizes, font loads and
-  both themes. The single grey rule above the reasoning group stays where it
-  is in both states; the teamwork row draws no divider of its own (DEC-011).
+  both themes. The single grey rule belongs to the footer container, so it sits
+  above the whole footer block and stays put in both states; neither group
+  draws a divider of its own (DEC-016).
   The fixed height budget measures the footer container once, not its two
   children, so a shared line is not double-counted against the grid.
 - **Selected model.** The current model reads as a solid deep-blue band with
