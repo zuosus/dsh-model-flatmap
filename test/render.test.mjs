@@ -1164,3 +1164,66 @@ test('the group-title band steps away from the row surface with an opaque grey s
   // filled band is the only standing separation from the surface.
   assert.equal(prop(row, 'background'), 'transparent', 'model rows keep a transparent background')
 })
+
+// ---------------------------------------------------------------------------
+// Selected model: a blue band with bold on-fill text, not a checkmark.
+//
+// The checkmark cost a permanently reserved tail column (empty on every
+// unselected row) and only marked the selection with a 14px glyph. The row
+// itself now carries the selection, which is both louder and cheaper.
+// ---------------------------------------------------------------------------
+test('a selected model row is a blue band with bold on-fill text, not a checkmark', () => {
+  runtime.reset()
+  const { props } = makeProps(catalogState())
+  let tree
+  runtime.setRerender(() => { tree = runtime.render(bundle.__component, props) })
+  tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+
+  const rows = gridRows(tree)
+  const selected = rows.filter(row => row.props['aria-pressed'] === true)
+  assert.equal(selected.length, 1, 'exactly the current model is pressed')
+  assert.equal(textOf(findAll(selected[0], node => hasClass(node, 'dshmf-rowName'))[0]), 'DeepSeek Chat')
+
+  // Selection is expressed by the row state, never by a drawn check glyph.
+  assert.equal(findAll(tree, node => node.type === 'svg' && node.props?.['data-icon'] === 'check').length, 0,
+    'no check icon is drawn for the selection')
+  const css = source.match(/const CSS = `([\s\S]*?)`/)[1]
+  assert.equal(css.includes('PATH_CHECK'), false, 'the check path is gone from the client')
+  assert.equal(source.includes('PATH_CHECK'), false, 'the check glyph constant is no longer defined')
+
+  // The row's tail no longer reserves space on unselected rows: the probe,
+  // which mirrors the tallest row shape, carries no tail.
+  const selectedTails = findAll(selected[0], node => hasClass(node, 'dshmf-rowTail'))
+  assert.equal(selectedTails.length, 0, 'a selected idle row draws no trailing element')
+  const probe = findAll(tree, node => hasClass(node, 'dshmf-probe'))[0]
+  assert.equal(findAll(probe, node => hasClass(node, 'dshmf-rowTail')).length, 0,
+    'the measurement probe no longer reserves a tail column')
+})
+
+test('the selected-row CSS is a deep blue band with white bold text', () => {
+  const css = source.match(/const CSS = `([\s\S]*?)`/)[1]
+  const rule = css.match(/\.dshmf-row\[aria-pressed="true"\][\s\S]*?\{([\s\S]*?)\}/)[1]
+  const prop = name => {
+    const hit = rule.match(new RegExp(`${name}:\\s*([^;]+);`))
+    return hit === null ? undefined : hit[1].trim()
+  }
+
+  // A deep blue fill with white text, pinned to the theme-invariant static
+  // palette. The `--dsw-alias-state-business-primary` alias would flip to a
+  // LIGHT blue with dark text in the dark theme, which is not what was asked
+  // for: both themes must read as deep blue + white.
+  assert.match(prop('background'), /var\(--dsw-static-deepseek-600/,
+    'selected rows fill with the deep blue static token')
+  assert.match(prop('color'), /var\(--dsw-static-neutral-bluish-00/,
+    'selected text is the white static token')
+  assert.equal(prop('background').includes('state-business-primary'), false,
+    'the flipping alias is not used for the fill')
+  assert.doesNotMatch(prop('background'), /#[0-9a-f]/i, 'the token carries the colour, not a literal')
+  assert.ok(Number(prop('font-weight')) >= 600, 'selected text is bold')
+
+  // Hover must not repaint the selected row with the neutral hover wash.
+  assert.match(css, /\.dshmf-row:hover:not\(:disabled\):not\(\[aria-pressed="true"\]\)/,
+    'hover is skipped for the selected row so the highlight stays put')
+})

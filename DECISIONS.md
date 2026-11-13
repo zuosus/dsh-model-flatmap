@@ -5,6 +5,48 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-010 — 2026-11-13 — Selected model: deep-blue band with white bold text, no checkmark
+
+**Context.** The selected model was marked only by a 14px checkmark at the
+right edge of its row. That reserved a trailing column on *every* row (empty
+on all the unselected ones) and read as a weak, easy-to-miss glyph. The user
+asked for a space-saving treatment: no checkmark, a deep-blue background and
+white bold text on the selected row.
+
+**Decision.**
+
+- Drop `PATH_CHECK` and the checkmark branch in `renderRow`; the selection is
+  carried by the row itself through `aria-pressed="true"`.
+- The selected row draws as a solid band: `background:
+  --dsw-static-deepseek-600` (deep blue `#4868b2`), `color:
+  --dsw-static-neutral-bluish-00` (white), `font-weight: 600`. White on that
+  blue measures 5.39:1, and the fill stands apart from the panel surface in
+  both themes (5.33:1 light, 2.77:1 dark).
+- The blue is pinned to the **static** palette, not
+  `--dsw-alias-state-business-primary`: that alias is deepseek-500 in light
+  but flips to light deepseek-400 in dark, which would paint a light-blue band
+  with the theme's dark foreground — the opposite of the requested deep blue
+  with white text. The static `--dsw-static-*` tokens are defined once in the
+  host's global `body` rule and are identical in both themes.
+- Hover is skipped for the selected row
+  (`:not([aria-pressed="true"])`), so the neutral hover wash cannot cover the
+  highlight. Provider tags inherit the white text (slightly dimmed) and
+  badges become a translucent white chip so both stay legible on the fill.
+- The trailing tail element is now drawn only for a pending selection (the
+  spinner); the measurement probe no longer mirrors a tail column. Since the
+  row height is fixed at 26px, no planner change is needed.
+
+**Rejected.** An alias-based blue fill + `--dsw-alias-label-primary-foreground`
+text (the host's own chip recipe): it inverts to light blue / dark text in the
+dark theme. Keeping a fixed 14px tail for the checkmark (wastes horizontal
+space on every unselected row).
+
+**Consequences.** Purely a CSS + render-path change; the row keeps its 26px
+height and the column planner, probe measurements, and selection semantics
+(`aria-pressed`) are unchanged. Render tests pin the CSS recipe, the absence
+of the check path/glyph, and the tail-free probe.
+
+
 ## DEC-005 — 2026-11-13 — Float the group-title band on an opaque layer fill
 
 **Context.** DEC-003 added a low-key frame to the group label but kept its

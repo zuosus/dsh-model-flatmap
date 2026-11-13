@@ -155,9 +155,28 @@ window.__ModuleLoader__.load({
   font-family: inherit; font-size: 13px; line-height: 18px; font-weight: 400; text-align: left;
   cursor: pointer; min-width: 0;
 }
-@media (hover: hover) { .dshmf-row:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); } }
+@media (hover: hover) { .dshmf-row:hover:not(:disabled):not([aria-pressed="true"]) { background: var(--dsw-alias-interactive-bg-hover); } }
 .dshmf-row:focus-visible { background: var(--dsw-alias-interactive-bg-hover); outline: none; }
 .dshmf-row:disabled { color: var(--dsw-alias-label-dimmed); cursor: default; }
+/* Selected model: a solid deep-blue band with white bold text — the row
+   itself says "this one is active", so no checkmark and no reserved tail
+   column is needed (that 14px sat empty on every unselected row).
+   The pairing is pinned to the static deepseek-600 + white rather than the
+   alias --dsw-alias-state-business-primary, because that alias flips to a
+   LIGHT blue with dark text in the dark theme; the request is a deep blue
+   with white text in both themes, and these two static tokens are the same
+   in light and dark. */
+.dshmf-row[aria-pressed="true"],
+.dshmf-row[aria-pressed="true"]:focus-visible {
+  background: var(--dsw-static-deepseek-600);
+  color: var(--dsw-static-neutral-bluish-00);
+  font-weight: 600;
+}
+.dshmf-row[aria-pressed="true"] .dshmf-rowProvider { color: inherit; opacity: .82; }
+.dshmf-row[aria-pressed="true"] .dshmf-badge {
+  background: color-mix(in srgb, var(--dsw-static-neutral-bluish-00) 22%, transparent);
+  color: inherit;
+}
 .dshmf-rowName { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Provider tag inside a family-grouped row: the same family spans several
    providers, so each row says where it comes from. Quieter than the model name
@@ -170,8 +189,7 @@ window.__ModuleLoader__.load({
   color: var(--dsw-alias-label-caption);
   font-size: 11px; line-height: 16px; font-weight: 400;
 }
-.dshmf-rowTail { display: grid; place-items: center; flex: 0 0 14px; color: var(--dsw-alias-label-primary); }
-.dshmf-rowTail svg { width: 14px; height: 14px; }
+.dshmf-rowTail { display: grid; place-items: center; flex: 0 0 14px; color: inherit; }
 
 /* Catalog badge (for example a third-party rate multiplier). Rendered only
    when the catalog publishes text, so a badge-less model keeps no gap. */
@@ -292,7 +310,6 @@ window.__ModuleLoader__.load({
     const ROW_GAP = 2
     const BALANCE_THRESHOLD = 24
 
-    const PATH_CHECK = 'M2.5 7.4 5.6 10.5 11.5 3.8'
     const PATH_CHEVRON = 'M3.2 5.6 7 9.4 10.8 5.6'
     const PATH_CLOSE = 'M4 4 10 10M10 4 4 10'
     const PATH_INFO = 'M7 6.4v4.1M7 3.7v.8'
@@ -1167,8 +1184,7 @@ window.__ModuleLoader__.load({
             className: 'dshmf-badge',
             'data-tone': badge.tone,
           }, badge.label),
-          h('span', { className: 'dshmf-rowTail' },
-            pendingThis ? h('span', { className: 'dshmf-spin' }) : selected ? svg(PATH_CHECK, 14) : null),
+          pendingThis ? h('span', { className: 'dshmf-rowTail' }, h('span', { className: 'dshmf-spin' })) : null,
         )
       }
 
@@ -1449,14 +1465,14 @@ window.__ModuleLoader__.load({
               ),
 
             // ---- measurement probe (never painted). It mirrors a family-
-            // grouped row (name + provider tag + tail), the tallest row shape,
-            // so the measured row height covers every mode.
+            // grouped row (name + provider tag), the widest row shape, so the
+            // measured row height covers every mode. It carries no trailing
+            // tail: the selected row no longer reserves one.
             h('div', { className: 'dshmf-probe', 'aria-hidden': 'true' },
               h('div', { ref: probeHeadRef, className: 'dshmf-groupTitle' }, 'X'),
               h('div', { ref: probeRowRef, className: 'dshmf-row' },
                 h('span', { className: 'dshmf-rowName' }, 'X'),
                 h('span', { className: 'dshmf-rowProvider' }, 'X'),
-                h('span', { className: 'dshmf-rowTail' }),
               ),
             ),
           ),

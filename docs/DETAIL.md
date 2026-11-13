@@ -62,9 +62,19 @@ and the agent teamwork switch are all visible at once.
   unmistakable. A click submits through `session.selectModel` and the group
   refreshes from the directory once it updates. A model without reasoning
   metadata hides the whole group, and it costs no height.
+- **Selected model.** The current model reads as a solid deep-blue band with
+  white, bold text — no checkmark on the right. Selection lives on the row
+  itself (`aria-pressed="true"`), so nothing is reserved at the trailing edge:
+  unselected rows keep their full width for the name, the provider tag, and the
+  badge, and the measurement probe no longer mirrors a tail column. The blue
+  is `--dsw-static-deepseek-600` and the text is
+  `--dsw-static-neutral-bluish-00`, both from the theme-invariant static
+  palette, so the band looks the same in light and dark themes. Hover skips the
+  selected row so the neutral hover wash never covers the highlight.
 - **Badges.** A model's catalog badge (for example a third-party rate
   multiplier such as `×0.1`) renders inside its row. A model with no badge
-  renders no empty slot.
+  renders no empty slot. On the selected row the badge switches to a
+  translucent white chip so it stays legible on the blue fill.
 - **Agent teamwork.** The switch keeps the host's semantics: the same label,
   the same confirmation before disabling it mid-conversation, and no optimistic
   update — the state comes from the `agentTeam` projection.
@@ -97,9 +107,13 @@ No host component, stylesheet, or DOM is read or restyled.
 
 ## Styling
 
-Colours, radii, spacing, and elevation come only from the `--dsw-alias-*`,
-`--dsw-elevation-*`, `--dsw-menu-*`, and `--dsw-radius-*` tokens, so light and
-dark themes both follow the host palette. The panel uses the same menu surface
+Colours, radii, spacing, and elevation come from the `--dsw-alias-*`,
+`--dsw-static-*`, `--dsw-elevation-*`, `--dsw-menu-*`, and `--dsw-radius-*`
+tokens, so light and dark themes both follow the host palette. The selected
+row's blue is deliberately drawn from the static palette (`--dsw-static-*`),
+which is theme-invariant: the alias `--dsw-alias-state-business-primary`
+flips to a light blue with dark text in the dark theme, which would break the
+requested deep-blue-with-white-text treatment there. The panel uses the same menu surface
 material as the host's own menus (menu fill, backdrop blur, prominent
 elevation, large radius), and hover, focus, selected, and disabled states follow
 the shipped picker's visual language.

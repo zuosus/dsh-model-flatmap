@@ -5,6 +5,23 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## LES-010 — 2026-11-13 — Pick the theme-invariant palette when the spec fixes a colour
+
+A request for "a deep blue background with white text" is a *fixed* colour
+pair, not a theme-adaptive one. Wiring it to `--dsw-alias-state-business-primary`
+looked correct in the light theme (deepseek-500) but silently flipped to a
+light blue with dark text in `body[data-ds-dark-theme]`, because that alias is
+defined twice with opposite values. The host's `--dsw-static-*` palette is
+declared once in the global `body` rule and never changes between themes —
+`--dsw-static-deepseek-600` (`#4868b2`) and
+`--dsw-static-neutral-bluish-00` (`#fff`) give the same deep-blue/white band
+in both. Check whether a token's value is theme-dependent before using it to
+honour a colour that the spec pins down, and verify the dark theme explicitly:
+a passing light-theme screenshot says nothing about the other half of the
+palette. This is the mirror of LES-004 (which was about composited contrast):
+there a fill had to step away from the surface, here a colour had to stay put.
+
+
 ## LES-004 — 2026-11-13 — Verify a fill's *composited* contrast, not just its name or value
 
 `--dsw-alias-menu-group-header-fill` is designed for the host's own menus,
