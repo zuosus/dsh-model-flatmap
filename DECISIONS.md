@@ -15,29 +15,35 @@ rows sit on (light: `rgba(248,249,250,.94)` band vs `rgba(252,253,254,.7)`
 surface; dark: `rgba(48,49,54,.94)` vs `rgba(48,49,54,.64)`), so the band did
 not read as a separate section header.
 
-**Decision.** Keep the DEC-003 frame (hairline + brand left edge) untouched and
-change only the band's fill to `--dsw-alias-bg-layer-1` plus
+**Decision.** Keep the DEC-003 frame (hairline + grey left edge) untouched and
+change only the band's fill to `--dsw-alias-bg-overlay` plus
 `--dsw-elevation-soft` — the exact recipe the panel already uses for its
 active segment (`.dshmf-segBtn[aria-pressed]`, `.dshmf-pill[aria-checked]`).
-`bg-layer-1` is opaque white in light and near-black in dark, so the band steps
-clearly away from the translucent panel surface in both themes with no
-hard-coded colour and no second theme branch. Rows stay transparent (background
-only on hover/focus), so the band is the only standing separation.
+Crucially `bg-layer-1` (the first attempt) is opaque white in light and
+near-black in dark — i.e. it matched the panel surface in *both* themes, which
+is exactly why the band read as flat. `bg-overlay` resolves to a soft grey in
+light (`bluish-150` ≈ #e9ecf2, visibly darker than the white panel) and a light
+grey in dark (`bluish-700` ≈ #61666b, visibly lighter than the near-black
+surface), so the band steps clearly away from the translucent panel surface in
+both themes with no hard-coded colour and no second theme branch. Rows stay
+transparent (background only on hover/focus), so the band is the only standing
+separation.
 
-**Rejected.** A `color-mix` tint toward `--dsw-alias-label-primary`
-(compositing math showed it *reduces* separation in most cases — that token is
-dark in light themes, but a light-theme band must get *lighter* than the
-surface to stand out), a tint toward `bg-layer-1` (only a few levels of gain
-and worse on dark pages), a hard-coded darker/lighter fill (breaks theme token
-purity), and `interactive-bg-hover` (a translucent hover tint that would blur
-the row's own hover state).
+**Rejected.** `bg-layer-1` (opaque white/near-black — matches the panel surface
+in *both* themes, so the band reads flat; this is why the first pass had weak
+contrast), a `color-mix` tint toward `--dsw-alias-label-primary` (compositing
+math showed it *reduces* separation in most cases), a tint toward `bg-layer-1`
+(only a few levels of gain and worse on dark pages), a hard-coded
+darker/lighter fill (breaks theme token purity), and `interactive-bg-hover` (a
+translucent hover tint that would blur the row's own hover state).
 
 **Consequences.** CSS-only on `.dshmf-groupTitle`; the frame, height, padding,
 and line-height from DEC-003 are preserved, so the probe-measured `headH` and
-the column planner stay valid. The render tests pin the opaque layer-1 fill, the
-absence of the near-surface group-header fill, the soft elevation, the DEC-003
-frame, and the row's transparent background so the old near-identical fill
-cannot regress.
+the column planner stay valid. The render tests pin the opaque grey overlay
+fill (and assert it is *not* the panel base/layer-1 surface), the absence of the
+near-surface group-header fill, the soft elevation, the DEC-003 frame, and the
+row's transparent background so the old near-identical flat fill cannot
+regress.
 
 ## DEC-004 — 2026-11-13 — Family grouping: rows name their provider, and a family is a brand not a version
 

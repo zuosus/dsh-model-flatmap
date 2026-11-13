@@ -1099,25 +1099,30 @@ test('the group-title label is a distinct filled band, not a plain row-like capt
   }
   const size = value => Number.parseFloat(value, 10)
 
-  // An opaque theme-token fill — never a hard-coded colour. The near-surface
-  // group-header fill was too close to the panel surface; the opaque layer-1
-  // fill steps the band away from the transparent rows (see DEC-005).
-  assert.match(prop(title, 'background'), /var\(--dsw-alias-bg-layer-1\)/,
-    'band floats on the opaque layer-1 fill')
+  // An opaque, theme-neutral surface fill — never a hard-coded colour. The band
+  // must step AWAY from the panel surface in BOTH themes: visibly darker than
+  // the white panel in light, visibly lighter than the near-black surface in
+  // dark. `bg-overlay` resolves to a soft grey in light and a light grey in
+  // dark, doing exactly that without a second theme branch (see DEC-005).
+  assert.match(prop(title, 'background'), /var\(--dsw-alias-bg-overlay\)/,
+    'band floats on the opaque grey overlay surface')
   assert.match(prop(title, 'box-shadow'), /dsw-elevation-soft/,
     'soft elevation lifts the band off the surface')
   assert.doesNotMatch(prop(title, 'background'), /menu-group-header-fill|bg-module-platform/,
     'the near-surface group-header fill is no longer the standing background')
+  assert.match(prop(title, 'background'), /bg-overlay/,
+    'fill is not the panel base/layer-1 surface — it steps away from it in both themes')
   assert.doesNotMatch(prop(title, 'background'), /#[0-9a-f]|rgba?\(/i, 'no hard-coded colour value')
   assert.match(prop(title, 'border-radius'), /dsw-radius/, 'rounded corners come from a radius token')
 
-  // A low-key frame around the label: hairline border + brand-accent left
-  // edge, both theme tokens (no hard-coded colour). 20px tall, unchanged, so
-  // the probe-measured headH and the column planner stay valid.
+  // A low-key frame around the label: hairline border + a grey (border-level-3)
+  // left edge — theme-neutral, no colour accent — both theme tokens (no
+  // hard-coded colour). 20px tall, unchanged, so the probe-measured headH and
+  // the column planner stay valid.
   assert.match(prop(title, 'border'), /dsw-alias-border/, 'hairline frame comes from a border token')
   assert.doesNotMatch(prop(title, 'border'), /#[0-9a-f]|rgba?\(/i, 'frame colour is not hard-coded')
   assert.match(prop(title, 'border-left'), /3px/, 'the left accent is a short bar')
-  assert.match(prop(title, 'border-left'), /state-business-primary/, 'the accent uses the panel brand colour token')
+  assert.match(prop(title, 'border-left'), /dsw-alias-border-l3/, 'the left edge uses the grey border-level-3 token, not a colour accent')
   assert.equal(prop(title, 'height'), '20px', 'label height is unchanged for the column planner')
 
   // Smaller than the row, but bold — clearly a label, not model-row text.
@@ -1129,11 +1134,13 @@ test('the group-title label is a distinct filled band, not a plain row-like capt
 })
 
 // DEC-005: the bare host group-header fill is only a few levels away from the
-// translucent panel surface, so the band must sit on an opaque layer-1 fill
-// (white in light / near-black in dark) to stay clearly apart from the rows in
-// BOTH themes. Pin the opaque fill and the transparent row background so a
-// regression to the near-identical plain fill cannot slip back in.
-test('the group-title band steps away from the row surface with an opaque layer fill', () => {
+// translucent panel surface, so the band must sit on an opaque grey overlay
+// surface that steps AWAY from the panel base in BOTH themes — darker than the
+// white panel in light and lighter than the near-black surface in dark — to
+// stay clearly apart from the rows in both. Pin the opaque fill and the
+// transparent row background so a regression to the near-identical plain fill
+// cannot slip back in.
+test('the group-title band steps away from the row surface with an opaque grey surface', () => {
   const css = source.match(/const CSS = `([\s\S]*?)`/)[1]
   const title = css.match(/\.dshmf-groupTitle \{([\s\S]*?)\}/)[1]
   const row = css.match(/\.dshmf-row \{([\s\S]*?)\}/)[1]
@@ -1142,10 +1149,12 @@ test('the group-title band steps away from the row surface with an opaque layer 
     return hit === null ? undefined : hit[1].trim()
   }
 
-  assert.match(prop(title, 'background'), /var\(--dsw-alias-bg-layer-1\)/,
-    'band floats on the opaque layer-1 fill theme token')
+  assert.match(prop(title, 'background'), /var\(--dsw-alias-bg-overlay\)/,
+    'band floats on the opaque grey overlay surface theme token')
   assert.doesNotMatch(prop(title, 'background'), /menu-group-header-fill/,
     'the near-surface group-header fill is no longer the standing background')
+  assert.doesNotMatch(prop(title, 'background'), /bg-layer-1|bg-base/,
+    'fill is not the panel base/layer-1 surface — it must step away from it in both themes')
   assert.match(prop(title, 'box-shadow'), /dsw-elevation-soft/,
     'soft elevation lifts the band off the surface like the active segment')
   assert.doesNotMatch(prop(title, 'background'), /#[0-9a-f]|rgba?\(/i,

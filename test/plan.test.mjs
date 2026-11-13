@@ -244,5 +244,8 @@ test('an empty catalog plans a single empty column', () => {
 
 test('the bundle factory materializes with the plugin face', () => {
   assert.equal(typeof bundle.apply, 'function')
-  assert.deepEqual(bundle.inject, ['slots', 'locale'])
+  // `remote` / `remote.agentTeams` are declared so the guarded client context
+  // authorises reading the Host's teamwork namespace; without them the
+  // teamwork switch silently never renders.
+  assert.deepEqual(bundle.inject, ['slots', 'locale', 'remote', 'remote.agentTeams'])
 })

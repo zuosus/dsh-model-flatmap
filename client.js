@@ -123,25 +123,29 @@ window.__ModuleLoader__.load({
 .dshmf-col { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 /* Provider / family label: a filled, rounded band that reads as a section
    header, clearly separated from the model rows below it. Bare host
-   group-header fill is only a few levels from the translucent panel surface,
-   so the band floats on an opaque layer-1 fill with soft elevation — the
-   same recipe the active segment uses. Opaque white in light / near-black in
-   dark, it steps away from the rows in both themes with no hard-coded colour.
-   Smaller but bold type (and a stronger label colour) sets it apart from the
-   13px regular row text without borrowing from the row's interactive states.
-   A hairline frame plus a short brand-blue left edge — the panel's own
-   accent — marks each group start: visible, never loud. The rows themselves
+   group-header fill is only a few levels from the translucent panel surface.
+   The band floats on an opaque grey overlay surface with soft elevation — the
+   same recipe the active segment uses. It deliberately steps AWAY from the
+   transparent panel surface in both themes: in light it resolves to a soft
+   grey (#e9ecf2) that is visibly darker than the white panel, and in dark it
+   resolves to a light grey (#61666b) that is visibly lighter than the
+   near-black surface — so the band reads as a distinct section header with
+   no hard-coded colour and no second theme branch (see DEC-005). Smaller but
+   bold type (and the primary label colour) sets it apart from the 13px
+   regular row text without borrowing from the row's interactive states.
+   A hairline frame plus a short grey (border-level-3) left edge marks each
+   group start: visible, never loud, and theme-neutral — no colour accent. The rows themselves
    stay borderless, so the dense flow across columns is kept (see DEC-003,
    DEC-005). */
 .dshmf-groupTitle {
   box-sizing: border-box; height: 20px; padding: 0 8px 0 6px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   border: 1px solid var(--dsw-alias-border-l2);
-  border-left: 3px solid var(--dsw-alias-state-business-primary);
+  border-left: 3px solid var(--dsw-alias-border-l3);
   border-radius: var(--dsw-radius-xs);
-  background: var(--dsw-alias-bg-layer-1);
+  background: var(--dsw-alias-bg-overlay);
   box-shadow: var(--dsw-elevation-soft);
-  color: var(--dsw-alias-label-secondary);
+  color: var(--dsw-alias-label-primary);
   font-size: 10px; line-height: 18px; font-weight: 700; letter-spacing: .02em;
 }
 .dshmf-row {
