@@ -831,6 +831,46 @@ test('the divider is a sibling of the columns, not a border on one', () => {
     'the line is painted by the item itself, not borrowed from a column border')
 })
 
+test('every grid child is placed on its own explicit track, never auto-placed', () => {
+  // Auto-placement is what broke this once: a divider pinned to row 1 but not
+  // to a column is laid out BEFORE the columns, takes track 1, and pushes the
+  // columns onto tracks 2 and 3 — the first text column then collapses and the
+  // columns overlap. So each child must name its own grid-column, and the
+  // tracks of a 3-column layout must be col gutter col gutter col.
+  runtime.reset()
+  const models = Array.from({ length: 30 }, (_, index) => ({
+    id: `m${index}`,
+    name: `Model ${index}`,
+  }))
+  const { props } = makeProps(catalogState({
+    current: null,
+    groups: [{ id: 'p', name: 'Provider', models }],
+  }))
+  let tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+  const grid = findAll(tree, node => hasClass(node, 'dshmf-grid'))[0]
+  const columns = trackCount(grid)
+  if (columns < 2) return
+
+  const children = gridChildren(grid).filter(node => !hasClass(node, 'dshmf-failure'))
+  const tracks = children.map(node => {
+    const placed = node.props.style?.gridColumn
+    assert.ok(placed !== undefined && placed !== '', 'every grid item states its own grid-column')
+    return Number(placed)
+  })
+  // One item per track, no collisions and no gaps, columns on the odd tracks.
+  assert.deepEqual(tracks, children.map((_, index) => index + 1))
+  children.forEach((node, index) => {
+    assert.equal(hasClass(node, 'dshmf-col') === (index % 2 === 0), true,
+      'text columns sit on their own tracks with a gutter between them')
+    assert.equal(node.props.style.gridRow, '1')
+  })
+  // The declared template must carry exactly one hairline track per gutter.
+  assert.equal(trackCount(grid), columns)
+  assert.equal(String(grid.props.style.gridTemplateColumns).split('1px').length - 1, columns - 1)
+})
+
 test('a small catalog converges to one column', () => {
   runtime.reset()
   const { props } = makeProps(catalogState({

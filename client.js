@@ -120,7 +120,12 @@ window.__ModuleLoader__.load({
 
 /* The only scrolling region. Its "align-items: start" keeps the text columns
    at their natural height; a divider laid out beside them opts back into
-   stretch so it spans the tallest column instead (see .dshmf-colDivider). */
+   stretch so it spans the tallest column instead (see .dshmf-colDivider).
+   Every child is placed explicitly by grid-column (and the divider by
+   grid-row) — see the inline style on each one. Auto-placement must NOT be
+   relied on here: a divider that pins its row but not its column is placed
+   first, stealing column 1, and the columns then overflow to columns 2 and 3,
+   squashing the first text column. */
 .dshmf-grid {
   flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto;
   display: grid; align-items: start;
@@ -2037,18 +2042,28 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         }, block.label)
         : renderRow(block.entry))
 
+      // Each child is placed EXPLICITLY (`grid-column` below), never by
+      // auto-placement: a divider that pinned its row but not its column was
+      // laid out first, took column 1, and pushed the columns into columns 2
+      // and 3 — which squashed the first text column to 1px and stacked the
+      // columns on top of each other. Track 2k+1 holds column k (0-based) and
+      // track 2k+2 the gutter that follows it, so a 3-column layout is
+      // col gutter col gutter col.
       const renderColumn = (column, columnIndex) => h('div', {
         className: 'dshmf-col',
         key: `col-${columnIndex}`,
+        style: { gridColumn: String(columnIndex * 2 + 1), gridRow: '1' },
       }, column.map(unit => unit.blocks.map(renderBlock)))
 
       // Vertical separators are siblings of the columns, not a border on one
       // of them: a border can only ever be as tall as its own column, while a
       // grid item can stretch to the whole grid height (see .dshmf-colDivider).
-      const renderDivider = gutterIndex => h('div', {
+      // Called with the index of the column that PRECEDES the gutter.
+      const renderDivider = dividerIndex => h('div', {
         className: 'dshmf-colDivider',
         role: 'presentation',
-        key: `gutter-${gutterIndex}`,
+        key: `gutter-${dividerIndex}`,
+        style: { gridColumn: String(dividerIndex * 2), gridRow: '1' },
       })
 
       const renderColumns = () => {

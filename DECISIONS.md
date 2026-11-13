@@ -5,6 +5,29 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-018 — 2026-11-13 — grid 子项必须显式指定 grid-column，不能依赖自动放置
+
+**Context.** DEC-017 把分割线提升为 `.dshmf-grid` 的独立子项，只给了它
+`grid-row: 1`，没有指定列，另外两个 `.dshmf-col` 交给自动放置。结果 UI 完全错乱：
+CSS Grid 会先放置「行位置已固定」的项目，分割线因此抢到第 1 条轨道，两个 column 被
+挤到第 2、3 条轨道，第 1 条 `minmax(0,1fr)` 轨道塌缩成 1px —— 左列被压成一条缝，
+各列视觉上叠在一起。上一次的验证只看了「分割线比列高」，没看列的实际位置和宽度，所以
+把这个错误读成了成功。
+
+**Decision.**
+
+- `renderColumn` 与 `renderDivider` 都显式写出 `gridColumn` 与 `gridRow: '1'`：
+  第 k 列（0 起）落在轨道 `2k+1`，它后面的分割线落在轨道 `2k+2`，即
+  col / gutter / col / gutter / col。
+- 空态与 failure 条继续用 `.dshmf-empty` / `.dshmf-failure` 的
+  `grid-column: 1 / -1` 横跨整行。
+
+**Consequences.** 布局不再依赖自动放置的隐式顺序。render 测试新增硬约束：grid 的每个
+子项都必须写 `grid-column`，且轨道序列必须是 1,2,3…（无碰撞、无空洞），text column 落
+在奇数轨道、gutter 落在偶数轨道。验证方式也改为把真实组件渲染树序列化后交给 headless
+Chrome 量 `getBoundingClientRect`（列宽、左偏移、行数分布、分割线高度），而不是只看线高。
+
+
 ## DEC-017 — 2026-11-13 — 列间分割线是 grid 的一个独立子项，而不是列的 border
 
 **Context.** DEC-003 给每列加分割线时用的是 `.dshmf-col--divided` 的
