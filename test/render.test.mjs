@@ -1227,3 +1227,20 @@ test('the selected-row CSS is a deep blue band with white bold text', () => {
   assert.match(css, /\.dshmf-row:hover:not\(:disabled\):not\(\[aria-pressed="true"\]\)/,
     'hover is skipped for the selected row so the highlight stays put')
 })
+
+// ---------------------------------------------------------------------------
+// The teamwork switch sits immediately right of its title, both left-aligned.
+// `space-between` used to push the switch to the far edge of the panel.
+// ---------------------------------------------------------------------------
+test('the teamwork row packs label and switch to the left', () => {
+  const css = source.match(/const CSS = `([\s\S]*?)`/)[1]
+  const team = css.match(/\.dshmf-team \{([\s\S]*?)\}/)[1]
+  const prop = name => {
+    const hit = team.match(new RegExp(`${name}:\\s*([^;]+);`))
+    return hit === null ? undefined : hit[1].trim()
+  }
+  assert.match(prop('justify-content'), /flex-start/, 'no space-between push to the far edge')
+  assert.doesNotMatch(prop('justify-content'), /space-between/)
+  assert.match(prop('display'), /flex/, 'the row is a flex line')
+  assert.match(prop('align-items'), /center/, 'label and switch stay vertically centred')
+})

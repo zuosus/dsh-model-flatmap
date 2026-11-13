@@ -246,9 +246,10 @@ window.__ModuleLoader__.load({
 .dshmf-pill:disabled[aria-checked="true"] { opacity: .5; }
 .dshmf-pill:focus-visible { outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: -2px; }
 
-/* Teamwork row: the host's row rhythm — label + switch on one line. */
+/* Teamwork row: label, info button and switch all left-aligned on one line,
+   so the switch sits immediately to the right of the title. */
 .dshmf-team {
-  flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  flex: 0 0 auto; display: flex; align-items: center; justify-content: flex-start; gap: 8px;
   min-height: 30px; padding: 0 6px; margin-top: 1px;
   border-top: 0.5px solid var(--dsw-alias-border-l1);
   color: var(--dsw-alias-label-primary); font-size: 12px; line-height: 18px;
