@@ -51,6 +51,11 @@ while active. Disabling the plugin restores the native control with no residue.
 - **Adaptive footer.** The reasoning group and the agent-teamwork switch share
   one line when both fit with a 30 px gap, and fall back to one row each when
   they do not — the break is CSS flex wrapping, not a measured pixel threshold.
+- **Out-of-balance models are struck through.** A model whose last call failed
+  on insufficient balance, credit, or quota keeps a `line-through` on its row
+  text until a later call for that same model returns anything else. The strike
+  covers both the Host's `QUOTA` / `ACCOUNT_QUOTA` codes and a provider `402`,
+  and follows the model the failing request actually used.
 - **Theme-aware.** Styled with host theme tokens only; looks correct in both
   light and dark themes.
 

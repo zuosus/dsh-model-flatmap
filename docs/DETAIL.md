@@ -94,6 +94,38 @@ and the agent teamwork switch are all visible at once.
   multiplier such as `×0.1`) renders inside its row. A model with no badge
   renders no empty slot. On the selected row the badge switches to a
   translucent white chip so it stays legible on the blue fill.
+- **Out-of-balance models are struck through.** When a model call fails because
+  the account has no usable balance, credit, or quota left, that model's row
+  text is drawn with a `line-through` decoration, and the strike stays until a
+  later call for the same model returns something other than an
+  insufficient-balance failure. The row is not recoloured, so the strike reads
+  the same on the selected row's blue band and in both themes, and it does not
+  compete with the error strip's red. Only the row's text (the name and a
+  family variant tag) is struck; the badge chip and the pending spinner are
+  not.
+  - **What counts.** The Host already classifies an exhausted account into the
+    provider-neutral `QUOTA` / `ACCOUNT_QUOTA` codes and maps a provider HTTP
+    `402` to `QUOTA`. The panel accepts those codes, a structured `status: 402`
+    (or an `HTTP_402` code), and — for a failure the Host flattened to
+    `UNKNOWN` with the provider's wording kept — the provider text itself
+    (`insufficient balance` / `insufficient credits` / `quota exceeded` /
+    `out of credits` / `余额不足` / `额度不足`, among others). A rate limit is
+    deliberately NOT an insufficient balance: the account still has credit, so
+    `RATE_LIMIT` and the other transient codes never strike a row.
+  - **Which model.** The failing call's model is read from the `request/header`
+    event that immediately precedes the failing `turn/end`, so the mark lands
+    on the route (`provider/model`) the request was actually dispatched to —
+    not on the currently selected model, which may have changed since.
+  - **When the strike ends.** A `turn/end` for the same route that proves the
+    model answered clears it: a completed turn, a `max-tokens` turn, or a turn
+    that failed for a different reason. A cancellation (`aborted`), a `blocked`
+    turn, and the synthetic `interrupted` / `forked` closers clear nothing —
+    the model never answered, so they say nothing about the account.
+  - **Where it comes from.** The seat folds the Session's own durable event
+    feed (`sessions.binding(id).eventSource`), which is the same source the
+    Chat reads its quota notice from. No Host change is involved. A history
+    replacement refolds from scratch; paging in older history cannot change a
+    mark and is ignored.
 - **Agent teamwork.** The switch keeps the host's semantics: the same label,
   the same confirmation before disabling it mid-conversation, and no optimistic
   update — the state comes from the `agentTeam` projection. The row lives in
@@ -109,6 +141,10 @@ Everything goes through public Client APIs:
   `select()` submits.
 - The directory store is subscribed through `useSyncExternalStore`, so a
   catalog update — including one caused by a selection — repaints the panel.
+- `ctx.sessions.binding(sessionId).eventSource` is the Session's contiguous
+  durable event window. The seat folds it to derive the per-model
+  insufficient-balance marks, and subscribes through `useSyncExternalStore` so
+  a mark transition repaints the panel while every other event stays quiet.
 - `ctx.get('remote').agentTeams.setEnabled()` writes the teamwork selection.
 - `ctx.locale` supplies the copy, resolves catalog badge text, and prefers the
   host's own `agent-team` wording when that namespace is registered.

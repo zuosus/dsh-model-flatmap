@@ -5,6 +5,29 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## LES-013 — 2026-11-13 — 先找宿主已有的分类，再决定要不要新机制
+
+这次需求看起来需要「监听模型调用结果」，直觉是加一个宿主投影或事件。实际情况是：
+`turn/end` 的 `reason.error` 已经带着 `code` / `message` / `status`，而且宿主
+（`dsh-llm/src/error.ts` 的 `isQuotaExceededError`、`dsh-llm-deepseek` 的
+`providerError`）已经把「额度耗尽」和「临时限流」分好类了，HTTP 402 也映射成
+`QUOTA`。纯浏览器插件要做的只是折叠已有事件流。教训：
+
+1. **先确认宿主是否已经分类过这件事。** 在 asar 里按语义关键词（`insufficient`、
+   `402`、`quota`）搜一遍 `dsh-llm` / `dsh-llm-*`，比自建判定便宜得多，也更准；
+   自己写正则容易把 `RATE_LIMIT` 误判成额度不足。
+2. **错误事实与模型身份在两个事件里。** `turn/end` 说「为什么结束」，模型在它前面
+   最近的 `request/header.header.config` 里。按「当前选中模型」加标记是错的——用户
+   可能在失败后已经切走了。
+3. **清除条件要区分「模型回应过」与「根本没跑」。** `aborted` / `blocked` /
+   `interrupted` / `forked` 都不证明额度恢复；只有 `completed`、`max-tokens` 或
+   另一种 `error` 才证明。否则用户取消一次就会误清标记。
+4. **inject face 是按 entry+binding 缓存的，可以放心持有状态。**
+   `dsh-client-ui-renderer` 的 `runInject` 结果存在 `sessionInjectCache` 里，同一
+   binding 不会重建 face；所以订阅放进 face、用 `useSyncExternalStore` 读快照是安全
+   的，但 snapshot 必须引用稳定，否则每次渲染都重绘。
+5. **事件流的 `prepend` 与 `replace` 语义不同。** `replace` 要整体重折；`prepend`
+   是加载更早历史，不可能改变尾部推导出的标记，重折只是浪费。
 ## LES-012 — 2026-11-13 — Let flex-wrap own "does it fit on one line"
 
 When the requirement is "put A and B on one line if they fit, otherwise keep

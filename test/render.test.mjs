@@ -1473,3 +1473,253 @@ test('the fixed-height measurement counts the footer once, not reason+team twice
   assert.ok(!heights.includes('reasonRef') && !heights.includes('teamRef'),
     'the two overlapping children are not double-counted')
 })
+// Insufficient balance / credit / quota: the model row is struck through until
+// a later call for the same model returns something else.
+// ---------------------------------------------------------------------------
+
+const INSUFFICIENT = bundle.__test
+
+test('the insufficient classifier accepts structured quota codes and provider wording', () => {
+  const isInsufficient = INSUFFICIENT.isInsufficientBalance
+  // The Host's own provider-neutral codes.
+  assert.equal(isInsufficient({ code: 'QUOTA', message: 'nope' }), true)
+  assert.equal(isInsufficient({ code: 'ACCOUNT_QUOTA', message: 'nope' }), true)
+  // A bare 402: the structured status, or the flattened HTTP_ code.
+  assert.equal(isInsufficient({ code: 'UNKNOWN', message: 'failed', status: 402 }), true)
+  assert.equal(isInsufficient({ code: 'HTTP_402', message: 'failed' }), true)
+  // Provider wording that survived an unclassified failure.
+  assert.equal(isInsufficient({ code: 'UNKNOWN', message: 'insufficient balance' }), true)
+  assert.equal(isInsufficient({ code: 'UNKNOWN', message: 'Insufficient credits for this request' }), true)
+  assert.equal(isInsufficient({ code: 'UNKNOWN', message: 'You are out of credits' }), true)
+  assert.equal(isInsufficient({ code: 'UNKNOWN', message: 'quota exceeded' }), true)
+  assert.equal(isInsufficient({ code: 'UNKNOWN', message: '账户余额不足' }), true)
+  assert.equal(isInsufficient({ code: 'UNKNOWN', message: '额度不足' }), true)
+})
+
+test('the insufficient classifier rejects transient and unrelated failures', () => {
+  const isInsufficient = INSUFFICIENT.isInsufficientBalance
+  // A rate limit is NOT an exhausted balance: the account still has credit.
+  assert.equal(isInsufficient({ code: 'RATE_LIMIT', message: 'rate limit reached' }), false)
+  assert.equal(isInsufficient({ code: 'TIMEOUT', message: 'timed out' }), false)
+  assert.equal(isInsufficient({ code: 'SERVER', message: 'HTTP 500' }), false)
+  assert.equal(isInsufficient({ code: 'AUTH', message: 'invalid api key' }), false)
+  // A 402-shaped number inside ordinary text must not be read as the status.
+  assert.equal(isInsufficient({ code: 'UNKNOWN', message: 'model v402 retired' }), false)
+  assert.equal(isInsufficient(null), false)
+  assert.equal(isInsufficient(undefined), false)
+})
+
+test('the header route names the model a request was dispatched to', () => {
+  const route = INSUFFICIENT.routeOfHeader({
+    type: 'request/header',
+    data: { header: { config: { provider: 'third-party', model: 'grok-4' } }, reason: 'initial' },
+  })
+  assert.deepEqual(route, { provider: 'third-party', model: 'grok-4' })
+  // Anything else, and a header without a usable config, resolve to null.
+  assert.equal(INSUFFICIENT.routeOfHeader({ type: 'turn/start', data: { turn: 1 } }), null)
+  assert.equal(INSUFFICIENT.routeOfHeader({ type: 'request/header', data: { header: {} } }), null)
+  assert.equal(INSUFFICIENT.routeOfHeader(null), null)
+})
+
+test('the fold marks a route on a balance failure and clears it when the model answers again', () => {
+  const marks = new Map()
+  const route = { provider: 'third-party', model: 'grok-4' }
+  const fail = {
+    type: 'turn/end',
+    data: { turn: 1, reason: { kind: 'error', error: { code: 'QUOTA', message: 'insufficient balance' } } },
+  }
+  assert.equal(INSUFFICIENT.foldInsufficient(marks, fail, route), true, 'the route is marked')
+  assert.equal(marks.get('third-party/grok-4'), true)
+  // A repeated identical failure is not a new transition.
+  assert.equal(INSUFFICIENT.foldInsufficient(marks, fail, route), false, 'a repeat is a no-op')
+  // A completed turn proves the account was usable again.
+  const ok = { type: 'turn/end', data: { turn: 2, reason: { kind: 'completed' } } }
+  assert.equal(INSUFFICIENT.foldInsufficient(marks, ok, route), true, 'a success clears the mark')
+  assert.equal(marks.has('third-party/grok-4'), false)
+  // A failure for another reason also clears it: the balance was not the cause.
+  INSUFFICIENT.foldInsufficient(marks, fail, route)
+  assert.equal(marks.get('third-party/grok-4'), true)
+  const other = { type: 'turn/end', data: { turn: 3, reason: { kind: 'error', error: { code: 'TIMEOUT', message: 'timed out' } } } }
+  assert.equal(INSUFFICIENT.foldInsufficient(marks, other, route), true, 'a non-balance failure clears it')
+  assert.equal(marks.has('third-party/grok-4'), false)
+})
+
+test('a cancellation or blocked turn does not clear the mark', () => {
+  // The model never answered in either case, so neither proves the balance
+  // recovered. Only an answer (completed / max-tokens) or a different failure
+  // ends the strike.
+  const marks = new Map()
+  const route = { provider: 'third-party', model: 'grok-4' }
+  const fail = {
+    type: 'turn/end',
+    data: { turn: 1, reason: { kind: 'error', error: { code: 'QUOTA', message: 'insufficient balance' } } },
+  }
+  INSUFFICIENT.foldInsufficient(marks, fail, route)
+  assert.equal(marks.get('third-party/grok-4'), true)
+
+  for (const reason of [
+    { kind: 'aborted', reason: 'user' },
+    { kind: 'blocked' },
+    { kind: 'interrupted' },
+    { kind: 'forked' },
+  ]) {
+    const event = { type: 'turn/end', data: { turn: 2, reason } }
+    assert.equal(INSUFFICIENT.foldInsufficient(marks, event, route), false, `${reason.kind} clears nothing`)
+    assert.equal(marks.get('third-party/grok-4'), true, `${reason.kind} leaves the mark standing`)
+  }
+
+  // `max-tokens` DID reach the model, so it clears.
+  const capped = { type: 'turn/end', data: { turn: 3, reason: { kind: 'max-tokens' } } }
+  assert.equal(INSUFFICIENT.foldInsufficient(marks, capped, route), true, 'max-tokens clears the mark')
+  assert.equal(marks.has('third-party/grok-4'), false)
+})
+
+test('the fold ignores events that are not turn/end, and a turn without a route', () => {
+  const marks = new Map()
+  const route = { provider: 'p', model: 'm' }
+  const fail = {
+    type: 'turn/end',
+    data: { turn: 1, reason: { kind: 'error', error: { code: 'QUOTA', message: 'insufficient balance' } } },
+  }
+  assert.equal(INSUFFICIENT.foldInsufficient(marks, { type: 'turn/start', data: { turn: 1 } }, route), false)
+  assert.equal(INSUFFICIENT.foldInsufficient(marks, fail, null), false, 'no route, no mark')
+  assert.equal(marks.size, 0)
+})
+
+/** Build a sessions service whose binding exposes a live event feed. */
+function sessionsWithFeed(entries) {
+  const listeners = new Set()
+  let window = { entries: [...entries], hasMore: false, revision: 1, change: { kind: 'replace', entries: [...entries] } }
+  const feed = {
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
+    },
+    getSnapshot: () => window,
+  }
+  const sessions = {
+    subagentAddress: () => undefined,
+    binding: () => ({ sessionId: 'session-1', eventSource: feed }),
+  }
+  return {
+    sessions,
+    /** Append one durable event and publish it, exactly like the real feed. */
+    append(event) {
+      const entry = { type: 'event', event }
+      window = {
+        entries: [...window.entries, entry],
+        hasMore: window.hasMore,
+        revision: window.revision + 1,
+        change: { kind: 'append', entries: [entry] },
+      }
+      for (const listener of listeners) listener()
+    },
+  }
+}
+
+const ROW_INSUFFICIENT = 'data-insufficient'
+
+test('a balance failure strikes the row of the model that failed, and a success clears it', () => {
+  runtime.reset()
+  const feed = sessionsWithFeed([])
+  const { ctx, seat } = makeCtx({ sessions: feed.sessions })
+  bundle.apply(ctx)
+  const face = seat().registration.inject('session-1')
+  const props = {
+    ...face,
+    locked: false,
+    t: key => TEMPLATES[key] ?? key,
+    useProjection: key => (key === 'agentTeam' ? { enabled: false, tasks: [] } : { lastUsed: null, pending: null }),
+    useSession: () => null,
+    useSessions: () => undefined,
+  }
+  // The store the face resolves drives the grid.
+  const state = catalogState()
+  props.directory = snapshotStore(state)
+  props.resolveDirectory = () => ({ store: props.directory })
+
+  let tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+  const rowOf = name => gridRows(tree).find(row => textOf(row).includes(name))
+
+  assert.equal(rowOf('Grok 4').props[ROW_INSUFFICIENT], undefined, 'nothing is struck before any failure')
+
+  // A request to grok-4 fails on insufficient balance.
+  feed.append({ type: 'request/header', data: { header: { config: { provider: 'third-party', model: 'grok-4' } }, reason: 'initial' } })
+  feed.append({ type: 'turn/end', data: { turn: 1, reason: { kind: 'error', error: { code: 'QUOTA', message: 'insufficient balance' } } } })
+  tree = runtime.render(bundle.__component, props)
+  assert.equal(rowOf('Grok 4').props[ROW_INSUFFICIENT], 'true', 'the failed model is struck through')
+  // Only that model: its siblings are untouched.
+  assert.equal(rowOf('GLM 4.6').props[ROW_INSUFFICIENT], undefined, 'other models are not struck')
+  assert.equal(rowOf('Kimi K2').props[ROW_INSUFFICIENT], undefined, 'other models are not struck')
+
+  // The same model later answers successfully: the strike is removed.
+  feed.append({ type: 'request/header', data: { header: { config: { provider: 'third-party', model: 'grok-4' } }, reason: 'change' } })
+  feed.append({ type: 'turn/end', data: { turn: 2, reason: { kind: 'completed' } } })
+  tree = runtime.render(bundle.__component, props)
+  assert.equal(rowOf('Grok 4').props[ROW_INSUFFICIENT], undefined, 'a later non-insufficient call clears it')
+})
+
+test('a 402 status and provider wording both strike the row', () => {
+  runtime.reset()
+  const feed = sessionsWithFeed([])
+  const { ctx, seat } = makeCtx({ sessions: feed.sessions })
+  bundle.apply(ctx)
+  const face = seat().registration.inject('session-1')
+  const props = {
+    ...face,
+    locked: false,
+    t: key => TEMPLATES[key] ?? key,
+    useProjection: key => (key === 'agentTeam' ? { enabled: false, tasks: [] } : { lastUsed: null, pending: null }),
+    useSession: () => null,
+    useSessions: () => undefined,
+  }
+  props.directory = snapshotStore(catalogState())
+  props.resolveDirectory = () => ({ store: props.directory })
+
+  let tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+  const rowOf = name => gridRows(tree).find(row => textOf(row).includes(name))
+
+  // A bare HTTP 402 flattened to UNKNOWN with the status preserved.
+  feed.append({ type: 'request/header', data: { header: { config: { provider: 'third-party', model: 'glm-4.6' } }, reason: 'initial' } })
+  feed.append({ type: 'turn/end', data: { turn: 1, reason: { kind: 'error', error: { code: 'UNKNOWN', message: 'payment required', status: 402 } } } })
+  tree = runtime.render(bundle.__component, props)
+  assert.equal(rowOf('GLM 4.6').props[ROW_INSUFFICIENT], 'true', 'a 402 strikes the row')
+
+  // Provider wording that the Host could not classify.
+  feed.append({ type: 'request/header', data: { header: { config: { provider: 'third-party', model: 'kimi-k2' } }, reason: 'change' } })
+  feed.append({ type: 'turn/end', data: { turn: 2, reason: { kind: 'error', error: { code: 'UNKNOWN', message: 'Insufficient credits remaining' } } } })
+  tree = runtime.render(bundle.__component, props)
+  assert.equal(rowOf('Kimi K2').props[ROW_INSUFFICIENT], 'true', 'provider wording strikes the row')
+  assert.equal(rowOf('GLM 4.6').props[ROW_INSUFFICIENT], 'true', 'an earlier mark survives another model failing')
+})
+
+test('the strike decoration is a line-through on the row text only', () => {
+  const css = source.match(/const CSS = `([\s\S]*?)`/)[1]
+  const rule = css.slice(
+    css.indexOf('.dshmf-row[data-insufficient="true"]'),
+    css.indexOf('.dshmf-rowTail'),
+  )
+  assert.match(rule, /text-decoration:\s*line-through/, 'the row text is struck through')
+  // The name and the variant tag carry it; the badge and spinner must not.
+  assert.match(rule, /\.dshmf-rowName/, 'the primary text is struck')
+  assert.match(rule, /\.dshmf-rowProvider/, 'the variant tag is struck')
+  assert.doesNotMatch(rule, /\.dshmf-badge/, 'the badge chip is not struck')
+  assert.doesNotMatch(rule, /\.dshmf-rowTail/, 'the spinner is not struck')
+})
+
+test('the mark snapshot is referentially stable, so an unmarked panel cannot loop', () => {
+  // `useSyncExternalStore` compares snapshots by identity. A face that built a
+  // fresh object per call would look changed on every render.
+  const { ctx, seat } = makeCtx({ sessions: null })
+  bundle.apply(ctx)
+  const face = seat().registration.inject('session-1')
+  const markFace = face.insufficient
+  assert.ok(markFace, 'the degraded face still answers the mark face')
+  assert.equal(markFace.getSnapshot(), markFace.getSnapshot(), 'the same snapshot object every call')
+  assert.equal(markFace.getSnapshot().marks.size, 0, 'and it is empty')
+})
+

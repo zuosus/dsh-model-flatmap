@@ -186,6 +186,17 @@ window.__ModuleLoader__.load({
   color: inherit;
 }
 .dshmf-rowName { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The model's last call failed on insufficient balance / credit / quota, and no
+   later call for the same model has cleared it. The row text is struck through
+   rather than recoloured: the strike survives both themes and the selected
+   row's blue band, and it does not compete with the error strip's own red.
+   The decoration is applied to the row's text only (name + variant tag), not
+   to the badge chip or the spinner. */
+.dshmf-row[data-insufficient="true"] .dshmf-rowName,
+.dshmf-row[data-insufficient="true"] .dshmf-rowProvider {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
 /* A multiplier marker lifted out of the model name (rate/size tags like
    "x0.01", "x1.5", "X 2.2"). The characters stay in place and the full name is
    unchanged; only this run is drawn two sizes smaller and bold, so the
@@ -436,6 +447,137 @@ html[data-ds-dark-theme] .dshmf-reason { border-top-color: #6B7280; }
      * so models pulled in this way keep their catalog order.
      */
     const PROVIDER_MATCH = 3
+
+    // ---------------------------------------------------------------------
+    // Insufficient balance / credit / quota — the per-model strike state.
+    //
+    // The Host already classifies an exhausted account (rather than a
+    // transient rate limit) into the provider-neutral `QUOTA` and
+    // `ACCOUNT_QUOTA` failure codes, and a provider HTTP 402 maps to `QUOTA`
+    // (dsh-llm/src/error.ts `isQuotaExceededError`, dsh-llm-deepseek
+    // `providerError`). Those facts reach the Client on the durable
+    // `turn/end` event as `reason.error` = `{ code, message, status? }`, so the
+    // panel does not need a Host change: it folds the session event feed.
+    //
+    // The wording pass exists because a failure can be flattened to `UNKNOWN`
+    // with the provider's text kept in `message` (an adapter that does not
+    // classify, or a transport wrapper). It is deliberately narrow: a bare
+    // "402" only counts when it reads as the status, never as a number inside
+    // another message.
+    // ---------------------------------------------------------------------
+
+    /** Failure codes that mean "this account has no usable balance left". */
+    const INSUFFICIENT_CODES = new Set(['QUOTA', 'ACCOUNT_QUOTA', 'INSUFFICIENT_QUOTA', 'INSUFFICIENT_BALANCE'])
+
+    /**
+     * Provider wording for an exhausted balance, credit, or account quota.
+     * Kept close to the Host's own classifier so the panel and the Chat's
+     * quota notice agree about what counts; the Host's regexes are not
+     * importable from a browser bundle, so the shapes are mirrored here.
+     */
+    const INSUFFICIENT_TEXT = [
+      /\binsufficient[\s_-]+(?:quota|balance|credits?|funds?)\b/i,
+      /\b(?:quota|usage[\s_-]+limit)[\s_-]+(?:exceeded|exhausted|reached)\b/i,
+      /\bexceed(?:ed|s)?[\s_-]+(?:(?:your|the)[\s_-]+)?(?:current[\s_-]+)?quota\b/i,
+      /\b(?:balance|credits?)[\s_-]+(?:exhausted|depleted|too[\s_-]+low)\b/i,
+      /\bout[\s_-]+of[\s_-]+(?:credits?|budget|balance)\b/i,
+      /\bno[\s_-]+(?:available[\s_-]+)?(?:credits?|balance|quota)\b/i,
+      /\bpayment[\s_-]+required\b/i,
+      /额度不足|余额不足|额度已用尽|余额已用尽|欠费|账户余额/,
+    ]
+
+    /**
+     * Decide whether one recorded failure means the account ran out of
+     * balance rather than hitting a transient limit.
+     *
+     * A structured code is authoritative when the Host classified the failure.
+     * Otherwise the message text is checked, which covers a provider whose
+     * wording survived as `UNKNOWN` and a bare HTTP 402 reported as the status.
+     * @param {unknown} error - a `turn/end` `reason.error` (`{ code, message, status }`), or a thrown value.
+     * @returns {boolean} true only for an exhausted balance, credit, or quota.
+     */
+    function isInsufficientBalance(error) {
+      if (error === null || typeof error !== 'object') {
+        return typeof error === 'string' ? INSUFFICIENT_TEXT.some(pattern => pattern.test(error)) : false
+      }
+      const code = typeof error.code === 'string' ? error.code.toUpperCase() : ''
+      if (INSUFFICIENT_CODES.has(code)) return true
+      // A provider status of 402 means "payment required", which in practice is
+      // the account running dry. The structured `status` field is preferred; a
+      // code shaped `HTTP_402` carries the same fact.
+      if (error.status === 402 || code === 'HTTP_402') return true
+      const message = typeof error.message === 'string' ? error.message : ''
+      return INSUFFICIENT_TEXT.some(pattern => pattern.test(message))
+    }
+
+    /**
+     * Stable identity of one model route. The strike state is keyed by route,
+     * not by row, because the same model appears under both grouping modes and
+     * a provider may publish the same id under two groups.
+     * @param {unknown} provider - provider id.
+     * @param {unknown} model - provider-owned model id.
+     * @returns {string} the composite key.
+     */
+    function routeKeyOf(provider, model) {
+      return `${String(provider ?? '')}/${String(model ?? '')}`
+    }
+
+    /**
+     * Turn endings that PROVE the model route answered, so a standing
+     * insufficient-balance mark must end. A cancellation (`aborted`) or a turn
+     * closed before any request ran (`blocked`, and the synthetic
+     * `interrupted` / `forked` closers) proves nothing about the account — the
+     * model never answered — so those leave the mark alone.
+     */
+    const CLEARING_TURN_ENDS = new Set(['completed', 'max-tokens', 'error'])
+
+    /**
+     * Fold ONE durable session event into the per-route insufficient-balance
+     * state. Pure and reference-preserving, so an unrelated event costs nothing
+     * and the caller can compare identity to decide whether to republish.
+     *
+     * A `turn/end` carrying a balance failure marks the route that request used.
+     * A later `turn/end` for the same route that proves the model answered
+     * without a balance failure clears the mark — a completed turn, or a turn
+     * that failed for another reason. A cancellation or a blocked turn clears
+     * nothing, because the model never answered. The route a `turn/end` belongs
+     * to is the latest `request/header` seen before it, which is exactly the
+     * model the failing request was dispatched to.
+     * @param {Map<string, boolean>} state - current marks, mutated in place.
+     * @param {unknown} event - one durable Session event (`{ type, data }`).
+     * @param {{ provider: string, model: string } | null} route - route resolved from the request header, or null.
+     * @returns {boolean} whether the state changed.
+     */
+    function foldInsufficient(state, event, route) {
+      if (event === null || typeof event !== 'object') return false
+      if (event.type !== 'turn/end' || route === null) return false
+      const reason = event.data?.reason
+      if (reason === null || typeof reason !== 'object') return false
+      const key = routeKeyOf(route.provider, route.model)
+      if (reason.kind === 'error' && isInsufficientBalance(reason.error)) {
+        if (state.get(key) === true) return false
+        state.set(key, true)
+        return true
+      }
+      if (!CLEARING_TURN_ENDS.has(reason.kind)) return false
+      if (state.get(key) !== true) return false
+      state.delete(key)
+      return true
+    }
+
+    /**
+     * Resolve the model route a request header names. The header's `config` is
+     * an `LlmCallConfig` (`{ provider, model, ... }`).
+     * @param {unknown} event - one durable Session event.
+     * @returns {{ provider: string, model: string } | null} the route, or null when this event is not a usable header.
+     */
+    function routeOfHeader(event) {
+      if (event === null || typeof event !== 'object' || event.type !== 'request/header') return null
+      const config = event.data?.header?.config
+      if (config === null || typeof config !== 'object') return null
+      if (typeof config.provider !== 'string' || typeof config.model !== 'string') return null
+      return { provider: config.provider, model: config.model }
+    }
 
     /**
      * Every searchable face of a provider-authored text: a plain string is one
@@ -921,6 +1063,31 @@ html[data-ds-dark-theme] .dshmf-reason { border-top-color: #6B7280; }
       getSnapshot: () => EMPTY_STATE,
     }
 
+    /**
+     * Shared empty mark map. One frozen instance keeps `getSnapshot` referentially
+     * stable for every seat that has no Session feed, so an unmarked panel never
+     * re-renders because of this feature.
+     */
+    const EMPTY_INSUFFICIENT_MARKS = new Map()
+
+    /**
+     * The one empty snapshot object. It MUST be a single shared instance:
+     * `useSyncExternalStore` compares snapshots by identity, so returning a
+     * fresh `{ marks }` on every call would look like a change on every render
+     * and loop.
+     */
+    const EMPTY_INSUFFICIENT_SNAPSHOT = { marks: EMPTY_INSUFFICIENT_MARKS }
+
+    /**
+     * Stand-in mark face used before a Session's feed resolves (or when the face
+     * degraded). It never notifies and always answers the same empty snapshot.
+     */
+    const EMPTY_INSUFFICIENT = {
+      subscribe: () => () => {},
+      getSnapshot: () => EMPTY_INSUFFICIENT_SNAPSHOT,
+      dispose: () => {},
+    }
+
     // ---------------------------------------------------------------------
     // Component
     // ---------------------------------------------------------------------
@@ -933,6 +1100,7 @@ html[data-ds-dark-theme] .dshmf-reason { border-top-color: #6B7280; }
         locked, sessionId, t,
         available, directory, load, select, resolveText, resolveDirectory,
         teamAvailable, setTeamMode, useProjection, useSession, useSessions,
+        insufficient,
       } = props
 
       // The store may arrive after the first render (the Session binds later),
@@ -945,6 +1113,19 @@ html[data-ds-dark-theme] .dshmf-reason { border-top-color: #6B7280; }
       const subscribe = useCallback(listener => store.subscribe(listener), [store])
       const getSnapshot = useCallback(() => store.getSnapshot(), [store])
       const state = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+
+      // Per-model insufficient-balance marks, folded from the Session's own
+      // durable event feed by the face. The fallback keeps the hook shape stable
+      // for a composition that omits the face.
+      const markFace = insufficient ?? EMPTY_INSUFFICIENT
+      const subscribeMarks = useCallback(listener => markFace.subscribe(listener), [markFace])
+      const getMarks = useCallback(() => markFace.getSnapshot(), [markFace])
+      const marks = useSyncExternalStore(subscribeMarks, getMarks, getMarks)
+
+      // The mark face observes the Session feed for as long as this seat is
+      // mounted. Detaching on unmount cannot lose a mark: a remount refolds from
+      // the full durable window, so the state is rebuilt rather than remembered.
+      useEffect(() => () => { markFace.dispose() }, [markFace])
 
       const [open, setOpen] = useState(false)
       const [query, setQuery] = useState('')
@@ -1401,11 +1582,16 @@ html[data-ds-dark-theme] .dshmf-reason { border-top-color: #6B7280; }
         const rowTitle = model.description === undefined
           ? `${model.name}\n${providerLabel}`
           : `${model.name}\n${model.description}\n${providerLabel}`
+        // The model's last call ran out of balance and nothing has cleared it
+        // yet: the row text is struck through until a later call for the same
+        // model route returns anything else.
+        const insufficientRoute = marks.marks.get(routeKeyOf(providerId, model.id)) === true
         return h('button', {
           key: `${providerId}/${model.id}`,
           type: 'button',
           className: 'dshmf-row',
           'aria-pressed': selected,
+          'data-insufficient': insufficientRoute ? 'true' : undefined,
           title: rowTitle,
           disabled: busy,
           onClick: () => { chooseModel(providerId, model) },
@@ -1816,11 +2002,11 @@ html[data-ds-dark-theme] .dshmf-reason { border-top-color: #6B7280; }
       // context unless both names are declared here, and a swallowed refusal
       // used to leave `teamAvailable` permanently false — i.e. the host's
       // teamwork switch never rendered at all.
-      inject: ['slots', 'locale', 'remote', 'remote.agentTeams'],
+      inject: ['slots', 'locale', 'remote', 'remote.agentTeams', 'sessions'],
       // Pure layout and grouping derivations plus the component itself,
       // exposed for `node --test` so grouping, filtering and the column
       // algorithm are pinned without a browser. The shell never reads this key.
-      __test: { familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT },
+      __test: { familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, isInsufficientBalance, foldInsufficient, routeOfHeader, routeKeyOf },
       __component: ModelFlatMap,
       __seat: Seat,
       apply(ctx) {
@@ -1914,10 +2100,147 @@ html[data-ds-dark-theme] .dshmf-reason { border-top-color: #6B7280; }
             }
           }
           const first = resolve()
+
+          // ---- insufficient-balance marks, folded from the live event feed
+          //
+          // `sessions.binding(id).eventSource` is the Client's contiguous
+          // durable event window (the same feed the Chat reads `turn/end` from).
+          // The face keeps ONE immutable snapshot object and replaces it only
+          // when a fold actually changes the marks, so `useSyncExternalStore`
+          // re-renders the panel on a real transition and stays quiet on every
+          // other event.
+          const insufficientListeners = new Set()
+          let insufficientMarks = new Map()
+          let insufficientSnapshot = { marks: insufficientMarks }
+          // The route of the latest request header: a `turn/end` belongs to the
+          // model that request was dispatched to.
+          let pendingRoute = null
+          let stopInsufficient = null
+
+          /** Publish a new snapshot only when the mark set really changed. */
+          const publishInsufficient = () => {
+            insufficientSnapshot = { marks: insufficientMarks }
+            for (const listener of insufficientListeners) listener()
+          }
+
+          /** Read the durable entries out of the current window snapshot. */
+          const entriesOf = window => (Array.isArray(window?.entries) ? window.entries : [])
+
+          /**
+           * Fold one batch of durable entries into the marks. Live chunks carry
+           * no `turn/end`, so they are skipped by type inside the fold.
+           * @param entries - durable event entries from the feed.
+           * @returns whether any mark changed.
+           */
+          const absorb = entries => {
+            let changed = false
+            for (const entry of entries) {
+              const event = entry?.event
+              if (event === null || event === undefined) continue
+              const header = routeOfHeader(event)
+              if (header !== null) {
+                pendingRoute = header
+                continue
+              }
+              if (event.type !== 'turn/end') continue
+              if (foldInsufficient(insufficientMarks, event, pendingRoute)) changed = true
+            }
+            return changed
+          }
+
+          /**
+           * Attach the feed listener. A `replace` (initial load, history
+           * replacement) refolds from scratch, because the window it describes
+           * is the whole truth; an `append` folds only the new entries. A
+           * `prepend` loads OLDER history at the front and cannot change a mark
+           * (marks come from the tail), so it is ignored rather than refolded —
+           * refolding would also re-walk history on every page-in.
+           */
+          const startInsufficientFeed = () => {
+            if (stopInsufficient !== null) return
+            let binding
+            try {
+              binding = typeof sessions?.binding === 'function' ? sessions.binding(sessionId) : undefined
+            } catch {
+              binding = undefined
+            }
+            const source = binding?.eventSource
+            if (source === undefined || typeof source.subscribe !== 'function'
+              || typeof source.getSnapshot !== 'function') return
+            /** Whether two mark maps hold the same entries. */
+            const sameMarks = (left, right) => {
+              if (left.size !== right.size) return false
+              for (const [key, value] of left) {
+                if (right.get(key) !== value) return false
+              }
+              return true
+            }
+            const applyWindow = (window, full) => {
+              const change = window?.change
+              if (full || change?.kind === 'replace') {
+                const previous = insufficientMarks
+                const next = new Map()
+                insufficientMarks = next
+                pendingRoute = null
+                absorb(entriesOf(window))
+                // Adopt the refolded map as the snapshot either way, so the
+                // snapshot and the live state never diverge; only NOTIFY when
+                // the marks really changed, so a history replacement that
+                // re-derives the same marks does not repaint the panel.
+                insufficientSnapshot = { marks: next }
+                if (!sameMarks(previous, next)) publishInsufficient()
+                return
+              }
+              if (change?.kind === 'append' && absorb(change.entries)) publishInsufficient()
+            }
+            try {
+              applyWindow(source.getSnapshot(), true)
+            } catch {
+              /* an unreadable feed leaves the panel unmarked, never broken */
+            }
+            const listener = () => {
+              try {
+                applyWindow(source.getSnapshot(), false)
+              } catch {
+                /* a fold failure must not escape into the slot */
+              }
+            }
+            try {
+              const stop = source.subscribe(listener)
+              stopInsufficient = typeof stop === 'function' ? stop : () => {}
+            } catch {
+              stopInsufficient = null
+            }
+          }
+
+          startInsufficientFeed()
+
+          /**
+           * The seat's read face for the marks. `subscribe` and `getSnapshot`
+           * are the `useSyncExternalStore` pair; the snapshot object is stable
+           * between real transitions.
+           */
+          const insufficient = {
+            subscribe: listener => {
+              insufficientListeners.add(listener)
+              // The binding may have materialized after the face was built.
+              startInsufficientFeed()
+              return () => { insufficientListeners.delete(listener) }
+            },
+            getSnapshot: () => insufficientSnapshot,
+            /** Stop observing the feed; called when the seat's owner disposes. */
+            dispose: () => {
+              if (stopInsufficient !== null) stopInsufficient()
+              stopInsufficient = null
+              insufficientListeners.clear()
+            },
+          }
+
           return {
             sessionId,
             resolveDirectory: resolve,
             safeRead,
+            insufficient,
             // `available: false` only for an addressed subagent Session, which
             // the shipped seat also hides.
             available: first.addressed !== true,
@@ -1973,6 +2296,15 @@ html[data-ds-dark-theme] .dshmf-reason { border-top-color: #6B7280; }
               resolveText,
               teamAvailable: () => false,
               setTeamMode: () => Promise.resolve(undefined),
+              // A face that failed to build still answers the mark face, so the
+              // component's hook shape never changes and the rows simply stay
+              // unstruck. It shares the module-level empty snapshot so the
+              // identity stays stable across renders.
+              insufficient: {
+                subscribe: () => () => {},
+                getSnapshot: () => EMPTY_INSUFFICIENT_SNAPSHOT,
+                dispose: () => {},
+              },
             }
           }
         }

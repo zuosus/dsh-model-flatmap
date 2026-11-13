@@ -5,6 +5,47 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-014 — 2026-11-13 — 额度不足的模型行加删除线，直到该模型下一次返回非额度不足
+
+**Context.** 用户要求：模型调用的返回结果如果表示没有额度（402、message 里含
+insufficient balance / credit 之类，只要是额度不足），就在该模型 row 的文字上加
+line-through；直到该模型下一次返回非 insufficient 错误再去掉。
+
+**Decision.**
+
+- **数据来源不新增宿主能力。** 宿主已把「账户额度耗尽」与「临时限流」分开：`dsh-llm`
+  产出 provider-neutral 的 `QUOTA` / `ACCOUNT_QUOTA` 代码，`dsh-llm-deepseek` 的
+  `providerError` 把 HTTP 402 映射为 `QUOTA`。这些事实以 `turn/end` 事件落到
+  `reason.error = { code, message, status? }`，正是 Chat 读取 `shell.quota-notice`
+  所用的同一个来源。因此面板直接折叠 Session 的 durable 事件流
+  （`ctx.sessions.binding(id).eventSource`），**不改宿主、不新增事件类型**。
+- **判定分两层。** 结构化 `code` 优先（`QUOTA` / `ACCOUNT_QUOTA` 等）；其次是
+  `status === 402` 或 `HTTP_402`；最后才按文案兜底（`insufficient balance|credits`、
+  `quota exceeded`、`out of credits`、`余额不足`、`额度不足` 等），用于宿主把失败
+  压成 `UNKNOWN` 但保留了 provider 原文的情形。`RATE_LIMIT` 等临时错误**不算**额度
+  不足——账户仍有余额。
+- **标记落在 route 上，不是当前选中项。** 失败请求的模型取自它之前最近一条
+  `request/header` 的 `header.config`（`{ provider, model }`），所以标记精确落在真正
+  被派发的那条 `provider/model` 上；用户此后切换选中模型不会让标记跑到别的行。
+- **清除条件是「模型确实回应了」。** 同一 route 的 `turn/end` 若为 `completed`、
+  `max-tokens`，或另一种 `error`，都清除标记；而 `aborted`、`blocked` 以及合成关闭
+  的 `interrupted` / `forked` 不清除——模型根本没回应，不能证明额度已恢复。
+- **呈现只用删除线。** 不改变行颜色：删除线在选中行的深蓝底与浅/深两套主题下同样
+  成立，也不与错误条的红色抢注意力。只作用于行文字（名称与 family 变体标签），
+  badge 与 spinner 不划线。
+- **订阅面保持引用稳定。** face 缓存一次（renderer 按 entry+binding 缓存 inject
+  face），只在标记集合真正变化时替换 snapshot 并通知，其他事件一律安静；`replace`
+  整体重折，`prepend`（加载更早历史）不改变标记故忽略。
+
+**Rejected.** 在宿主侧新增投影或事件（面板是纯浏览器插件，且 `turn/end` 已带全部
+所需事实）；按当前选中模型加标记（会标错模型）；用红色或透明度表达（与错误条语义
+重复，且在选中蓝底上不稳定）；把 `aborted` 也当作清除条件（会让用户取消一次就误清）。
+
+**Consequences.** `client.js`：新增 `isInsufficientBalance` / `foldInsufficient` /
+`routeOfHeader` / `routeKeyOf` 纯函数并挂到 `__test`，face 增加 `insufficient`
+可观察面，`renderRow` 输出 `data-insufficient`，CSS 用 `text-decoration: line-through`；
+`inject` 增加 `sessions`。render 测试固定分类器的正反例、route 解析、fold 的标记/清除/
+取消不清除、402 与文案两条路径、以及只有行文字被划线。
 ## DEC-013 — 2026-11-13 — Reasoning group and teamwork switch share one adaptive footer line
 
 **Context.** The reasoning group ("推理等级" + segment track) and the agent

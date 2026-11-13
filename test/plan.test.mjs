@@ -276,6 +276,8 @@ test('the bundle factory materializes with the plugin face', () => {
   assert.equal(typeof bundle.apply, 'function')
   // `remote` / `remote.agentTeams` are declared so the guarded client context
   // authorises reading the Host's teamwork namespace; without them the
-  // teamwork switch silently never renders.
-  assert.deepEqual(bundle.inject, ['slots', 'locale', 'remote', 'remote.agentTeams'])
+  // teamwork switch silently never renders. `sessions` is declared so the seat
+  // can read the Session's durable event feed, which is where a model call's
+  // insufficient-balance failure is recorded.
+  assert.deepEqual(bundle.inject, ['slots', 'locale', 'remote', 'remote.agentTeams', 'sessions'])
 })
