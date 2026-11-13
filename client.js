@@ -118,16 +118,27 @@ window.__ModuleLoader__.load({
   color: var(--dsw-alias-state-error-primary); font-size: 11px; line-height: 16px; overflow-wrap: anywhere;
 }
 
-/* The only scrolling region. */
-.dshmf-grid { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; display: grid; align-items: start; }
+/* The only scrolling region. Its "align-items: start" keeps the text columns
+   at their natural height; a divider laid out beside them opts back into
+   stretch so it spans the tallest column instead (see .dshmf-colDivider). */
+.dshmf-grid {
+  flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto;
+  display: grid; align-items: start;
+}
 .dshmf-col { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 /* When more than one column is laid out, separate adjacent columns with a
    faint vertical hairline so the eye can tell the dense model flows apart.
-   The line uses the lightest border token to stay subtle, and the divided
-   column keeps a little right padding so model text never hugs the line.
-   Only columns that actually sit before another one get it (see renderColumn),
-   so a single-column layout stays borderless. */
-.dshmf-col--divided { border-right: 1px solid var(--dsw-alias-border-l3); padding-right: 10px; }
+   The hairline is its OWN grid item, a sibling of the columns rather than a
+   border on one of them: as a border it could only ever be as tall as that
+   column's content. Here it sits in a dedicated gutter track and stretches to
+   the grid's full height, with a small margin top and bottom.
+   Only gutters that actually sit between two columns get one (see the grid
+   children), so a single-column layout stays borderless. */
+.dshmf-colDivider {
+  grid-row: 1; align-self: stretch; justify-self: center;
+  width: 1px; margin: 6px 0;
+  background: var(--dsw-alias-border-l3);
+}
 /* Provider / family label: a filled, rounded band that reads as a section
    header, clearly separated from the model rows below it. Bare host
    group-header fill is only a few levels from the translucent panel surface.
@@ -1660,9 +1671,32 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         : renderRow(block.entry))
 
       const renderColumn = (column, columnIndex) => h('div', {
-        className: 'dshmf-col' + (plan.count > 1 && columnIndex < plan.count - 1 ? ' dshmf-col--divided' : ''),
+        className: 'dshmf-col',
         key: `col-${columnIndex}`,
       }, column.map(unit => unit.blocks.map(renderBlock)))
+
+      // Vertical separators are siblings of the columns, not a border on one
+      // of them: a border can only ever be as tall as its own column, while a
+      // grid item can stretch to the whole grid height (see .dshmf-colDivider).
+      const renderDivider = gutterIndex => h('div', {
+        className: 'dshmf-colDivider',
+        role: 'presentation',
+        key: `gutter-${gutterIndex}`,
+      })
+
+      const renderColumns = () => {
+        const children = []
+        plan.columns.forEach((column, columnIndex) => {
+          if (columnIndex > 0) children.push(renderDivider(columnIndex))
+          children.push(renderColumn(column, columnIndex))
+        })
+        return children
+      }
+
+      // `minmax(0, 1fr)` per column, a hairline track per gutter between them.
+      const gridTemplateColumns = plan.columns
+        .map(() => 'minmax(0, 1fr)')
+        .join(' 1px ')
 
       const renderFailure = failure => h('div', {
         className: 'dshmf-failure',
@@ -1817,13 +1851,15 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
             h('div', {
               className: 'dshmf-grid',
               style: {
-                gridTemplateColumns: `repeat(${plan.count}, minmax(0, 1fr))`,
+                gridTemplateColumns: showEmptyState
+                  ? 'minmax(0, 1fr)'
+                  : gridTemplateColumns,
                 columnGap: `${COL_GAP}px`,
               },
             },
               showEmptyState
                 ? h('div', { className: 'dshmf-empty', role: 'status' }, t(emptyKey))
-                : plan.columns.map(renderColumn),
+                : renderColumns(),
               state.failures.length === 0 ? null : state.failures.map(renderFailure),
             ),
 

@@ -234,6 +234,30 @@ function findAll(node, predicate, out = []) {
 const classNameOf = node => (typeof node?.props?.className === 'string' ? node.props.className : '')
 const hasClass = (node, name) => classNameOf(node).split(/\s+/).includes(name)
 
+/**
+ * How many text-column tracks the grid declares. The template lists one
+ * `minmax(0, 1fr)` per column, joined by a 1px gutter track: a single column
+ * has no gutter, so the count is the number of `minmax` entries.
+ */
+function trackCount(grid) {
+  const template = String(grid.props.style.gridTemplateColumns)
+  return template.split(/\s+/).filter(part => part.includes('minmax')).length
+}
+
+/** The grid's direct children, flattened out of the arrays createElement nests. */
+function gridChildren(grid) {
+  const out = []
+  const walk = value => {
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item)
+      return
+    }
+    if (value !== null && value !== undefined && typeof value === 'object') out.push(value)
+  }
+  walk(grid.children)
+  return out
+}
+
 /** Rows inside the grid only — the off-screen probe also carries the row class. */
 function gridRows(tree) {
   const grid = findAll(tree, node => hasClass(node, 'dshmf-grid'))[0]
@@ -754,10 +778,57 @@ test('the column count stays within 1–3 and never overflows the cap', () => {
   findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
   tree = runtime.render(bundle.__component, props)
   const grid = findAll(tree, node => hasClass(node, 'dshmf-grid'))[0]
-  const columns = Number(/repeat\((\d+),/.exec(grid.props.style.gridTemplateColumns)[1])
+  const columns = trackCount(grid)
   assert.ok(columns >= 1 && columns <= 3)
   assert.equal(findAll(grid, node => hasClass(node, 'dshmf-col')).length, columns)
   assert.equal(findAll(grid, node => hasClass(node, 'dshmf-row')).length, 30)
+  // One hairline gutter between each pair of columns, and nothing else.
+  assert.equal(findAll(grid, node => hasClass(node, 'dshmf-colDivider')).length, columns - 1)
+})
+
+test('the divider is a sibling of the columns, not a border on one', () => {
+  runtime.reset()
+  const models = Array.from({ length: 30 }, (_, index) => ({
+    id: `m${index}`,
+    name: `Model ${index}`,
+  }))
+  const { props } = makeProps(catalogState({
+    current: null,
+    groups: [{ id: 'p', name: 'Provider', models }],
+  }))
+  let tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+  const grid = findAll(tree, node => hasClass(node, 'dshmf-grid'))[0]
+  const columns = trackCount(grid)
+  if (columns < 2) return
+  // Grid children alternate col / divider / col / divider / col, so the line is
+  // never a descendant of a column and cannot be clipped to its content height.
+  const children = gridChildren(grid).filter(node => !hasClass(node, 'dshmf-failure'))
+  assert.equal(children.length, columns * 2 - 1)
+  children.forEach((node, index) => {
+    const divider = index % 2 === 1
+    assert.equal(hasClass(node, divider ? 'dshmf-colDivider' : 'dshmf-col'), true)
+  })
+  for (const column of findAll(grid, node => hasClass(node, 'dshmf-col'))) {
+    assert.equal(findAll(column, node => hasClass(node, 'dshmf-colDivider')).length, 0)
+  }
+  assert.equal(source.includes('dshmf-col--divided'), false)
+
+  // The pairing that makes it span the whole grid: the line is the only grid
+  // item that re-opts into `stretch` (the grid itself says `align-items: start`
+  // so the text columns keep their natural height), and it owns the 6px
+  // breathing room at both ends instead of a per-column border.
+  const css = source.match(/const CSS = `([\s\S]*?)`/)[1]
+  const gridRule = css.match(/\.dshmf-grid \{([\s\S]*?)\}/)[1]
+  assert.match(gridRule, /align-items: start/)
+  const dividerRule = css.match(/\.dshmf-colDivider \{([\s\S]*?)\}/)[1]
+  assert.match(dividerRule, /align-self: stretch/)
+  assert.match(dividerRule, /margin: 6px 0/)
+  assert.match(dividerRule, /width: 1px/)
+  assert.match(dividerRule, /background: var\(--dsw-alias-border-l3\)/)
+  assert.equal(/border-(right|left|inline)/.test(dividerRule), false,
+    'the line is painted by the item itself, not borrowed from a column border')
 })
 
 test('a small catalog converges to one column', () => {
@@ -770,7 +841,8 @@ test('a small catalog converges to one column', () => {
   findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
   tree = runtime.render(bundle.__component, props)
   const grid = findAll(tree, node => hasClass(node, 'dshmf-grid'))[0]
-  assert.match(grid.props.style.gridTemplateColumns, /^repeat\(1,/)
+  assert.equal(trackCount(grid), 1)
+  assert.equal(findAll(grid, node => hasClass(node, 'dshmf-colDivider')).length, 0)
 })
 
 test('a rejected selection surfaces the directory error strip', () => {
