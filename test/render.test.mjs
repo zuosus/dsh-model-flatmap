@@ -1326,3 +1326,66 @@ test("a single grey divider sits between the grid and reasoning, not teamwork", 
   assert.ok(css.includes("body[data-ds-dark-theme] .dshmf-reason"), "dark theme switches to a lighter grey")
   assert.equal(team.includes("border-top"), false, "no divider between reasoning and teamwork")
 })
+
+// ---------------------------------------------------------------------------
+// The grouping choice must persist across sessions and workgroups. The Web GUI
+// runs on a stable origin, so the choice is kept in `localStorage` and read
+// back on every mount. These tests drive the same read/write helpers the
+// component uses, with a `localStorage` shim, and confirm the
+// default-without-storage path.
+// ---------------------------------------------------------------------------
+function installStorage(entries = {}) {
+  const map = new Map(Object.entries(entries))
+  globalThis.localStorage = {
+    getItem: key => (map.has(key) ? map.get(key) : null),
+    setItem: (key, value) => { map.set(key, String(value)) },
+    removeItem: key => { map.delete(key) },
+  }
+  return map
+}
+
+test('the grouping choice is restored from storage on mount', () => {
+  const store = installStorage({ [bundle.__test.GROUPING_KEY]: 'family' })
+  try {
+    assert.equal(bundle.__test.readGrouping(), 'family', 'family is read back')
+    assert.equal(bundle.__test.readGrouping(), 'family', 'reading twice is stable')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('the grouping choice falls back to the default when nothing is stored', () => {
+  const store = installStorage()
+  try {
+    assert.equal(bundle.__test.readGrouping(), bundle.__test.GROUPING_DEFAULT, 'default when key is absent')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('an unrecognised stored value is treated as the default', () => {
+  const store = installStorage({ [bundle.__test.GROUPING_KEY]: 'by-color' })
+  try {
+    assert.equal(bundle.__test.readGrouping(), bundle.__test.GROUPING_DEFAULT, 'garbage falls back to default')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('choosing a grouping writes it to storage for the next mount', () => {
+  const store = installStorage()
+  try {
+    bundle.__test.writeGrouping('family')
+    assert.equal(store.get(bundle.__test.GROUPING_KEY), 'family', 'family is persisted')
+    bundle.__test.writeGrouping('provider')
+    assert.equal(store.get(bundle.__test.GROUPING_KEY), 'provider', 'provider is persisted over family')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('a missing localStorage still yields the default without throwing', () => {
+  delete globalThis.localStorage
+  assert.equal(bundle.__test.readGrouping(), bundle.__test.GROUPING_DEFAULT, 'default without storage')
+  assert.doesNotThrow(() => bundle.__test.writeGrouping('family'), 'writing is a no-op without storage')
+})

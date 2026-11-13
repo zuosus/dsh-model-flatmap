@@ -768,6 +768,56 @@ html[data-ds-dark-theme] .dshmf-reason { border-top-color: #6B7280; }
     // disposer.
     // ---------------------------------------------------------------------
     const NS = `modelFlatmap-${Math.random().toString(36).slice(2, 10)}`
+
+    // ---------------------------------------------------------------------
+    // Grouping persistence — across sessions and workgroups.
+    //
+    // The `按 Provider / 按模型家族` choice is a user preference that must
+    // survive a reload, a new conversation, and a workgroup switch. On DSH
+    // Desktop the Web GUI runs on a stable origin (a fixed bundled origin in
+    // production, `http://127.0.0.1:56668` in development), so `localStorage`
+    // — origin-scoped, not session-scoped — is exactly the right store: it
+    // persists across every one of those boundaries. DSH's own client store
+    // (`@deepseek-ai/dsh-client-store`) is the same `localStorage` wrapper
+    // under the hood, but importing an internal Harness client package is
+    // forbidden by the UI rules (it changes without notice and a throw blanks
+    // the seat). We therefore use `localStorage` directly — the public,
+    // self-contained mechanism the host endorses underneath.
+    //
+    // The store is read and written lazily, and every access degrades: when
+    // `localStorage` is unavailable (private mode, sandboxed frame) the choice
+    // still works for the lifetime of the tab, falling back to the in-memory
+    // default rather than throwing.
+    // ---------------------------------------------------------------------
+    const GROUPING_KEY = 'dshmf:grouping'
+    const GROUPING_DEFAULT = 'provider'
+    /**
+     * Read the persisted grouping, or the default when nothing valid was stored.
+     * @returns `'provider'` or `'family'`.
+     */
+    function readGrouping() {
+      try {
+        if (typeof localStorage === 'undefined') return GROUPING_DEFAULT
+        const value = localStorage.getItem(GROUPING_KEY)
+        return value === 'provider' || value === 'family' ? value : GROUPING_DEFAULT
+      } catch {
+        return GROUPING_DEFAULT
+      }
+    }
+    /**
+     * Persist one grouping choice. A write failure (quota, disabled storage)
+     * is swallowed: the in-memory state still drives the current tab.
+     * @param {'provider'|'family'} value - the choice to persist.
+     */
+    function writeGrouping(value) {
+      try {
+        if (typeof localStorage === 'undefined') return
+        localStorage.setItem(GROUPING_KEY, value)
+      } catch {
+        /* storage unavailable — keep the in-memory choice only */
+      }
+    }
+
     const dict = {
       zh: {
         'provider.account': 'DeepSeek 账号',
@@ -880,7 +930,9 @@ html[data-ds-dark-theme] .dshmf-reason { border-top-color: #6B7280; }
 
       const [open, setOpen] = useState(false)
       const [query, setQuery] = useState('')
-      const [grouping, setGrouping] = useState('provider')
+      // The grouping choice is restored from storage so it persists across
+      // sessions and workgroups, not just within one panel mount.
+      const [grouping, setGrouping] = useState(readGrouping())
       const [selectionFocus, setSelectionFocus] = useState(false)
       const [metrics, setMetrics] = useState({ rowH: 26, headH: 20, fixed: 0, fixedCount: 0, box: null })
       const [teamPending, setTeamPending] = useState(false)
@@ -1494,14 +1546,14 @@ html[data-ds-dark-theme] .dshmf-reason { border-top-color: #6B7280; }
                   className: 'dshmf-segBtn',
                   'aria-pressed': grouping === 'provider',
                   title: t('group.provider'),
-                  onClick: () => { setGrouping('provider') },
+                  onClick: () => { setGrouping('provider'); writeGrouping('provider') },
                 }, t('group.provider')),
                 h('button', {
                   type: 'button',
                   className: 'dshmf-segBtn',
                   'aria-pressed': grouping === 'family',
                   title: t('group.family'),
-                  onClick: () => { setGrouping('family') },
+                  onClick: () => { setGrouping('family'); writeGrouping('family') },
                 }, t('group.family')),
               ),
             ),
@@ -1740,7 +1792,7 @@ html[data-ds-dark-theme] .dshmf-reason { border-top-color: #6B7280; }
       // Pure layout and grouping derivations plus the component itself,
       // exposed for `node --test` so grouping, filtering and the column
       // algorithm are pinned without a browser. The shell never reads this key.
-      __test: { familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns },
+      __test: { familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT },
       __component: ModelFlatMap,
       __seat: Seat,
       apply(ctx) {
