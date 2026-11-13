@@ -506,10 +506,105 @@ test('family grouping keeps generations apart and never repeats the family name'
   for (const name of gridRowNames(tree)) {
     assert.doesNotMatch(name, /^HY[34]?$/, 'no family name as row text')
   }
-  // One provider offers several models per family, so those rows carry a short
-  // variant tail; the plain base model (hy3) and the lone WorkBuddy row need
-  // none (null = no tag), which is exactly the "smart, flexible" change.
-  assert.deepEqual(gridRowProviders(tree), [null, 'x', 'preview', 'std', null])
+  // The family name is stripped from every row's tail too, and a model whose
+  // name says nothing beyond the family draws none (null = no tail). The id
+  // tail covers the rest: `hy3-x` → x, `hy4-preview` → preview, `hy4std` → std,
+  // `hy4free` → free.
+  assert.deepEqual(gridRowProviders(tree), [null, 'x', 'preview', 'std', 'free'])
+  for (const tail of gridRowProviders(tree)) {
+    if (tail === null) continue
+    assert.doesNotMatch(tail, /HY[34]/i, 'the family name never leaks into a row tail')
+  }
+})
+
+test('a family tail shows the型号 and multiplier the heading cannot carry', () => {
+  // The heading says the family (`Qwen`, `DeepSeek`), and the row's primary text
+  // says the provider. What neither can say is WHICH model of the family the
+  // row is, nor the catalog's rate multiplier — so that goes in a tail at the
+  // END of the row, with the family name and the provider label stripped off.
+  const state = catalogState({
+    current: null,
+    groups: [
+      {
+        id: 'modelscope',
+        name: 'ModelScope International',
+        models: [
+          { id: 'Qwen/Qwen3.8-Flash-Next', name: 'Qwen3.8-Flash-Next' },
+          { id: 'Qwen/Qwen3.8-27B', name: 'Qwen3.8-27B' },
+          { id: 'deepseek-ai/DeepSeek-V4.1-Flash-1017', name: 'DeepSeek-V4.1-Flash-1017' },
+        ],
+      },
+      {
+        id: 'workbuddy',
+        name: 'WorkBuddy',
+        models: [{ id: 'deepseek-v4.1-flash', name: 'Deepseek-V4.1-Flash · x0.01' }],
+      },
+    ],
+  })
+  runtime.reset()
+  const { props } = makeProps(state)
+  let tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+  tree = switchToFamily(tree, props)
+
+  const qwen = gridRows(tree)
+    .filter(row => textOf(row).includes('ModelScope International'))
+    .map(row => textOf(findAll(row, node => hasClass(node, 'dshmf-rowProvider'))[0]))
+  // The DeepSeek row and the two Qwen rows all belong to one provider but three
+  // different families; every one of them now says which model it is.
+  assert.deepEqual(qwen.slice().sort(), ['3.8-27B', '3.8-Flash-Next', 'V4.1-Flash-1017'].sort(),
+    'each row carries the型号 the family heading lacks')
+  // Two rows of the same family are distinguishable ONLY because of that tail:
+  // `Qwen` alone would print `ModelScope International` twice with no way to
+  // tell 3.8-Flash-Next from 3.8-27B.
+  assert.notEqual(qwen[0], qwen[1], 'the tails tell the two models apart')
+  assert.notEqual(qwen[1], qwen[2], 'and so do the next two')
+  // The multiplier travels with the model it belongs to.
+  const global = gridRows(tree)
+    .filter(row => textOf(row).includes('WorkBuddy'))
+    .map(row => textOf(findAll(row, node => hasClass(node, 'dshmf-rowProvider'))[0]))
+  assert.deepEqual(global, ['V4.1-Flash · x0.01'])
+  // Provider grouping is untouched: there the heading IS the provider, so the
+  // model name stays the primary text and no tail is drawn.
+  runtime.reset()
+  const fresh = makeProps(state)
+  let providerTree = runtime.render(bundle.__component, fresh.props)
+  findAll(providerTree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  providerTree = runtime.render(bundle.__component, fresh.props)
+  assert.deepEqual(gridRowProviders(providerTree), [null, null, null, null])
+})
+
+test('a multiplier in a family tail keeps the smaller bold run', () => {
+  // Under *By provider* a `x0.01` in a model name is already split into a
+  // smaller bold run. The same rate in a family tail must read the same way
+  // instead of falling back to the tail's plain 11px text.
+  const state = catalogState({
+    current: null,
+    groups: [{
+      id: 'workbuddy',
+      name: 'WorkBuddy',
+      models: [{ id: 'deepseek-v4.1-flash', name: 'Deepseek-V4.1-Flash · x0.01' }],
+    }],
+  })
+  runtime.reset()
+  const { props } = makeProps(state)
+  let tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+  tree = switchToFamily(tree, props)
+
+  const tail = findAll(gridRows(tree)[0], node => hasClass(node, 'dshmf-rowProvider'))[0]
+  assert.equal(textOf(tail), 'V4.1-Flash · x0.01', 'the tail keeps the rate text')
+  const marks = findAll(tail, node => hasClass(node, 'dshmf-rowNameMark'))
+  assert.equal(marks.length, 1, 'the multiplier is its own run')
+  assert.equal(textOf(marks[0]), 'x0.01')
+
+  const css = source.match(/const CSS = `([\s\S]*?)`/)[1]
+  const tailMark = css.match(/\.dshmf-rowProvider \.dshmf-rowNameMark \{([\s\S]*?)\}/)[1]
+  const size = Number.parseFloat(tailMark.match(/font-size:\s*([^;]+);/)[1], 10)
+  assert.ok(size < 11, 'inside the 11px tail the marker steps down again')
+  assert.match(tailMark, /font-weight|font-size/, 'it stays a distinct, smaller run')
 })
 
 test('a localized provider name is resolved once for heading and row text', () => {
@@ -2377,10 +2472,15 @@ test('the marquee CSS clips the window, animates the track and respects reduced 
   assert.doesNotMatch(running, /infinite/, 'the pass never repeats')
   assert.match(running, /forwards/, 'the end state is held instead of snapping back mid-hover')
 
-  // Reduced motion wins: no marquee at all.
+  // Reduced motion wins: no marquee at all, for a row OR a group title.
   const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'))
-  assert.match(reduced.slice(0, 200), /dshmf-rowNameTrack\[data-running="true"\]\s*\{\s*animation:\s*none/,
-    'the marquee is disabled under prefers-reduced-motion')
+  const reducedBlock = reduced.slice(0, reduced.indexOf('}'))
+  assert.match(reducedBlock, /dshmf-rowNameTrack\[data-running="true"\]/,
+    'the row marquee is listed under prefers-reduced-motion')
+  assert.match(reducedBlock, /dshmf-groupTitleTrack\[data-running="true"\]/,
+    'the group-title marquee is listed too')
+  assert.match(reducedBlock, /animation:\s*none/,
+    'both are disabled under prefers-reduced-motion')
 })
 
 test('a pointer that sweeps past a row before the delay starts nothing', async () => {
@@ -2405,4 +2505,146 @@ test('a pointer that sweeps past a row before the delay starts nothing', async (
   assert.equal(trackOf().props['data-running'], undefined,
     'leaving before the delay elapses aborts the marquee entirely')
   assert.equal(trackOf().props.style, undefined, 'and no shift is left behind')
+})
+
+// ---------------------------------------------------------------------------
+// Group-title marquee (DEC-023).
+//
+// A heading can be wider than its column ("ModelScope Token Plan" in a narrow
+// band), so the label gets the SAME window/track split a model name has: the
+// band is the frame and never moves, while its text slides inside it on hover.
+// ---------------------------------------------------------------------------
+test('a group title keeps a clipped window and a track, and never slides on rest', () => {
+  runtime.reset()
+  const { props } = makeProps(catalogState())
+  let tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+
+  const titles = gridTitles(tree)
+  assert.ok(titles.length > 0, 'the grid drew group titles')
+  for (const title of titles) {
+    const windows = findAll(title, node => hasClass(node, 'dshmf-groupTitleWindow'))
+    assert.equal(windows.length, 1, 'the band holds exactly one clipped window')
+    const tracks = findAll(title, node => hasClass(node, 'dshmf-groupTitleTrack'))
+    assert.equal(tracks.length, 1, 'and one sliding track inside it')
+    assert.ok(textOf(tracks[0]).length > 0, 'the track carries the heading text')
+    // The band itself is the frame: only the track may move.
+    assert.equal(tracks[0].props['data-running'], undefined, 'a resting band does not animate')
+    assert.equal(tracks[0].props.style, undefined, 'and carries no shift/duration')
+    // The full heading stays available through the tooltip.
+    assert.equal(title.props.title, textOf(tracks[0]))
+  }
+})
+
+test('hovering a clipped group title starts the same one-pass marquee', async () => {
+  runtime.reset()
+  const { props } = makeProps(catalogState())
+  let tree = runtime.render(bundle.__component, props)
+  runtime.setRerender(() => { tree = runtime.render(bundle.__component, props) })
+  tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+
+  const titleOf = () => gridTitles(tree).find(t => textOf(t).includes('Third Party'))
+  const trackOf = () => findAll(titleOf(), node => hasClass(node, 'dshmf-groupTitleTrack'))[0]
+  assert.equal(typeof titleOf().props.onMouseEnter, 'function',
+    'the band measures its own heading on pointer entry')
+  assert.equal(typeof titleOf().props.onFocus, 'undefined',
+    'a heading has no action, so keyboard focus must not trigger it')
+
+  // A DOM stub: the heading overflows its window by 60px.
+  titleOf().props.onMouseEnter({
+    currentTarget: { querySelector: () => ({ clientWidth: 90, scrollWidth: 150 }) },
+  })
+  assert.equal(trackOf().props['data-running'], undefined,
+    'nothing moves before the rest delay elapses')
+  await new Promise(resolve => setTimeout(resolve, 700))
+  const running = trackOf()
+  assert.equal(running.props['data-running'], 'true', 'a clipped heading starts after the delay')
+  assert.equal(running.props.style['--dshmf-marquee-shift'], '-60px',
+    'it travels exactly the clipped amount')
+  assert.match(String(running.props.style['--dshmf-marquee-duration']), /^\d+ms$/)
+
+  // Leaving resets it with no animation, exactly like a row.
+  titleOf().props.onMouseLeave()
+  assert.equal(trackOf().props['data-running'], undefined, 'leaving the band stops it')
+  assert.equal(trackOf().props.style, undefined, 'and clears the measured shift')
+
+  // A heading that fits never moves, however long the pointer rests.
+  titleOf().props.onMouseEnter({
+    currentTarget: { querySelector: () => ({ clientWidth: 200, scrollWidth: 200 }) },
+  })
+  await new Promise(resolve => setTimeout(resolve, 700))
+  assert.equal(trackOf().props['data-running'], undefined, 'a heading that fits never starts')
+})
+
+test('only one thing in the panel scrolls at a time, title or row', async () => {
+  // Rows and titles share ONE marquee state machine, so starting a title must
+  // cancel a running row and vice versa — the panel never has two tickers.
+  runtime.reset()
+  const { props } = makeProps(catalogState())
+  let tree = runtime.render(bundle.__component, props)
+  runtime.setRerender(() => { tree = runtime.render(bundle.__component, props) })
+  tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+
+  const row = gridRows(tree).find(r => textOf(r).includes('Grok 4'))
+  row.props.onMouseEnter({
+    currentTarget: { querySelector: () => ({ clientWidth: 100, scrollWidth: 160 }) },
+  })
+  await new Promise(resolve => setTimeout(resolve, 700))
+  assert.equal(
+    findAll(gridRows(tree).find(r => textOf(r).includes('Grok 4')),
+      node => hasClass(node, 'dshmf-rowNameTrack'))[0].props['data-running'],
+    'true', 'the row is running',
+  )
+
+  // Now rest on a title: the row must stop.
+  const title = gridTitles(tree).find(t => textOf(t).includes('Third Party'))
+  title.props.onMouseEnter({
+    currentTarget: { querySelector: () => ({ clientWidth: 80, scrollWidth: 180 }) },
+  })
+  await new Promise(resolve => setTimeout(resolve, 700))
+  assert.equal(
+    findAll(gridTitles(tree).find(t => textOf(t).includes('Third Party')),
+      node => hasClass(node, 'dshmf-groupTitleTrack'))[0].props['data-running'],
+    'true', 'the title is now running',
+  )
+  assert.equal(
+    findAll(gridRows(tree).find(r => textOf(r).includes('Grok 4')),
+      node => hasClass(node, 'dshmf-rowNameTrack'))[0].props['data-running'],
+    undefined, 'and the row stopped — never two tickers at once',
+  )
+})
+
+test('the group-title marquee CSS clips the window and shares the row keyframes', () => {
+  const css = source.match(/const CSS = `([\s\S]*?)`/)[1]
+  const ruleOf = selector => {
+    const at = css.indexOf(selector)
+    assert.ok(at >= 0, `${selector} exists`)
+    return css.slice(at, css.indexOf('}', at) + 1)
+  }
+
+  const band = ruleOf('.dshmf-groupTitle {')
+  assert.match(band, /overflow:\s*hidden/, 'the band clips whatever overflows it')
+  assert.match(band, /height:\s*20px/, 'the band height is unchanged for the column planner')
+  assert.match(band, /background:\s*var\(--dsw-alias-bg-overlay\)/,
+    'the band keeps its opaque fill — the sliding text must not disturb it')
+
+  const windowRule = ruleOf('.dshmf-groupTitleWindow {')
+  assert.match(windowRule, /overflow:\s*hidden/, 'the title window does the clipping')
+  assert.match(windowRule, /text-overflow:\s*ellipsis/, 'a clipped heading shows an ellipsis')
+  assert.match(windowRule, /white-space:\s*nowrap/, 'a heading never wraps')
+
+  const track = ruleOf('.dshmf-groupTitleTrack {')
+  assert.match(track, /width:\s*max-content/, 'the track is as wide as the heading')
+
+  const running = ruleOf('.dshmf-groupTitleTrack[data-running="true"] {')
+  assert.match(running, /dshmf-rowNameMarquee/, 'it reuses the row keyframes, not a second copy')
+  assert.match(running, /ease-in-out/, 'same eased pass as a row')
+  assert.doesNotMatch(running, /linear|infinite/, 'no linear crawl, no repeat')
+  assert.match(running, /\b1\b/, 'exactly one iteration')
+  assert.match(running, /forwards/, 'the end state is held')
 })

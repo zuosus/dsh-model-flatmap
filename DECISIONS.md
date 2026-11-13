@@ -5,6 +5,75 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-023 — 2026-11-13 — family 行补「型号 + 倍数」尾标；分组标题也走跑马灯
+
+取代: DEC-012 中「尾标只在同一 provider 于同一家族下有多个模型时才出现」的结论。
+DEC-012 的其余部分（provider 为主文本、家族名不在行里重复、generation 拆分）继续有效，
+条目本身按 append-only 规则保留原文。
+
+**Context.** 用户在真实目录上看到 *按模型家族* 的信息量不足，两条具体缺失：
+
+1. **倍数丢了。** 按 Provider 下能看到 `Hy4 · x0.00`、`Deepseek-V4.1-Flash · x0.01`；
+   按家族下主文本变成 provider name，倍数随模型名一起消失，同一 provider 下的行看起来
+   一模一样。
+2. **型号丢了。** `Qwen` 标题下只写 `ModelScope International`，`Qwen3.8-Flash-Next`
+   和 `Qwen3.8-27B` 无法区分——而这两个正是用户点名要看的东西（用户补了一句：
+   `Qwen3.8-27B` 只是例子，关键是 `Qwen` 作为家族名可以被剥离）。
+3. **标题也会截断。** `ModelScope Token Plan` 在窄列里同样变成 `ModelScope Toke…`，
+   行有跑马灯而标题没有，交互不一致。
+
+**Decision.**
+
+- **尾标改为「剥掉家族名与 provider label 之后剩下的部分」。** 不再只在 id 尾巴上取词，
+  而是拿模型名做两次减法：先按**子串**删掉家族名（`Qwen3.8-Flash-Next` → `3.8-Flash-Next`，
+  `MiniMax-M3` → `M3`），再按**整词**删掉 provider 自己 label 里的词（`豆包 2.1 Turbo`
+  → `2.1 Turbo`）。结果放在行**末尾**（`showVariant` 之后），字号 11px、caption 色。
+  - **版本号保留。** 旧的 `idVariantOf` 会把纯数字丢掉，那正好丢掉用户要的型号；
+    新路径只做减法，`3.8-27B` 完整保留。
+  - **子串 vs 整词的选择是有理由的。** 家族名与版本号在真实 id 里是**粘在一起**的
+    （`Qwen3.8`、`Deepseek-V4.1`、`MiniMax-M3`），整词匹配会一个都删不掉；provider
+    label 则是独立词（`豆包`、`WorkBuddy`），必须整词匹配，否则 `AI` 会把 `Rain`
+    打成 `Rn`。两种减法因此不能互换。
+  - **减法只删，不重排、不改写。** 中间位置的家族名也删（`Fast Qwen Turbo` →
+    `Fast Turbo`），删除处补空格，避免把前后两个词粘成一个。
+  - **空的尾标是合法结果。** `Hy4` 在 `HY4` 标题下什么都不剩，就不画尾标；只有当模型名
+    只剩家族/provider 时，才回退到 id 尾巴（`hy4free` → `free`、`auto` → `auto`），
+    保证两行不会完全一样。真的撞了（同 provider、同家族、尾标相同）仍回退到唯一 id。
+  - **倍数在尾标里也走 `nameRuns`。** `x0.01` 在按 Provider 下是「小一号 + 粗」，在尾标
+    里保持同样处理（11px 容器内再降到 10px/700），否则同一个倍数换一种分组就换了长相。
+- **分组标题复用行的窗口/轨道分层，跑马灯共用一套状态机。** `.dshmf-groupTitle` 现在是
+  带 `display:flex` 的**框**，里面是 `.dshmf-groupTitleWindow`（裁剪 + ellipsis）包着
+  `.dshmf-groupTitleTrack`（`width: max-content`）。hover 停留 0.5 s 后**只让轨道平移**，
+  色带的底色、描边、圆角、阴影全程不动——和行里「badge 不动」是同一个结构性保证。
+  - **关键帧不复制。** 标题轨道直接复用 `@keyframes dshmf-rowNameMarquee` 与
+    `--dshmf-marquee-shift` / `--dshmf-marquee-duration` 两个变量，所以「一趟、
+    ease-in-out、`1 forwards`、reduced-motion 关闭」四条自动同时成立。
+  - **一套状态机。** 行的 route key 与标题的 block key（`t:…`）共用同一个 `marquee`
+    state，进入任一方都会先 `disarm` 并清掉对方，所以面板里永远只有一处在滚。
+  - **标题不响应键盘 focus。** 标题没有点击行为，focus 触发跑马灯会变成「Tab 过去就
+    开始滚」的意外动效；行保留 focus 触发（聚焦的行就是用户正在看的那一行）。
+
+**Rejected.** 在 family 行里恢复「模型全名 + provider 小字」（回到 DEC-004 的形态，
+家族名重复且主次颠倒）；把倍数单独做成右侧 badge（目录 badge 位置已被 `限时免费`
+占用，两个 chip 会打架）；用正则硬编码「取家族名之后的全部内容」（遇到
+`Deepseek-V4.1-Flash` 这类家族名在中间/前缀混合的命名就崩）；给标题写第二套 keyframes
+（两套必然漂移，且 DEC-022 的四条结论要维护两遍）。
+
+**Consequences.** `client.js`：新增 `dropSubstring` / `dropWords` / `TAIL_EDGE`，
+`rowVariantOf(model, family, providerLabel)` 改为减法实现并在 sections builder 里
+对所有 family 行（不再只对「多模型 provider」）计算；`renderRow` 对尾标套 `nameRuns`；
+`renderTitle` 走窗口/轨道；`enterRow` 增加第三个参数 `selector`；测量探针同步成
+「标题窗口 + 轨道」与「行 + 尾标」两种形状。CSS 新增 `.dshmf-groupTitleWindow`、
+`.dshmf-groupTitleTrack[data-running]`、`.dshmf-rowProvider .dshmf-rowNameMark`，
+`.dshmf-groupTitle` 从 `text-overflow: ellipsis` 改为 flex 容器（ellipsis 下移到窗口）。
+测试：`plan.test.mjs` 钉住子串/整词两种减法、版本号保留、空尾标与 id 回退、
+悬空分隔符；`render.test.mjs` 钉住「Qwen 下两行靠型号区分」「尾标在末尾」
+「倍数在尾标里仍是小一号粗体」「标题有窗口/轨道」「标题 hover 一趟后停」「面板内
+同时只有一处在滚」。真实 Chrome（headless）复核：标题 20px 高不变、尾标 11px、
+尾标内倍数 10px/700、标题轨道末帧右缘与窗口右缘重合、`ease-in-out` 采样
+0→1.58→10.33→40→69.67→78.42→80px、移开后 `animations.length === 0` 且
+`transition-duration: 0s`。
+
 ## DEC-022 — 2026-11-13 — 跑马灯只跑一趟、ease-in-out、离开即无动画归位
 
 取代: DEC-021 中「一轮 = 去 + 停 + 回、`linear`、`infinite`」的三条结论。

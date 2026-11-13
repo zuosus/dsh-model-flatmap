@@ -48,11 +48,19 @@ levels, and the agent-teamwork switch on one surface:
   `hy3` → `HY3`, `hy4free` / `hy4std` / `hy4-preview` → `HY4`, and a bare `hy`
   → `HY`. Unregistered brands still collapse their version tail; dictionary
   families (GPT, Qwen…) are never split.
-- **Rows are provider-primary.** Under *By family* the heading already says what
-  the models are, so the family name is not repeated in a row: the primary text
-  is the provider name. Only when one provider offers several models in the same
-  family does a short id-derived suffix differentiate them. The full model name
-  and description stay in the tooltip.
+- **Rows are provider-primary, with a model tail.** Under *By family* the
+  heading already says what the models are, so the family name is not repeated
+  in a row: the primary text is the provider name. What neither the heading nor
+  the provider can say — which model of the family the row is, and the
+  catalog's rate multiplier — is drawn as a quieter tail at the end of the row,
+  with the family name and the provider label stripped off: `Qwen3.8-27B` under
+  *Qwen* reads `3.8-27B`, and `Deepseek-V4.1-Flash · x0.01` under *DeepSeek*
+  reads `V4.1-Flash · x0.01` with the multiplier drawn smaller and bold. The
+  full model name and description stay in the tooltip.
+- **Long names and long headings scroll on hover.** A clipped model name or
+  group heading runs one eased leftward pass after the pointer rests on it for
+  0.5 s, then stops; leaving resets it instantly. Only the text moves — the
+  trailing badge and the title's band never do.
 - **Reasoning effort.** The current model's reasoning levels render as an
   exclusive, keyboard-operable group ("推理等级" / "Reasoning effort") driven by
   radio semantics.

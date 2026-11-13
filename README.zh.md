@@ -41,9 +41,15 @@
 - **generation 要区分开。** 已注册品牌按 generation 分节：`hy3` 归 `HY3`、`hy4free` /
   `hy4std` / `hy4-preview` 归 `HY4`，裸 `hy` 仍是 `HY`；未注册品牌仍折叠版本后缀。
   词典家族（GPT、Qwen…）不拆 generation。
-- **row content 以 provider 为主。** *按 family* 下标题已经说明模型是什么，所以行里
-  不再重复家族名，主文本改为 provider name；仅当同一 provider 在同一家族下有多个
-  模型时，才补一个由 id 推出的短后缀区分。完整模型名/描述保留在 tooltip。
+- **row content 以 provider 为主，末尾补型号尾标。** *按 family* 下标题已经说明模型
+  是什么，所以行里不再重复家族名，主文本改为 provider name。标题和 provider 都说不出
+  的信息——这一行究竟是家族里的哪个型号、以及目录给的倍数——放在行**末尾**一个更安静的
+  尾标里：把家族名和 provider label 从模型名里剥掉，`Qwen` 下的 `Qwen3.8-27B` 显示为
+  `3.8-27B`，`DeepSeek` 下的 `Deepseek-V4.1-Flash · x0.01` 显示为
+  `V4.1-Flash · x0.01`，其中倍数照旧用更小更粗的字重。完整模型名/描述保留在 tooltip。
+- **长名称与长标题 hover 跑马灯。** 显示不全的模型名或分组标题，在鼠标停留 0.5 s 后
+  向左跑**一趟**（ease-in-out）即停，移开立刻复位。只有文字在动——右侧的 badge 和
+  标题所在的色带本身都不动。
 - **推理等级。** 当前模型的推理等级渲染为一个互斥、可键盘操作的分组（"推理等级"，
   基于 radio 语义）。
 - **自适应底栏。** 推理等级组与智能体协作开关在放得下（中间至少 30 px）时共用一行，

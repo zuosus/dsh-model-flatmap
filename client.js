@@ -169,9 +169,10 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
    stay borderless, so the dense flow across columns is kept (see DEC-003,
    DEC-005). */
 .dshmf-groupTitle {
-  align-self: flex-start; max-width: 100%;
+  align-self: flex-start; max-width: 100%; min-width: 0;
   box-sizing: border-box; height: 20px; padding: 0 8px 0 6px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  display: flex; align-items: center;
+  overflow: hidden; white-space: nowrap;
   border: 1px solid var(--dsw-alias-border-l2);
   border-left: 3px solid var(--dsw-alias-border-l3);
   border-radius: var(--dsw-radius-xs);
@@ -179,6 +180,20 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
   box-shadow: var(--dsw-elevation-soft);
   color: var(--dsw-alias-label-primary);
   font-size: 10px; line-height: 18px; font-weight: 700; letter-spacing: .02em;
+}
+/* The label gets the SAME window/track split as a model row (DEC-021): the
+   band is the frame, and the text inside it is a clipped window holding a
+   track that can be wider than the window. That is what lets a long heading
+   ("ModelScope Token Plan") run the same one-pass hover marquee as a long
+   model name, while the band's frame, fill and shadow stay put (DEC-023). */
+.dshmf-groupTitleWindow {
+  flex: 1 1 auto; min-width: 0; display: block;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dshmf-groupTitleTrack { width: max-content; max-width: none; white-space: nowrap; }
+.dshmf-groupTitleTrack[data-running="true"] {
+  display: inline-block;
+  animation: dshmf-rowNameMarquee var(--dshmf-marquee-duration, 3000ms) ease-in-out 1 forwards;
 }
 .dshmf-row {
   box-sizing: border-box; display: flex; align-items: center; gap: 6px; width: 100%;
@@ -239,7 +254,8 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
   animation: dshmf-rowNameMarquee var(--dshmf-marquee-duration, 3000ms) ease-in-out 1 forwards;
 }
 @media (prefers-reduced-motion: reduce) {
-  .dshmf-rowNameTrack[data-running="true"] { animation: none; }
+  .dshmf-rowNameTrack[data-running="true"],
+  .dshmf-groupTitleTrack[data-running="true"] { animation: none; }
 }
 /* The model's last call failed on insufficient balance / credit / quota, and no
    later call for the same model has cleared it. The row text is struck through
@@ -258,17 +274,25 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
    multiplier reads as an aside without disturbing the row's text rhythm
    (see renderRow's nameRuns). */
 .dshmf-rowNameMark { font-size: 11px; line-height: 18px; font-weight: 700; letter-spacing: normal; }
-/* Secondary text in a family-grouped row. The primary text is the provider,
-   so this is only a short variant tail shown when one provider offers several
-   models in the same family. Quieter than the primary text (caption colour,
-   11px) and shrinks before it does. No width cap: a cap truncates a perfectly
-   readable label ("CodeBuddy …") in a column that had room for it. */
+/* The model-specific tail of a family-grouped row, e.g. "3.8-Flash-Next",
+   "V4.1-Flash · x0.01", "2.1 Turbo". The primary text is the provider and the
+   heading names the family, so this is what is LEFT after both are removed —
+   the型号 and the multiplier the heading cannot carry (DEC-023). It sits at
+   the END of the row and is quieter than the primary text (caption colour,
+   11px), shrinks before it, and never wraps. No width cap: a cap truncates a
+   perfectly readable label ("CodeBuddy …") in a column that had room for it. */
 .dshmf-rowProvider {
   flex: 0 1 auto; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: var(--dsw-alias-label-caption);
   font-size: 11px; line-height: 16px; font-weight: 400;
 }
+/* A multiplier inside that tail ("x0.01") keeps the same "smaller and bolder"
+   treatment it gets inside a model name in *By provider* (see
+   .dshmf-rowNameMark and renderRow's nameRuns), so the rate reads identically
+   in both grouping modes. The base rule already makes it bold and 11px; inside
+   the 11px tail it steps down once more, to 10px, to stay visibly apart. */
+.dshmf-rowProvider .dshmf-rowNameMark { font-size: 10px; line-height: 16px; }
 .dshmf-rowTail { display: grid; place-items: center; flex: 0 0 14px; color: inherit; }
 
 /* Catalog badge (for example a third-party rate multiplier). Rendered only
@@ -953,22 +977,86 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
     }
 
     /**
-     * The distinguishing part of one model for a family-grouped row: the id's
-     * variant tail first, then any catalog-name words that are not just the
-     * family heading or a bare version number. Returns '' when the model adds
-     * nothing beyond what the family heading already says.
+     * Separators a strip leaves dangling at either end of a tail. `·` is the
+     * catalog's own "name · multiplier" separator (`Hy4 · x0.00`).
+     */
+    const TAIL_EDGE = /^[\s·・.,:;|/\\_-]+|[\s·・.,:;|/\\_-]+$/g
+
+    /**
+     * Remove every occurrence of a family heading from a text, as a SUBSTRING.
+     *
+     * A family is glued to its version tail in real ids and names — `Qwen3.8-…`,
+     * `Deepseek-V4.1-…`, `MiniMax-M3` — so a whole-word match would miss the
+     * very case this exists for. The gap left behind becomes a space, so
+     * removing a prefix never glues two words together.
+     * @param {string} text - the model name.
+     * @param {string} needle - the family heading.
+     * @returns {string} the text with the heading removed.
+     */
+    function dropSubstring(text, needle) {
+      const lower = needle.toLowerCase()
+      if (lower.length < 2) return text
+      let out = text
+      for (;;) {
+        const at = out.toLowerCase().indexOf(lower)
+        if (at === -1) return out
+        out = `${out.slice(0, at)} ${out.slice(at + lower.length)}`
+      }
+    }
+
+    /**
+     * Remove whole words from a text (case-insensitive).
+     *
+     * Used for the provider's own label, which is the row's PRIMARY text — so a
+     * tail that repeats it would print the same word twice. Whole-word matching
+     * is what keeps a short token from punching a hole in an unrelated word
+     * (provider `AI` must not turn `Rain` into `Rn`). Word edges are any
+     * non-letter/digit, so the CJK provider label `豆包` still matches inside
+     * `豆包 2.1 Turbo`.
+     * @param {string} text - the model name.
+     * @param {string[]} words - provider label words; each needs 2+ characters.
+     * @returns {string} the text with those words removed.
+     */
+    function dropWords(text, words) {
+      let out = text
+      for (const word of words) {
+        if (word.length < 2) continue
+        const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        out = out.replace(
+          new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, 'giu'),
+          ' ',
+        )
+      }
+      return out
+    }
+
+    /**
+     * The model-specific part of a family-grouped row: the model name with the
+     * family heading and the provider's own label removed, so only what the
+     * heading does NOT already say is left.
+     *
+     * `Qwen3.8-Flash-Next` under `Qwen` → `3.8-Flash-Next`, `Qwen3.8-27B` →
+     * `3.8-27B`; `Deepseek-V4.1-Flash · x0.00` under `DeepSeek` →
+     * `V4.1-Flash · x0.00`; `豆包 2.1 Turbo` under provider `豆包(doubao)` →
+     * `2.1 Turbo`. Version numbers are KEPT — they are the型号 the heading
+     * lacks, unlike the id-derived tail that drops them.
+     *
+     * When the name adds nothing (`Hy4` under `HY4`), the id tail is used so a
+     * variant like `hy4free` still reads `free`. An empty result is valid: the
+     * row then draws no tail at all.
      * @param {{id: string, name: string}} model - catalog entry.
      * @param {string} family - the resolved family heading.
-     * @returns {string} a short, non-family supplement; possibly ''.
+     * @param {string} [providerLabel] - the row's primary text; stripped when it repeats.
+     * @returns {string} the model-specific supplement; possibly ''.
      */
-    function rowVariantOf(model, family) {
-      const fromId = idVariantOf(model, family)
-      if (fromId !== '') return fromId
-      const familyWords = new Set(family.toLowerCase().split(/[\s-]+/).filter(Boolean))
-      return String(model.name ?? '').split(/[\s._-]+/).filter(word => {
-        const lower = word.toLowerCase()
-        return word !== '' && !familyWords.has(lower) && !/^\d+(\.\d+)?$/.test(lower)
-      }).join(' ')
+    function rowVariantOf(model, family, providerLabel = '') {
+      const name = String(model.name ?? '')
+      const providerWords = String(providerLabel).split(/[^\p{L}\p{N}]+/u).filter(Boolean)
+      const tail = dropWords(dropSubstring(name, family), providerWords)
+        .replace(/\s+/g, ' ')
+        .replace(TAIL_EDGE, '')
+      if (tail !== '') return tail
+      return idVariantOf(model, family)
     }
 
     // ---------------------------------------------------------------------
@@ -1616,9 +1704,10 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
      * The sliding part of a row's primary text.
      *
      * The row wraps it in the clipped window, so the pass runs on the track
-     * alone: everything AFTER the window (the catalog badge, the pending
-     * spinner) is right-aligned and never pushed along. `shift`/`duration`
-     * arrive as inline values because they depend on this row's measurement.
+     * alone: everything AFTER the window (the variant tail, the catalog badge,
+     * the pending spinner) is right-aligned and never pushed along.
+     * `shift`/`duration` arrive as inline values because they depend on this
+     * row's measurement.
      * @param {object} props - `shift` (px), `duration` (ms), `children`.
      * @returns {object} the track element.
      */
@@ -1627,6 +1716,32 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       const running = shift > 0
       return h('span', {
         className: 'dshmf-rowNameTrack dshmf-rowName',
+        'data-running': running ? 'true' : undefined,
+        style: running
+          ? {
+            '--dshmf-marquee-shift': `-${shift}px`,
+            '--dshmf-marquee-duration': `${duration}ms`,
+          }
+          : undefined,
+      }, children)
+    }
+
+    /**
+     * The sliding part of a group title (DEC-023).
+     *
+     * The band plays the role the row plays for a model name: it is the frame,
+     * and it never moves. The text inside is a clipped window holding a track,
+     * so a heading too long for its column (`ModelScope Token Plan`) runs the
+     * SAME one-pass eased marquee a truncated model name does, while the band's
+     * fill, frame, radius and elevation stay put.
+     * @param {object} props - `shift` (px), `duration` (ms), `children`.
+     * @returns {object} the track element.
+     */
+    const renderTitleTrack = props => {
+      const { shift, duration, children } = props
+      const running = shift > 0
+      return h('span', {
+        className: 'dshmf-groupTitleTrack',
         'data-running': running ? 'true' : undefined,
         style: running
           ? {
@@ -1711,6 +1826,10 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       // away stops it. Only one row can run at a time, and the sliding element
       // is the name TRACK only, so right-aligned trailing content (the catalog
       // badge — 限时免费, ×0.1 — and the pending spinner) never moves.
+      // A group title is the same shape one level up (DEC-023): the band is the
+      // frame and its text slides inside it, so a truncated heading runs the
+      // same pass. Rows and titles therefore share this ONE state machine and
+      // are told apart only by their key prefix.
       const [marquee, setMarquee] = useState({ key: '', shift: 0, duration: 0 })
       const marqueeTimer = useRef(null)
       /** The row whose delay is still running; '' when nothing is armed. */
@@ -1728,13 +1847,14 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         marqueeArmed.current = ''
       }
       /**
-       * Pointer arrived on a row. Leave any other row first, then arm the
-       * delay. The measurement happens when it fires — the row is laid out by
-       * then, and a name that fits never moves.
-       * @param {string} key - the row's route key (one runner at a time).
-       * @param {Element | null} row - the row the pointer entered.
+       * Pointer arrived on a marquee-able element. Leave any other one first,
+       * then arm the delay. The measurement happens when it fires — the element
+       * is laid out by then, and a name that fits never moves.
+       * @param {string} key - the row's route key or the title's block key (one runner at a time).
+       * @param {Element | null} element - the row (or band) the pointer entered.
+       * @param {string} [selector] - the clipped window inside it.
        */
-      const enterRow = (key, row) => {
+      const enterRow = (key, element, selector = '.dshmf-rowNameWindow') => {
         disarmMarquee()
         marqueeArmed.current = key
         // Leaving the previous row stops its pass immediately.
@@ -1743,8 +1863,8 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
           marqueeTimer.current = null
           if (marqueeArmed.current !== key) return
           marqueeArmed.current = ''
-          const nameWindow = typeof row?.querySelector === 'function'
-            ? row.querySelector('.dshmf-rowNameWindow')
+          const nameWindow = typeof element?.querySelector === 'function'
+            ? element.querySelector(selector)
             : null
           if (prefersReducedMotion()) return
           const geometry = marqueePassGeometry(nameClippedBy(nameWindow))
@@ -1880,10 +2000,12 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         for (const family of families) {
           family.scored.sort((left, right) => left.score - right.score)
           // Under family grouping each row's primary text is its provider and
-          // the family name is NOT repeated (the heading already says it). Only
-          // when ONE provider offers several models in this family do the rows
-          // need a short distinguishing tail, so the same provider name is not
-          // printed twice with no way to tell the models apart.
+          // the family name is NOT repeated (the heading already says it). The
+          // heading is only half the picture though: it cannot say WHICH model
+          // the row stands for (`Qwen` holds 3.8-Flash-Next and 3.8-27B), nor
+          // carry the catalog's rate multiplier (`Deepseek-V4.1-Flash · x0.00`).
+          // Both move into a tail at the END of the row, drawn from the model
+          // name with the family heading and the provider's own label removed.
           const byProvider = new Map()
           for (const item of family.scored) {
             const list = byProvider.get(item.entry.providerId) ?? []
@@ -1891,17 +2013,21 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
             byProvider.set(item.entry.providerId, list)
           }
           for (const list of byProvider.values()) {
-            if (list.length <= 1) continue
             const used = new Map()
             for (const item of list) {
-              // An empty variant is intentional: the plain/base model of this
-              // family carries no tag at all. Only a real collision (two rows
-              // with the same non-empty variant, or two rows both empty) needs
-              // a distinguishing fallback — the model id, which is unique.
-              const variant = rowVariantOf(item.entry.model, family.title)
+              // An empty tail is valid: a model whose name says nothing beyond
+              // the family and the provider draws no tail at all.
+              const variant = rowVariantOf(
+                item.entry.model,
+                family.title,
+                item.entry.providerLabel,
+              )
               item.entry.rowVariant = variant
               used.set(variant, (used.get(variant) ?? 0) + 1)
             }
+            // Two rows of one provider that still read alike (the same name
+            // under different ids) fall back to the unique model id, so no two
+            // rows in the grid are indistinguishable.
             if ([...used.values()].some(count => count > 1)) {
               for (const item of list) {
                 if (used.get(item.entry.rowVariant) > 1) {
@@ -2222,17 +2348,24 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
           // `nameRuns` (xN multiplier markers) is applied to whatever the
           // primary text is: the model name under provider grouping, or the
           // provider name under family grouping. Only the track (inside the
-          // clipped window) moves; the variant tag, the badge and the spinner
+          // clipped window) moves; the variant tail, the badge and the spinner
           // are siblings AFTER the window and stay put on the right.
           h('span', { className: 'dshmf-rowNameWindow' },
             running
               ? renderNameTrack({ shift: marquee.shift, duration: marquee.duration, children: nameRuns(primary) })
               : h('span', { className: 'dshmf-rowNameTrack dshmf-rowName' }, ...nameRuns(primary)),
           ),
+          // The model-specific tail sits at the END of the row, after the
+          // primary text: the heading already names the family, and the
+          // provider is the primary text, so what is LEFT is the型号 and the
+          // multiplier (`3.8-Flash-Next`, `V4.1-Flash · x0.01`). It runs
+          // through `nameRuns` too, so a multiplier in the tail keeps the
+          // same two-sizes-smaller treatment it gets inside a model name.
+          // It shrinks before the primary text and never wraps.
           showVariant ? h('span', {
             className: 'dshmf-rowProvider',
             title: rowVariant,
-          }, rowVariant) : null,
+          }, ...nameRuns(rowVariant)) : null,
           badge === null ? null : h('span', {
             className: 'dshmf-badge',
             'data-tone': badge.tone,
@@ -2246,12 +2379,34 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         ? 'status.loading'
         : totalModels === 0 ? 'empty.models' : 'empty.search'
 
-      const renderBlock = block => (block.kind === 'title'
-        ? h('div', {
+      // A group title is a marquee-able band like a model row (DEC-023): the
+      // band itself is the frame and never moves, while its text sits in a
+      // clipped window around a track that slides on hover when the heading
+      // does not fit its column. Titles and rows share one state machine, keyed
+      // by `block.key` (`t:…`) versus a row's route key, so only one thing in
+      // the whole panel scrolls at a time. The band keeps its `title` tooltip
+      // for the hover case the OS tooltip covers.
+      const renderTitle = block => {
+        const running = marquee.key === block.key
+        return h('div', {
           className: 'dshmf-groupTitle',
           key: block.key,
           title: block.label,
-        }, block.label)
+          // A heading has no action of its own: these handlers only arm the
+          // marquee, so keyboard focus is deliberately NOT a trigger.
+          onMouseEnter: event => { enterRow(block.key, event?.currentTarget, '.dshmf-groupTitleWindow') },
+          onMouseLeave: () => { leaveRow(block.key) },
+        },
+          h('span', { className: 'dshmf-groupTitleWindow' },
+            running
+              ? renderTitleTrack({ shift: marquee.shift, duration: marquee.duration, children: block.label })
+              : h('span', { className: 'dshmf-groupTitleTrack' }, block.label),
+          ),
+        )
+      }
+
+      const renderBlock = block => (block.kind === 'title'
+        ? renderTitle(block)
         : renderRow(block.entry))
 
       // Each child is placed EXPLICITLY (`grid-column` below), never by
@@ -2558,12 +2713,17 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
             }, teamFailure),
 
             // ---- measurement probe (never painted). It mirrors a family-
-            // grouped row (provider primary + variant tag), the widest row
-            // shape, so the measured row height covers every mode. It carries
-            // no trailing tail: the selected row is a filled band now and the
-            // spinner is only drawn for a pending selection.
+            // grouped row (provider primary + model-specific tail) and a group
+            // title, the two shapes the grid can draw, so the measured row and
+            // head heights cover every mode. Both now use the window/track
+            // split (DEC-021, DEC-023), so the probe mirrors that too — a track
+            // inside a clipped window is what the grid actually sizes. It
+            // carries no badge and no spinner: the selected row is a filled band
+            // now and the spinner is only drawn for a pending selection.
             h('div', { className: 'dshmf-probe', 'aria-hidden': 'true' },
-              h('div', { ref: probeHeadRef, className: 'dshmf-groupTitle' }, 'X'),
+              h('div', { ref: probeHeadRef, className: 'dshmf-groupTitle' },
+                h('span', { className: 'dshmf-groupTitleWindow' },
+                  h('span', { className: 'dshmf-groupTitleTrack' }, 'X'))),
               h('div', { ref: probeRowRef, className: 'dshmf-row' },
                 h('span', { className: 'dshmf-rowNameWindow' },
                   h('span', { className: 'dshmf-rowNameTrack dshmf-rowName' }, 'X')),

@@ -47,16 +47,23 @@ and the agent teamwork switch are all visible at once.
   `acme-7b` are one `Acme`), and dictionary families are never split by
   generation. A provider prefix does not hide the brand (`codebuddy-hy3` →
   `HY3`).
-- **Family-grouped rows are provider-primary.** A family heading says what the
-  models *are*, so the family name is not repeated in a row. The row's primary
-  text is the provider name — the one thing a heading cannot tell you when a
-  family spans providers. The full model name and description stay in the row
-  tooltip. Only when one provider offers several models in the same family do
-  those rows carry a short secondary variant derived from the id tail (e.g.
-  `hy4free` → `free`, `hy3-x` → `x`); the plain base model carries no tag.
-  Colliding variants fall back to the unique model id. Under *By provider* the
-  heading already is the provider, so the primary text stays the model name and
-  no secondary tag is drawn.
+- **Family-grouped rows are provider-primary, with a model tail.** A family
+  heading says what the models *are*, so the family name is not repeated in a
+  row. The row's primary text is the provider name — the one thing a heading
+  cannot tell you when a family spans providers. The full model name and
+  description stay in the row tooltip. What the heading *and* the provider
+  cannot say — which model of the family this row is, and the catalog's rate
+  multiplier — is drawn as a quieter tail at the END of the row. The tail is
+  the model name with the family heading and the provider's own label removed,
+  so `Qwen3.8-Flash-Next` under `Qwen` reads `3.8-Flash-Next`, `Qwen3.8-27B`
+  reads `3.8-27B`, `Deepseek-V4.1-Flash · x0.00` under `DeepSeek` reads
+  `V4.1-Flash · x0.00`, and `豆包 2.1 Turbo` under provider `豆包(doubao)` reads
+  `2.1 Turbo`. Version numbers are KEPT (they are the型号 the heading lacks),
+  and a multiplier inside the tail is drawn two sizes smaller and bold, exactly
+  as it is inside a model name under *By provider*. Two rows of one provider
+  that still read alike fall back to the unique model id; a model whose name
+  adds nothing draws no tail. Under *By provider* the heading already is the
+  provider, so the primary text stays the model name and no tail is drawn.
 - **Adaptive columns.** The panel measures one group title and one model row,
   subtracts the fixed sections from the 320 px cap, and picks the smallest
   column count from 1 to 3 that fits. If even three columns overflow, it keeps
@@ -230,6 +237,25 @@ The band also carries a low-key frame: a hairline border
 (`--dsw-alias-state-business-primary`, the panel's own accent). That marks each
 group start clearly without boxing the group's rows — a group's rows may flow
 across columns, so only its label is framed (see DEC-003).
+
+### Long text: one-pass hover marquee
+
+A model name, or a group heading, that does not fit its column is ellipsised.
+Resting the pointer on it for 0.5 s starts a single, eased, leftward pass that
+stops when the last glyph reaches the window's right edge; leaving resets it
+immediately with no animation. The pass runs ONCE, is `ease-in-out` rather than
+`linear`, and honours `prefers-reduced-motion: reduce` by not running at all.
+
+Both a model row and a group title use the same structure, so only the text
+slides and the frame never does: a clipped **window** (`overflow: hidden` +
+`text-overflow: ellipsis`) wraps a **track** (`width: max-content`) that is
+allowed to be wider than the window. For a row the frame is the row itself, so
+the right-aligned tail, badge (`限时免费`, `x0.1`) and spinner never move; for a
+title the frame is the band, so its fill, frame, radius and elevation stay put.
+One state machine drives both — keyed by the row's route or the title's block
+key — so only one thing in the panel scrolls at a time. The travel distance is
+the measured overflow, and the duration is that distance divided by 50 px/s
+(see DEC-021, DEC-022, DEC-023).
 
 ## Limitations
 

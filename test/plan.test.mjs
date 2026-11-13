@@ -103,7 +103,9 @@ test('unregistered brands still collapse their version tail', () => {
 })
 
 test('family row variant is short and omits the family name', () => {
-  // Row content is provider-primary; the secondary text is only a variant.
+  // Row content is provider-primary; the secondary text is the model-specific
+  // tail. The family heading and the provider's own label are both stripped,
+  // and version numbers are KEPT — they are the型号 the heading lacks.
   assert.equal(idVariantOf({ id: 'hy4free' }, 'HY4'), 'free')
   assert.equal(idVariantOf({ id: 'hy4std' }, 'HY4'), 'std')
   assert.equal(idVariantOf({ id: 'hy4-preview' }, 'HY4'), 'preview')
@@ -111,9 +113,60 @@ test('family row variant is short and omits the family name', () => {
   assert.equal(idVariantOf({ id: 'hy3-x' }, 'HY3'), 'x')
   assert.equal(idVariantOf({ id: 'hy4free' }, 'HY4').includes('hy'), false,
     'the family name never leaks into a row variant')
+  // Falls back to the id tail when the NAME adds nothing beyond the family.
   assert.equal(familyVariant({ id: 'hy4free', name: 'Hy4' }, 'HY4'), 'free')
-  assert.equal(familyVariant({ id: 'gpt-5.5', name: 'GPT 5.5 Turbo' }, 'GPT'), 'Turbo')
+  assert.equal(familyVariant({ id: 'gpt-5.5', name: 'GPT 5.5 Turbo' }, 'GPT'), '5.5 Turbo',
+    'the version is kept: the heading alone cannot tell two GPT models apart')
 })
+
+test('the family tail strips the family heading even when it is glued to the version', () => {
+  // Real ids and names glue the brand to the version — `Qwen3.8-…`,
+  // `Deepseek-V4.1-…`, `MiniMax-M3`. A whole-word match would miss all of them,
+  // so the heading is removed as a SUBSTRING and the remaining型号 survives.
+  assert.equal(familyVariant({ id: 'Qwen/Qwen3.8-Flash-Next', name: 'Qwen3.8-Flash-Next' }, 'Qwen'),
+    '3.8-Flash-Next')
+  assert.equal(familyVariant({ id: 'Qwen/Qwen3.8-27B', name: 'Qwen3.8-27B' }, 'Qwen'), '3.8-27B',
+    'two models of one family are told apart by their型号')
+  assert.equal(familyVariant({ id: 'deepseek-v4.1-flash', name: 'Deepseek-V4.1-Flash · x0.00' }, 'DeepSeek'),
+    'V4.1-Flash · x0.00', 'the multiplier travels with the tail')
+  assert.equal(familyVariant({ id: 'MiniMax/MiniMax-M3', name: 'MiniMax-M3' }, 'MiniMax'), 'M3')
+  assert.equal(familyVariant({ id: 'ZhipuAI/GLM-5.2', name: 'GLM-5.2' }, 'GLM'), '5.2')
+  // A mid-name heading is removed too, and never welds its neighbours together.
+  assert.equal(familyVariant({ id: 'moonshotai/Kimi-K3.1-Pro', name: 'Kimi-K3.1-Pro' }, 'Kimi'), 'K3.1-Pro')
+  assert.equal(familyVariant({ id: 'x', name: 'Fast Qwen Turbo' }, 'Qwen'), 'Fast Turbo')
+})
+
+test('the family tail drops the provider label the row already prints', () => {
+  // The provider IS the row's primary text, so a tail repeating it would print
+  // the same words twice. Removal is whole-word, so a short label can never
+  // punch a hole in an unrelated word.
+  assert.equal(familyVariant({ id: 'doubao-2.1-turbo', name: '豆包 2.1 Turbo' }, 'Doubao', '豆包(doubao)'),
+    '2.1 Turbo')
+  assert.equal(familyVariant({ id: 'a', name: 'AI Rain Model' }, 'Ace', 'AI'), 'Rain Model',
+    'a two-letter provider label does not eat the inside of a word')
+  assert.equal(familyVariant({ id: 'a', name: 'Acme Model' }, 'Ace', 'X'), 'Acme Model',
+    'labels shorter than two characters are ignored')
+})
+
+test('a family tail that would say nothing at all is empty, not noise', () => {
+  // Nothing beyond the heading: the row draws no tail (`HY4` under `HY4`).
+  assert.equal(familyVariant({ id: 'hy4', name: 'Hy4' }, 'HY4'), '')
+  assert.equal(familyVariant({ id: 'hy4', name: 'HY4' }, 'HY4'), '')
+  // A name that is ONLY the provider label (plus the family) leaves nothing,
+  // and the id carries nothing beyond the family either, so no tail is drawn.
+  assert.equal(familyVariant({ id: 'hy4', name: '豆包' }, 'HY4', '豆包(doubao)'), '')
+  // The id is the fallback only when it DOES add something (`auto` under a
+  // family whose name says nothing): a row must stay distinguishable.
+  assert.equal(familyVariant({ id: 'auto', name: '豆包' }, 'Doubao', '豆包(doubao)'), 'auto')
+})
+
+test('a dangling separator never survives at a tail edge', () => {
+  // Removing the family from "Qwen · 2.0" leaves " · 2.0"; the leading "·" must
+  // go, and so must any trailing punctuation.
+  assert.equal(familyVariant({ id: 'qwen-2', name: 'Qwen · 2.0' }, 'Qwen'), '2.0')
+  assert.equal(familyVariant({ id: 'qwen-2', name: 'Qwen 2.0.' }, 'Qwen'), '2.0')
+})
+
 
 test('a bare version is not a brand', () => {
   // A version-only id names no brand, so it cannot become a heading of its own.
