@@ -100,6 +100,12 @@ as a fallback for older hosts), in smaller but bold type with a stronger label
 colour. The model rows stay 13 px regular text on a transparent background, so
 the band reads as a section header rather than another selectable row.
 
+The band also carries a low-key frame: a hairline border
+(`--dsw-alias-border-l2`) and a short brand-blue left edge
+(`--dsw-alias-state-business-primary`, the panel's own accent). That marks each
+group start clearly without boxing the group's rows — a group's rows may flow
+across columns, so only its label is framed (see DEC-003).
+
 ## Limitations
 
 - The panel replaces the composer seat only; the `/model` popup is untouched.

@@ -5,6 +5,38 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-003 — 2026-11-13 — Groups get a low-key framed label; the rows stay unboxed
+
+**Context.** The flat grid listed each provider/family as a tinted title band
+over bare rows. The user asked for each group (provider or family, per the
+active grouping) to carry a frame (线框) that is visible but unobtrusive —
+low-key, simple, still good-looking. The dense layout flows a group's rows
+across 1–3 columns, so a single box around a whole group is only possible if
+the group becomes an indivisible placement unit — which would cost density for
+large groups (a 30-model provider would become one tall scrolling card beside
+ragged gaps under short groups).
+
+**Decision.** Keep the dense row flow. Frame the group **label** instead:
+
+- The title band gains a hairline frame — `1px solid
+  --dsw-alias-border-l2` (≈10 % black in light, ≈12 % white in dark) — and a
+  3 px left edge in `--dsw-alias-state-business-primary` (the panel's own
+  DeepSeek-blue accent, ≈#7aaaff / #4176e6). The band stays 20 px tall, so the
+  probe-measured `headH` and the column planner are untouched.
+- The band keeps its filled, smaller-bold styling from the 2026-11-13 label
+  restyle, so frame + accent + fill read as one calm section header.
+- The rows themselves stay borderless and keep flowing across columns; a group
+  that spans columns is marked at its head by the framed label.
+
+**Rejected.** Boxing each group as an indivisible bordered card (a
+`.dshmf-card` around title + rows, with the planner's units changed from rows
+to cards): the cleanest "frame the whole group", but it breaks the row flow
+across columns and costs density for large groups. The user explicitly chose
+the weak divider over it.
+
+**Consequences.** CSS-only on `.dshmf-groupTitle` (plus its render-test
+assertions and this doc); no layout, planner, probe, or DOM-structure change.
+
 ## DEC-002 — ⛔️ 2026-11-13 — Reasoning effort: "推理等级" caption inline with a multi-segmentation control
 
 取代: DEC-001 的视觉呈现（"思考强度" 文案、双行卡片容器、品牌色 pill 选中态）。

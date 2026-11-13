@@ -125,14 +125,19 @@ window.__ModuleLoader__.load({
    header, clearly separated from the model rows below it. The host's own
    group-header fill keeps it legible in both light and dark themes; smaller
    but bold type (and a stronger label colour) sets it apart from the 13px
-   regular row text without borrowing from the row's interactive states. */
+   regular row text without borrowing from the row's interactive states.
+   A hairline frame plus a short brand-blue left edge — the panel's own
+   accent — marks each group start: visible, never loud. The rows themselves
+   stay borderless, so the dense flow across columns is kept (see DEC-003). */
 .dshmf-groupTitle {
-  box-sizing: border-box; height: 20px; padding: 0 8px;
+  box-sizing: border-box; height: 20px; padding: 0 8px 0 6px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-left: 3px solid var(--dsw-alias-state-business-primary);
   border-radius: var(--dsw-radius-xs);
   background: var(--dsw-alias-menu-group-header-fill, var(--dsw-alias-bg-module-platform));
   color: var(--dsw-alias-label-secondary);
-  font-size: 10px; line-height: 20px; font-weight: 700; letter-spacing: .02em;
+  font-size: 10px; line-height: 18px; font-weight: 700; letter-spacing: .02em;
 }
 .dshmf-row {
   box-sizing: border-box; display: flex; align-items: center; gap: 6px; width: 100%;

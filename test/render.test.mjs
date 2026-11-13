@@ -930,6 +930,15 @@ test('the group-title label is a distinct filled band, not a plain row-like capt
   assert.doesNotMatch(prop(title, 'background'), /#[0-9a-f]|rgba?\(/i, 'no hard-coded colour value')
   assert.match(prop(title, 'border-radius'), /dsw-radius/, 'rounded corners come from a radius token')
 
+  // A low-key frame around the label: hairline border + brand-accent left
+  // edge, both theme tokens (no hard-coded colour). 20px tall, unchanged, so
+  // the probe-measured headH and the column planner stay valid.
+  assert.match(prop(title, 'border'), /dsw-alias-border/, 'hairline frame comes from a border token')
+  assert.doesNotMatch(prop(title, 'border'), /#[0-9a-f]|rgba?\(/i, 'frame colour is not hard-coded')
+  assert.match(prop(title, 'border-left'), /3px/, 'the left accent is a short bar')
+  assert.match(prop(title, 'border-left'), /state-business-primary/, 'the accent uses the panel brand colour token')
+  assert.equal(prop(title, 'height'), '20px', 'label height is unchanged for the column planner')
+
   // Smaller than the row, but bold — clearly a label, not model-row text.
   assert.ok(size(prop(title, 'font-size')) < size(prop(row, 'font-size')),
     'label font is smaller than the model row font (13px)')
