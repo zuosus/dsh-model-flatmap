@@ -13,15 +13,21 @@ and the agent teamwork switch are all visible at once.
   family. Groups that end up empty are not rendered, so no stray headings
   remain. Prefix matches rank first, then substring matches, then ordered
   character matches.
+- **Word-wise search.** Whitespace splits the query into tokens, and every
+  token has to land somewhere in the name, so `mod inte` finds
+  `ModelScope International` even though the two words are never contiguous.
+  A hit ranks by its weakest token, so a multi-word query never outranks a
+  plain prefix. A single-token query keeps the original ranking exactly.
 - **Provider-wide search.** A query that matches a *provider* — its id, its
   catalog name, or the label its section draws — selects that provider as a
   whole: every model it offers stays in the grid, not only the ones whose names
   contain the query. Typing `dou` therefore surfaces `豆包(doubao)` with its
   entire catalog. Models matched by their own name still rank first; the rest
-  follow in catalog order. Provider matching accepts prefixes and substrings
-  only — an ordered-subsequence pass would let a two-letter query drag every
-  provider in, which is noise rather than a match. This applies to both
-  grouping modes.
+  follow in catalog order. Provider matching is word-wise too, and tokens may
+  land in different faces of the same provider — the id answers `mod`, the
+  localized name answers `inte`. It accepts prefixes and substrings only: an
+  ordered-subsequence pass would let a two-letter query drag every provider in,
+  which is noise rather than a match. This applies to both grouping modes.
 - **Two grouping modes.** A segment control switches the grid between
   *By provider* and *By family*. Grouping and search are independent: the
   segment only changes how the filtered result is organised.

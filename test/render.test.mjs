@@ -439,6 +439,45 @@ test('name hits still rank above models pulled in by their provider', () => {
   assert.deepEqual(names.slice(2), ['Skylark V3', 'Ark Lite'])
 })
 
+test('a multi-word query finds a provider whose words are not contiguous', () => {
+  // `ModelScope International` never contains `mod inte` as one substring, so
+  // the whole-string test used to drop the provider; token matching keeps it
+  // and therefore its whole catalog.
+  const state = catalogState({
+    current: null,
+    groups: [{
+      id: 'modelscope',
+      name: 'ModelScope International',
+      models: [
+        { id: 'qwen3-235b', name: 'Qwen3 235B' },
+        { id: 'deepseek-v3', name: 'DeepSeek V3' },
+      ],
+    }],
+  })
+  const { tree } = openAndSearch(state, 'mod inte')
+  assert.deepEqual(gridTitles(tree).map(textOf), ['ModelScope International'])
+  assert.deepEqual(gridRowNames(tree).sort(), ['DeepSeek V3', 'Qwen3 235B'])
+  // A token that matches nothing still drops the provider entirely.
+  assert.deepEqual(gridRowNames(openAndSearch(state, 'mod zzz').tree), [])
+})
+
+test('a multi-word query also finds models by their own name', () => {
+  const state = catalogState({
+    current: null,
+    groups: [{
+      id: 'vendor',
+      name: 'Vendor',
+      models: [
+        { id: 'qwen3-coder', name: 'Qwen3 Coder' },
+        { id: 'qwen3-chat', name: 'Qwen3 Chat' },
+      ],
+    }],
+  })
+  // Both tokens match the model names, so no provider-wide widening is needed.
+  assert.deepEqual(gridRowNames(openAndSearch(state, 'qwen3 cod').tree), ['Qwen3 Coder'])
+  assert.deepEqual(gridRowNames(openAndSearch(state, 'qwen3 chat').tree), ['Qwen3 Chat'])
+})
+
 test('a provider-wide hit does not leak into unrelated providers', () => {
   const { tree } = openAndSearch(providerState(), 'dou')
   const titles = gridTitles(tree).map(textOf)

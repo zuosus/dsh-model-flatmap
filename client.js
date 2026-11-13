@@ -279,20 +279,59 @@ window.__ModuleLoader__.load({
       return template.replace(/\{(\w+)\}/g, (_, name) => String(values[name] ?? ''))
     }
 
-    /** Case-insensitive match: prefix beats substring beats ordered subsequence. */
-    function matchScore(name, query) {
-      const q = query.trim().toLowerCase()
-      if (q === '') return 0
-      const n = name.toLowerCase()
-      if (n.startsWith(q)) return 0
-      if (n.includes(q)) return 1
+    /**
+     * Split a raw query into lowercase search tokens. Whitespace separates
+     * tokens, so `mod inte` asks for `mod` AND `inte` rather than for that
+     * literal string — which is what lets it find `ModelScope International`,
+     * a name the two words never appear in contiguously.
+     * @param {string} query - raw search text.
+     * @returns {string[]} lowercase, non-empty tokens.
+     */
+    function searchTokens(query) {
+      const raw = typeof query === 'string' ? query : ''
+      return raw.trim().toLowerCase().split(/\s+/).filter(token => token !== '')
+    }
+
+    /**
+     * Rank ONE token against one name: prefix beats substring beats ordered
+     * subsequence. This is the original single-term ranking, unchanged.
+     * @param {string} name - lowercase haystack.
+     * @param {string} token - lowercase needle.
+     * @returns {0|1|2|null} the rank, or null when the token is absent.
+     */
+    function tokenScore(name, token) {
+      if (name.startsWith(token)) return 0
+      if (name.includes(token)) return 1
       let at = 0
-      for (const ch of q) {
-        at = n.indexOf(ch, at)
+      for (const ch of token) {
+        at = name.indexOf(ch, at)
         if (at === -1) return null
         at += 1
       }
       return 2
+    }
+
+    /**
+     * Case-insensitive match: prefix beats substring beats ordered subsequence.
+     *
+     * A query may hold several whitespace-separated tokens. Every token then
+     * has to land somewhere in the name, and the result takes the weakest of
+     * them — so `mod inte` finds `ModelScope International`, while `mod zzz`
+     * still finds nothing. A single token keeps the original ranking exactly,
+     * so existing ordering does not shift.
+     */
+    function matchScore(name, query) {
+      const tokens = searchTokens(query)
+      if (tokens.length === 0) return 0
+      const n = String(name ?? '').toLowerCase()
+      if (tokens.length === 1) return tokenScore(n, tokens[0])
+      let weakest = 0
+      for (const token of tokens) {
+        const score = tokenScore(n, token)
+        if (score === null) return null
+        if (score > weakest) weakest = score
+      }
+      return weakest
     }
 
     /**
@@ -330,21 +369,44 @@ window.__ModuleLoader__.load({
      * `豆包(doubao)` provider and every model under it, including the ones whose
      * own names never contain the query.
      *
-     * Only prefix and substring are considered. A subsequence pass — which
-     * `matchScore` allows for model names — would let a two-letter query light
-     * up every provider in the directory, which is noise rather than a match.
+     * A multi-token query matches the provider when every token lands in SOME
+     * face of the same provider, so `mod inte` finds a provider named
+     * `ModelScope International` even though those words are never contiguous.
+     * Tokens may land in different faces — the id answers `mod`, the localized
+     * name answers `inte`.
+     *
+     * Only prefix and substring are considered per token. A subsequence pass —
+     * which `matchScore` allows for model names — would let a two-letter query
+     * light up every provider in the directory, which is noise rather than a
+     * match.
      * @param {{id?: string, name?: unknown}} group - one provider entry.
      * @param {string} query - raw search text.
      * @param {unknown} [title] - the label this provider's section draws.
      * @returns {0|1|null} 0 for a prefix hit, 1 for a substring hit, else null.
      */
     function providerScore(group, query, title) {
-      const q = query.trim().toLowerCase()
-      if (q === '') return null
+      const tokens = searchTokens(query)
+      if (tokens.length === 0) return null
       const texts = [...textFaces(group?.id), ...textFaces(group?.name), ...textFaces(title)]
-      if (texts.some(text => text.startsWith(q))) return 0
-      if (texts.some(text => text.includes(q))) return 1
-      return null
+      if (texts.length === 0) return null
+      /** The best rank one token reaches across every face. */
+      const rankOf = token => {
+        let best = null
+        for (const text of texts) {
+          const rank = text.startsWith(token) ? 0 : text.includes(token) ? 1 : null
+          if (rank === null) continue
+          if (best === null || rank < best) best = rank
+          if (best === 0) return 0
+        }
+        return best
+      }
+      let weakest = 0
+      for (const token of tokens) {
+        const rank = rankOf(token)
+        if (rank === null) return null
+        if (rank > weakest) weakest = rank
+      }
+      return weakest
     }
 
     // ---------------------------------------------------------------------
@@ -1368,7 +1430,7 @@ window.__ModuleLoader__.load({
       // Pure layout and grouping derivations plus the component itself,
       // exposed for `node --test` so grouping, filtering and the column
       // algorithm are pinned without a browser. The shell never reads this key.
-      __test: { familyOf, familyRank, matchScore, providerScore, buildUnits, columnHeight, packColumns, planColumns },
+      __test: { familyOf, familyRank, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns },
       __component: ModelFlatMap,
       __seat: Seat,
       apply(ctx) {

@@ -55,7 +55,7 @@ function materialize() {
 }
 
 const bundle = materialize()
-const { familyOf, matchScore, providerScore, buildUnits, columnHeight, planColumns, packColumns } = bundle.__test
+const { familyOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, planColumns, packColumns } = bundle.__test
 
 test('families come from the dictionary before the id guess', () => {
   assert.equal(familyOf({ id: 'deepseek-chat', name: 'DeepSeek Chat' }), 'DeepSeek')
@@ -82,6 +82,58 @@ test('search ranks prefix above substring above subsequence, and rejects misses'
   assert.equal(matchScore('DeepSeek Chat', 'dsc'), 2)
   assert.equal(matchScore('DeepSeek Chat', 'zzz'), null)
   assert.equal(matchScore('anything', '   '), 0)
+})
+
+test('whitespace splits a query into tokens, and blanks are dropped', () => {
+  assert.deepEqual(searchTokens('mod inte'), ['mod', 'inte'])
+  assert.deepEqual(searchTokens('  MOD   inte  '), ['mod', 'inte'])
+  assert.deepEqual(searchTokens(''), [])
+  assert.deepEqual(searchTokens('   '), [])
+  assert.deepEqual(searchTokens(undefined), [])
+})
+
+test('every token must land, so `mod inte` finds ModelScope International', () => {
+  // The two words are never contiguous in the name; the old whole-string
+  // substring test rejected it.
+  assert.equal(matchScore('ModelScope International', 'mod inte'), 1)
+  assert.equal(matchScore('ModelScope International', 'mod int'), 1)
+  assert.equal(matchScore('ModelScope International', 'MOD INTE'), 1)
+  // One missing token still rejects the whole name.
+  assert.equal(matchScore('ModelScope International', 'mod zzz'), null)
+  assert.equal(matchScore('ModelScope International', 'zzz inte'), null)
+})
+
+test('a multi-token hit ranks by its weakest token, never better than a prefix', () => {
+  // `mod` starts the name (prefix rung), `inte` sits inside it (substring
+  // rung); the weakest of the two wins, so the whole hit ranks as a substring.
+  assert.equal(matchScore('ModelScope International', 'mod inte'), 1)
+  assert.equal(matchScore('ModelScope International', 'modelscope'), 0)
+  // Spelling the second word out does not promote it: it still sits inside the
+  // name rather than starting it, so the rank stays on the substring rung.
+  assert.equal(matchScore('ModelScope International', 'modelscope international'), 1)
+  // A token only reachable as a subsequence drags the whole match to that rung.
+  assert.equal(matchScore('ModelScope International', 'msc inte'), 2)
+})
+
+test('a single-token query keeps the original ranking exactly', () => {
+  // Guards the change: whitespace splitting must not disturb one-term search.
+  assert.equal(matchScore('DeepSeek Chat', 'deep'), 0)
+  assert.equal(matchScore('DeepSeek Chat', 'chat'), 1)
+  assert.equal(matchScore('DeepSeek Chat', 'dsc'), 2)
+  assert.equal(matchScore('anything', '   '), 0)
+  assert.equal(matchScore('anything', ''), 0)
+})
+
+test('a multi-token query matches a provider whose words are not contiguous', () => {
+  const prov = { id: 'modelscope', name: { zh: '魔搭 ModelScope', en: 'ModelScope International' } }
+  assert.equal(providerScore(prov, 'mod inte'), 1)
+  assert.equal(providerScore(prov, 'MOD INTE'), 1)
+  assert.equal(providerScore(prov, 'mod'), 0, 'the id still answers a prefix')
+  assert.equal(providerScore(prov, 'mod zzz'), null)
+  // Tokens may land in different faces: the id answers `mod`, the name `魔搭`.
+  assert.equal(providerScore(prov, 'mod 魔搭'), 0)
+  // The subsequence guard is per token and still holds.
+  assert.equal(providerScore(prov, 'dbao'), null)
 })
 
 test('a provider matches on any face of its id, name, or drawn label', () => {
