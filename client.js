@@ -138,6 +138,7 @@ window.__ModuleLoader__.load({
    stay borderless, so the dense flow across columns is kept (see DEC-003,
    DEC-005). */
 .dshmf-groupTitle {
+  align-self: flex-start; max-width: 100%;
   box-sizing: border-box; height: 20px; padding: 0 8px 0 6px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   border: 1px solid var(--dsw-alias-border-l2);
