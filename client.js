@@ -1419,8 +1419,9 @@ window.__ModuleLoader__.load({
               role: 'status',
             }, teamFailure),
 
-            // ---- fixed, bottom: the agent teamwork switch
-            teamMode === undefined || !teamAvailable
+            // ---- fixed, bottom: the agent teamwork switch. `teamAvailable`
+            // is evaluated per render because the remote scope may bind late.
+            teamMode === undefined || !teamAvailable()
               ? null
               : h('div', { className: 'dshmf-team', ref: teamRef },
                 h('span', { className: 'dshmf-teamLabel' },
@@ -1545,7 +1546,13 @@ window.__ModuleLoader__.load({
     // Plugin
     // ---------------------------------------------------------------------
     return {
-      inject: ['slots', 'locale'],
+      // `remote.agentTeams` is a SEPARATE client service (the gateway installs
+      // each remote namespace as its own service). Reading it through a bare
+      // `ctx.get('remote')` property lookup is refused by the guarded client
+      // context unless both names are declared here, and a swallowed refusal
+      // used to leave `teamAvailable` permanently false — i.e. the host's
+      // teamwork switch never rendered at all.
+      inject: ['slots', 'locale', 'remote', 'remote.agentTeams'],
       // Pure layout and grouping derivations plus the component itself,
       // exposed for `node --test` so grouping, filtering and the column
       // algorithm are pinned without a browser. The shell never reads this key.
@@ -1590,6 +1597,22 @@ window.__ModuleLoader__.load({
         const slots = read('slots')
         if (slots === undefined || typeof slots.inject !== 'function') return
 
+        // The teamwork switch is driven by the Host's own `remote.agentTeams`
+        // namespace service. The gateway installs each remote namespace as its
+        // OWN service, so it is read by full name through `ctx.get`, never as a
+        // property of the `remote` service (a bare `ctx.remote` lookup is
+        // refused by the guarded client context, and the old try/catch turned
+        // that refusal into a silent `undefined` — which hid the switch
+        // forever). `ctx.inject` is not among the client facade's verbs, so the
+        // handle is resolved lazily on every use instead of once at activation.
+        const readTeamService = () => {
+          try {
+            return typeof ctx.get === 'function' ? ctx.get('remote.agentTeams') : undefined
+          } catch {
+            return undefined
+          }
+        }
+
         /**
          * Build the injected face for one Session.
          * @param sessionId - the Session this seat renders for.
@@ -1605,18 +1628,8 @@ window.__ModuleLoader__.load({
               return undefined
             }
           }
-          // Reading the remote namespace is the risky part: a namespace whose
-          // package is absent from the client composition can throw on access.
-          const teamService = () => {
-            try {
-              return safeRead('remote')?.agentTeams
-            } catch {
-              return undefined
-            }
-          }
           const models = safeRead('modelDirectories')
           const sessions = safeRead('sessions')
-          const agentTeams = teamService()
 
           const resolve = () => {
             try {
@@ -1658,10 +1671,17 @@ window.__ModuleLoader__.load({
                 : current.directory.select(selection)
             },
             resolveText,
-            teamAvailable: agentTeams !== undefined,
-            setTeamMode: enabled => (agentTeams === undefined
-              ? Promise.resolve(undefined)
-              : agentTeams.setEnabled(sessionId, enabled)),
+            // Lazy, not snapshotted: the namespace service may still be
+            // mounting when this face is built, and the seat is registered
+            // once. Re-reading on each use keeps the switch from being frozen
+            // out by an early `undefined`.
+            teamAvailable: () => readTeamService() !== undefined,
+            setTeamMode: enabled => {
+              const service = readTeamService()
+              return service === undefined
+                ? Promise.resolve(undefined)
+                : service.setEnabled(sessionId, enabled)
+            },
           }
         }
 
@@ -1687,7 +1707,7 @@ window.__ModuleLoader__.load({
               load: () => {},
               select: () => Promise.resolve(undefined),
               resolveText,
-              teamAvailable: false,
+              teamAvailable: () => false,
               setTeamMode: () => Promise.resolve(undefined),
             }
           }
