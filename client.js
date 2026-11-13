@@ -221,21 +221,22 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
   width: max-content; max-width: none;
   white-space: nowrap;
 }
-/* Resting the pointer on a row whose name does not fit starts a slow marquee:
-   out to the last glyph, a short hold, and a glide back. Only the name TRACK
-   moves — the window clips it, so the right-aligned badge (限时免费, ×0.1) and
-   the pending spinner, which sit as siblings AFTER the window, never shift. */
+/* Resting the pointer on a row whose name does not fit starts ONE marquee
+   pass: the name glides left until its last glyph reaches the window, then
+   STOPS there. The easing is ease-in-out, so the start and the arrival are
+   soft rather than a constant crawl. Only the name TRACK moves — the window
+   clips it, so the right-aligned badge (限时免费, ×0.1) and the pending
+   spinner, which sit as siblings AFTER the window, never shift. There is no
+   return trip and no iteration: fill-mode forwards holds the end state, and
+   leaving the row drops the animation entirely, which snaps back with no
+   transition. */
 @keyframes dshmf-rowNameMarquee {
-  0% { transform: translateX(0); }
-  5% { transform: translateX(0); }
-  45% { transform: translateX(var(--dshmf-marquee-shift)); }
-  50% { transform: translateX(var(--dshmf-marquee-shift)); }
-  95% { transform: translateX(0); }
-  100% { transform: translateX(0); }
+  from { transform: translateX(0); }
+  to { transform: translateX(var(--dshmf-marquee-shift)); }
 }
 .dshmf-rowNameTrack[data-running="true"] {
   display: inline-block;
-  animation: dshmf-rowNameMarquee var(--dshmf-marquee-duration, 3000ms) linear infinite;
+  animation: dshmf-rowNameMarquee var(--dshmf-marquee-duration, 3000ms) ease-in-out 1 forwards;
 }
 @media (prefers-reduced-motion: reduce) {
   .dshmf-rowNameTrack[data-running="true"] { animation: none; }
@@ -1576,21 +1577,22 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
     }
 
     /**
-     * The geometry of one marquee cycle (DEC-021).
+     * The geometry of the single marquee pass (DEC-021).
      *
-     * `shift` is how far the name must travel for its LAST glyph to reach the
+     * `shift` is how far the name travels for its LAST glyph to reach the
      * right edge of the window — exactly the clipped amount, so nothing scrolls
-     * past the point of being readable. The keyframes spend 45% of the cycle
-     * going out and 45% coming back (5% rests at each end), so the cycle lasts
-     * `travel / 0.45` and both legs run at MARQUEE_PX_PER_SECOND.
+     * past the point of being readable. The pass is one-way and eased
+     * (ease-in-out), which is symmetric, so its AVERAGE velocity is still the
+     * pinned MARQUEE_PX_PER_SECOND: the duration is simply
+     * `shift / MARQUEE_PX_PER_SECOND`. Easing makes the ends soften around that
+     * average instead of changing it.
      * @param {number} clipped - pixels of the name hidden to the right.
      * @returns {{shift: number, duration: number}} geometry in px / ms.
      */
     const marqueePassGeometry = clipped => {
       const shift = Number.isFinite(clipped) && clipped > 0 ? Math.ceil(clipped) : 0
       if (shift === 0) return { shift: 0, duration: 0 }
-      const travel = (shift / MARQUEE_PX_PER_SECOND) * 1000
-      const duration = Math.max(MARQUEE_MIN_MS, Math.round(travel / 0.45))
+      const duration = Math.max(MARQUEE_MIN_MS, Math.round((shift / MARQUEE_PX_PER_SECOND) * 1000))
       return { shift, duration }
     }
 

@@ -2363,13 +2363,19 @@ test('the marquee CSS clips the window, animates the track and respects reduced 
   assert.match(nameRule, /width:\s*max-content/, 'the track takes the full name width')
   assert.doesNotMatch(nameRule, /text-overflow|overflow:\s*hidden/, 'the track itself never clips')
 
-  // One keyframe pass: out to the last glyph, a short hold, and back. The
-  // transform is the only animated property.
+  // ONE keyframe pass: out to the last glyph and stop. The transform is the
+  // only animated property, and there is no keyframe coming back.
   const keyframes = css.slice(css.indexOf('@keyframes dshmf-rowNameMarquee'), css.indexOf('.dshmf-rowNameTrack[data-running'))
   assert.match(keyframes, /translateX\(var\(--dshmf-marquee-shift\)\)/, 'the pass travels the measured shift')
+  assert.equal((keyframes.match(/translateX\(0\)/g) ?? []).length, 1,
+    'only the start keyframe sits at 0px — the pass never travels back')
   const running = ruleOf('.dshmf-rowNameTrack[data-running="true"] {')
   assert.match(running, /animation:\s*dshmf-rowNameMarquee/, 'a running track animates')
-  assert.match(running, /linear/, 'the speed is constant, not eased')
+  assert.match(running, /ease-in-out/, 'the pass is eased in and out, not linear')
+  assert.doesNotMatch(running, /linear/, 'a constant-speed crawl is not wanted here')
+  assert.match(running, /\b1\b/, 'exactly one iteration')
+  assert.doesNotMatch(running, /infinite/, 'the pass never repeats')
+  assert.match(running, /forwards/, 'the end state is held instead of snapping back mid-hover')
 
   // Reduced motion wins: no marquee at all.
   const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'))
