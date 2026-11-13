@@ -7,8 +7,8 @@
 
 ## 这是什么
 
-`dsh-model-flatmap` 是一个**纯浏览器端**的 DSH 插件。它把会话输入框中的
-`conversation.input.model` 控件替换成一个平铺面板，渲染在 Web GUI 内。面板没有
+`dsh-model-flatmap` 是一个**客户端** DSH 插件，在 **Web GUI 与桌面端** 均生效。它把会话输入框中的
+`conversation.input.model` 控件替换成一个平铺面板，渲染在客户端界面中。面板没有
 嵌套的二级菜单：模型网格、当前模型的推理等级，以及智能体协作开关，全部同时可见。
 
 插件**只通过公开的 Client API 读写数据**——每个会话的模型目录、协作设置、以及宿主

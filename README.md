@@ -7,8 +7,9 @@
 
 ## What it is
 
-`dsh-model-flatmap` is a **browser-only** DSH plugin. It replaces the composer's
-`conversation.input.model` seat with a single flat panel rendered in the Web GUI.
+`dsh-model-flatmap` is a **client-side** DSH plugin that runs in both the **Web GUI and the
+Desktop app**. It replaces the composer's `conversation.input.model` seat with a single flat
+panel rendered in the client UI.
 Instead of nested popovers, the whole catalogue is one searchable grid where the
 model grid, the current model's reasoning levels, and the agent-teamwork switch
 are all visible at once.
