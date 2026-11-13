@@ -5,6 +5,18 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## LES-002 — 2026-11-13 — "Multi-segmentation" means reusing the panel's own segment recipe
+
+When the user asks for a "multi-segmentation 控件" visual, do not invent a
+new control: reuse the token recipe the panel already ships for
+`.dshmf-seg`/`.dshmf-segBtn` (`interactive-bg-hover` track + 2 px inset +
+`bg-layer-1` active segment + `elevation-soft`). Two segment-styled controls
+on one panel read as one design system; a third invented flavour (e.g. the
+brand-fill pills of DEC-001) is what prompts the redesign. Also: the
+user-specified wording for a caption (推理等级 vs 思考强度) is a spec item —
+use their exact term, and keep the explanatory detail in a tooltip instead
+of widening the caption.
+
 ## LES-001 — 2026-11-13 — Host token/theme inspection: grep the asar with narrow windows only
 
 The installed host ships its entire client (including the `--dsw-alias-*`

@@ -163,36 +163,41 @@ window.__ModuleLoader__.load({
 .dshmf-empty { grid-column: 1 / -1; padding: 10px 8px; color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; }
 .dshmf-failure { grid-column: 1 / -1; padding: 2px 6px; color: var(--dsw-alias-state-warn-label); font-size: 11px; line-height: 16px; overflow-wrap: anywhere; }
 
-/* Reasoning levels: one labelled group of mutually exclusive pills, so the
-   block reads as a setting, not a loose row. The container carries the group
-   identity (tinted surface + radius + caption); the pills carry the choice. */
+/* Reasoning levels: a caption and a multi-segmentation control on one line;
+   the track wraps below the caption only when the row cannot fit. The
+   segment visual mirrors the header's grouping control, so the panel has
+   one visual language for "one of many, exactly one active". */
 .dshmf-reason {
-  flex: 0 0 auto; display: flex; flex-direction: column; gap: 4px;
-  margin: 0 2px; padding: 6px 7px 7px;
-  border-radius: var(--dsw-radius-md);
-  background: var(--dsw-alias-bg-module-platform);
+  flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap;
+  gap: 2px 6px;
 }
 .dshmf-reasonLabel {
-  display: inline-flex; align-items: center; gap: 4px; min-width: 0;
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px;
+  white-space: nowrap;
   color: var(--dsw-alias-label-tertiary);
   font-size: 11px; line-height: 16px; font-weight: 500;
 }
 .dshmf-reasonLabel svg { flex: 0 0 auto; }
 .dshmf-pills {
-  display: flex; align-items: center; gap: 4px;
-  overflow-x: auto; overflow-y: hidden; padding: 1px 0; scrollbar-width: none;
+  flex: 0 0 auto; max-width: 100%;
+  display: inline-flex; align-items: center; gap: 2px;
+  padding: 2px;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-interactive-bg-hover);
+  overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
 }
 .dshmf-pills::-webkit-scrollbar { height: 0; }
 .dshmf-pill {
-  flex: 0 0 auto; height: 24px; padding: 0 10px; border: 0; border-radius: 999px; corner-shape: round;
+  flex: 0 0 auto; height: 22px; padding: 0 8px; border: 0;
+  border-radius: var(--dsw-radius-xs);
   background: transparent; color: var(--dsw-alias-label-secondary);
-  font-family: inherit; font-size: 11px; line-height: 18px; font-weight: 500; white-space: nowrap; cursor: pointer;
-  transition: background 120ms ease, color 120ms ease;
+  font-family: inherit; font-size: 11px; line-height: 16px; font-weight: 400; white-space: nowrap; cursor: pointer;
+  transition: color 120ms ease, background 120ms ease;
 }
-@media (hover: hover) { .dshmf-pill:hover:not(:disabled):not([aria-checked="true"]) { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); } }
+@media (hover: hover) { .dshmf-pill:hover:not(:disabled):not([aria-checked="true"]) { color: var(--dsw-alias-label-primary); } }
 .dshmf-pill[aria-checked="true"] {
-  background: var(--dsw-alias-brand-primary); color: var(--dsw-alias-label-primary-foreground);
-  box-shadow: var(--dsw-elevation-soft);
+  background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary);
+  box-shadow: var(--dsw-elevation-soft); font-weight: 500;
 }
 .dshmf-pill:disabled { color: var(--dsw-alias-label-dimmed); cursor: default; }
 .dshmf-pill:disabled[aria-checked="true"] { opacity: .5; }
@@ -592,7 +597,7 @@ window.__ModuleLoader__.load({
         'trigger.ariaEffort': '选择模型，当前 {model}，推理等级 {effort}',
         'panel.aria': '模型与推理等级',
         'effort.default': 'Default',
-        'effort.label': '思考强度',
+        'effort.label': '推理等级',
         'effort.hint': '调整模型的思考强度：档位越高，思考越深入，但速度更慢、token 开销更大。',
         'team.label': '启用智能体团队协作',
         'team.description': '通过共享任务板协调多个智能体的分工与进度，复杂任务表现更佳，token 开销也相应更高。',
@@ -622,7 +627,7 @@ window.__ModuleLoader__.load({
         'trigger.ariaEffort': 'Select model, current {model}, reasoning effort {effort}',
         'panel.aria': 'Model and reasoning effort',
         'effort.default': 'Default',
-        'effort.label': 'Thinking intensity',
+        'effort.label': 'Reasoning effort',
         'effort.hint': 'Adjusts how deeply the model thinks: higher levels reason more deeply, but are slower and cost more tokens.',
         'team.label': 'Enable agent teamwork',
         'team.description': 'Coordinate work and progress across agents with a shared task board for better results on complex tasks, with correspondingly higher token costs.',
