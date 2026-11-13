@@ -137,11 +137,31 @@ and the agent teamwork switch are all visible at once.
     that failed for a different reason. A cancellation (`aborted`), a `blocked`
     turn, and the synthetic `interrupted` / `forked` closers clear nothing —
     the model never answered, so they say nothing about the account.
-  - **Where it comes from.** The seat folds the Session's own durable event
-    feed (`sessions.binding(id).eventSource`), which is the same source the
-    Chat reads its quota notice from. No Host change is involved. A history
-    replacement refolds from scratch; paging in older history cannot change a
-    mark and is ignored.
+  - **The marks are global, not per conversation.** Whether a model has quota
+    left is a fact about the model route and its account, so the state is NOT
+    scoped to the Session a panel happens to render for. One module-level store
+    per plugin generation observes the durable feed of **every** Session the
+    Session list names, and every seat reads that one store. A failure recorded
+    in any Session therefore strikes the same model in every Session and
+    workspace, including in a Session whose feed this page never opened.
+  - **It survives a reload.** The marks are persisted to `localStorage`
+    (origin-scoped, like the grouping choice), so a fresh page load starts from
+    the last known state instead of an empty one. Reads and writes degrade
+    silently when storage is unavailable, and records older than 7 days are
+    dropped so a stale strike cannot live forever.
+  - **The newest observation wins.** A Session feed carries no cross-Session
+    sequence number, but every durable event keeps the Host's wall-clock `time`.
+    Each route keeps the time of its last decision, and an observation older
+    than the stored one is ignored. This is what makes the global state safe:
+    replaying an older window (a history replacement, or a second Session whose
+    history is older) cannot resurrect a strike that a newer call already
+    cleared, and a cleared route keeps its watermark for the same reason.
+  - **Where it comes from.** The store folds each Session's durable event feed
+    (`sessions.binding(id).eventSource`), which is the same source the Chat
+    reads its quota notice from, and re-attaches when the `sessions` service is
+    replaced. No Host change is involved. A history replacement refolds that
+    Session from scratch; `prepend` pages in older history and cannot change a
+    mark, so it is ignored.
 - **Agent teamwork.** The switch keeps the host's semantics: the same label,
   the same confirmation before disabling it mid-conversation, and no optimistic
   update — the state comes from the `agentTeam` projection. The row lives in
@@ -158,9 +178,11 @@ Everything goes through public Client APIs:
 - The directory store is subscribed through `useSyncExternalStore`, so a
   catalog update — including one caused by a selection — repaints the panel.
 - `ctx.sessions.binding(sessionId).eventSource` is the Session's contiguous
-  durable event window. The seat folds it to derive the per-model
-  insufficient-balance marks, and subscribes through `useSyncExternalStore` so
-  a mark transition repaints the panel while every other event stays quiet.
+  durable event window. A single module-level store folds the feed of **every**
+  Session the Session list names (`ctx.sessions.list`) to derive the global
+  per-model insufficient-balance marks, persists them to `localStorage`, and
+  every seat subscribes through `useSyncExternalStore` so a mark transition
+  repaints the panel while every other event stays quiet.
 - `ctx.get('remote').agentTeams.setEnabled()` writes the teamwork selection.
 - `ctx.locale` supplies the copy, resolves catalog badge text, and prefers the
   host's own `agent-team` wording when that namespace is registered.

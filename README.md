@@ -59,12 +59,18 @@ levels, and the agent-teamwork switch on one surface:
 - **Adaptive footer.** The reasoning group and the agent-teamwork switch share
   one line when both fit with a 30 px gap, and fall back to one row each when
   they do not — the break is CSS flex wrapping, not a measured pixel threshold.
-- **Out-of-balance models are struck through.** A model whose last call failed
-  on insufficient balance, credit, or quota keeps a `line-through` on its row
-  text until a later call for that same model returns anything else. The strike
-  follows the model the failing request actually used, and covers the Host's
-  `QUOTA` / `ACCOUNT_QUOTA` codes, a provider `402`, and a `429` whose body
-  reports an empty balance — a plain rate limit never strikes.
+- **Out-of-balance models are struck through — everywhere.** A model whose last
+  call failed on insufficient balance, credit, or quota keeps a `line-through`
+  on its row text until a later call for that same model returns anything else.
+  The strike follows the model the failing request actually used, and covers the
+  Host's `QUOTA` / `ACCOUNT_QUOTA` codes, a provider `402`, and a `429` whose
+  body reports an empty balance — a plain rate limit never strikes. Because a
+  balance is a property of the model route and its account, **not of one
+  conversation**, the marks are global: a failure seen in any Session strikes
+  the model in every Session and workspace, and the state is persisted to
+  `localStorage` so it survives a reload. Observations are ordered by event
+  time, so the newest one wins and replaying older history cannot resurrect a
+  strike that a later call already cleared.
 - **Theme-aware.** Styled with host theme tokens only; looks correct in both
   light and dark themes.
 

@@ -566,37 +566,88 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
     const CLEARING_TURN_ENDS = new Set(['completed', 'max-tokens', 'error'])
 
     /**
-     * Fold ONE durable session event into the per-route insufficient-balance
-     * state. Pure and reference-preserving, so an unrelated event costs nothing
-     * and the caller can compare identity to decide whether to republish.
-     *
-     * A `turn/end` carrying a balance failure marks the route that request used.
-     * A later `turn/end` for the same route that proves the model answered
-     * without a balance failure clears the mark — a completed turn, or a turn
-     * that failed for another reason. A cancellation or a blocked turn clears
-     * nothing, because the model never answered. The route a `turn/end` belongs
-     * to is the latest `request/header` seen before it, which is exactly the
-     * model the failing request was dispatched to.
-     * @param {Map<string, boolean>} state - current marks, mutated in place.
-     * @param {unknown} event - one durable Session event (`{ type, data }`).
-     * @param {{ provider: string, model: string } | null} route - route resolved from the request header, or null.
-     * @returns {boolean} whether the state changed.
+     * Wall-clock time one durable event was recorded at. The Client feed keeps
+     * the Host's `time` (`Date.now()` at append), which is what lets marks
+     * gathered from DIFFERENT Sessions be ordered against each other — a Session
+     * feed has no cross-Session sequence number.
+     * @param {unknown} event - one durable Session event.
+     * @returns {number} the event time, or 0 when the feed carried none.
      */
-    function foldInsufficient(state, event, route) {
-      if (event === null || typeof event !== 'object') return false
-      if (event.type !== 'turn/end' || route === null) return false
+    function eventTimeOf(event) {
+      const time = event?.time
+      return typeof time === 'number' && Number.isFinite(time) ? time : 0
+    }
+
+    /**
+     * Decide what ONE durable event says about a model route's balance, with no
+     * state involved. This is the whole semantic core of the feature, kept
+     * separate from the bookkeeping so it can be pinned directly.
+     *
+     * - A `turn/end` that failed on insufficient balance → `true` (mark).
+     * - A `turn/end` that proves the model answered otherwise → `false`
+     *   (clear): a completed turn, a `max-tokens` turn, or a turn that failed
+     *   for a different reason.
+     * - A cancellation (`aborted`), a `blocked` turn, and the synthetic
+     *   `interrupted` / `forked` closers → `null` (no decision), because the
+     *   model never answered and the account state is unknown.
+     * - Anything that is not a `turn/end`, or has no route → `null`.
+     * @param {unknown} event - one durable Session event.
+     * @param {{ provider: string, model: string } | null} route - the route that request used.
+     * @returns {boolean | null} mark, clear, or no decision.
+     */
+    function decideMark(event, route) {
+      if (event === null || typeof event !== 'object') return null
+      if (event.type !== 'turn/end' || route === null || route === undefined) return null
       const reason = event.data?.reason
-      if (reason === null || typeof reason !== 'object') return false
-      const key = routeKeyOf(route.provider, route.model)
-      if (reason.kind === 'error' && isInsufficientBalance(reason.error)) {
-        if (state.get(key) === true) return false
-        state.set(key, true)
-        return true
+      if (reason === null || typeof reason !== 'object') return null
+      if (reason.kind === 'error') return isInsufficientBalance(reason.error)
+      return CLEARING_TURN_ENDS.has(reason.kind) ? false : null
+    }
+
+    /**
+     * Fold ONE decision into the mark map, last-writer-wins by event time.
+     *
+     * The time watermark is what makes the state GLOBAL and replay-safe: marks
+     * arrive from every Session's feed (and from storage written by an earlier
+     * page load), so the newest observation wins no matter which Session it came
+     * from. Re-walking an old window therefore cannot resurrect a mark that a
+     * later call already cleared, and a cleared route keeps a watermark so a
+     * stale replay stays a no-op.
+     * @param {Map<string, {marked: boolean, at: number}>} entries - state, mutated in place.
+     * @param {string} key - the route key.
+     * @param {boolean} marked - the decision this event carries.
+     * @param {number} at - the event's time.
+     * @returns {{ visible: boolean, stored: boolean }} whether the visible mark
+     *   set changed, and whether the underlying record changed.
+     */
+    function foldMarkEntry(entries, key, marked, at) {
+      const previous = entries.get(key)
+      if (previous !== undefined && at < previous.at) {
+        return { visible: false, stored: false }
       }
-      if (!CLEARING_TURN_ENDS.has(reason.kind)) return false
-      if (state.get(key) !== true) return false
-      state.delete(key)
-      return true
+      if (previous !== undefined && previous.marked === marked && previous.at === at) {
+        return { visible: false, stored: false }
+      }
+      entries.set(key, { marked, at })
+      return { visible: previous === undefined ? marked : previous.marked !== marked, stored: true }
+    }
+
+    /**
+     * Fold one durable event into the mark map. Pure helper kept for the tests
+     * and for callers that hold their own map; the live store uses
+     * {@link decideMark} + {@link foldMarkEntry} so it can batch persistence.
+     * @param {Map<string, {marked: boolean, at: number}>} state - state, mutated in place.
+     * @param {unknown} event - one durable Session event.
+     * @param {{ provider: string, model: string } | null} route - the route that request used.
+     * @param {number} [at] - the event's time; defaults to `event.time`.
+     * @returns {boolean} whether the visible mark set changed.
+     */
+    function foldInsufficient(state, event, route, at) {
+      const marked = decideMark(event, route)
+      if (marked === null) return false
+      const key = routeKeyOf(route.provider, route.model)
+      const time = at === undefined ? eventTimeOf(event) : at
+      return foldMarkEntry(state, key, marked, time).visible
     }
 
     /**
@@ -1012,6 +1063,320 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       }
     }
 
+    // ---------------------------------------------------------------------
+    // Insufficient-balance marks are GLOBAL, not Session-scoped.
+    //
+    // Whether a model has any quota left is a fact about the model route (and
+    // the account behind it), not about one conversation: a failure observed in
+    // one Session must strike the same model everywhere — another Session,
+    // another workspace, and after a reload. So the marks live in ONE
+    // module-level store shared by every seat of this plugin generation, and
+    // are persisted to `localStorage` (origin-scoped, exactly like the grouping
+    // choice) so a fresh page load starts from the last known state.
+    //
+    // Ordering across Sessions is by wall-clock time: each durable event keeps
+    // the Host's `time`, and the newest observation of a route wins. That is
+    // what lets a replayed window (or a stored entry) never override a newer
+    // fact from another Session.
+    // ---------------------------------------------------------------------
+    const MARKS_KEY = 'dshmf:insufficient'
+    /** Marks older than this are dropped on read, so a stale strike cannot live forever. */
+    const MARKS_TTL = 7 * 24 * 60 * 60 * 1000
+
+    /**
+     * Parse a persisted mark record into the in-memory shape, dropping anything
+     * malformed or older than {@link MARKS_TTL}. Pure, so the storage format is
+     * testable without a `localStorage` shim.
+     * @param {unknown} raw - the stored JSON value (already parsed).
+     * @param {number} now - current time, injected for testability.
+     * @returns {Map<string, {marked: boolean, at: number}>} the parsed entries.
+     */
+    function parseMarks(raw, now) {
+      const entries = new Map()
+      if (raw === null || typeof raw !== 'object') return entries
+      for (const [key, value] of Object.entries(raw)) {
+        if (typeof key !== 'string' || key === '') continue
+        if (value === null || typeof value !== 'object') continue
+        const at = typeof value.at === 'number' && Number.isFinite(value.at) ? value.at : 0
+        if (typeof value.marked !== 'boolean') continue
+        if (now - at > MARKS_TTL) continue
+        entries.set(key, { marked: value.marked, at })
+      }
+      return entries
+    }
+
+    /**
+     * Serialise the in-memory entries for storage, dropping anything older than
+     * {@link MARKS_TTL} so a long-lived page cannot grow the record forever. A
+     * cleared route keeps its watermark only while it can still protect against
+     * a replayed older failure, which is the same window.
+     * @param {Map<string, {marked: boolean, at: number}>} entries - the state.
+     * @param {number} [now] - current time, injected for testability.
+     * @returns {Record<string, {marked: boolean, at: number}>} a JSON-ready record.
+     */
+    function serializeMarks(entries, now) {
+      const time = now === undefined ? Date.now() : now
+      const out = {}
+      for (const [key, value] of entries) {
+        if (time - value.at > MARKS_TTL) continue
+        out[key] = { marked: value.marked, at: value.at }
+      }
+      return out
+    }
+
+    /**
+     * Read the persisted marks, or an empty map when storage is unavailable,
+     * holds garbage, or throws (private mode, sandboxed frame, quota).
+     * @returns {Map<string, {marked: boolean, at: number}>} the stored entries.
+     */
+    function readMarks() {
+      try {
+        if (typeof localStorage === 'undefined') return new Map()
+        const text = localStorage.getItem(MARKS_KEY)
+        if (text === null || text === '') return new Map()
+        return parseMarks(JSON.parse(text), Date.now())
+      } catch {
+        return new Map()
+      }
+    }
+
+    /**
+     * Persist the marks. A write failure is swallowed: the in-memory store still
+     * drives every open panel in this page.
+     * @param {Map<string, {marked: boolean, at: number}>} entries - the state.
+     */
+    function writeMarks(entries) {
+      try {
+        if (typeof localStorage === 'undefined') return
+        localStorage.setItem(MARKS_KEY, JSON.stringify(serializeMarks(entries)))
+      } catch {
+        /* storage unavailable — keep the in-memory state only */
+      }
+    }
+
+    /** Whether two visible mark maps hold the same entries. */
+    function sameMarks(left, right) {
+      if (left.size !== right.size) return false
+      for (const key of left) {
+        if (!right.has(key)) return false
+      }
+      return true
+    }
+
+    /**
+     * Create the one global mark store for this module generation.
+     *
+     * It owns the state, the listeners, and the Session-feed subscriptions; the
+     * seats only read it. Observing EVERY Session (not just the one a seat
+     * renders for) is what makes a failure recorded anywhere visible
+     * everywhere, including in a Session whose own feed was never opened in this
+     * page load (its marks come from storage).
+     *
+     * @param {object} deps - resolution hooks.
+     * @param {() => object | undefined} deps.sessionsOf - read the `sessions` service, per call.
+     * @param {() => Map<string, {marked: boolean, at: number}>} deps.readStored - initial/persisted state.
+     * @param {(entries: Map<string, {marked: boolean, at: number}>) => void} deps.writeStored - persistence sink.
+     * @returns {object} the store: `subscribe`, `getSnapshot`, `dispose`, `sync`.
+     */
+    function createMarkStore(deps) {
+      /** Internal truth: route key → last decision and when it was made. */
+      const entries = new Map(deps.readStored())
+      /** Visible subset the rows read: route key → true. */
+      let visible = new Map()
+      let snapshot = { marks: visible }
+      const listeners = new Set()
+      /** Per-Session route of the latest request header (a route is Session-local). */
+      const routes = new Map()
+      /** Per-Session stop handle for its event feed. */
+      const stops = new Map()
+      /** Sessions attached on behalf of a mounted seat; never pruned by a list sync. */
+      const pinned = new Set()
+      /** Last `sessions` service seen, so a reloaded service is re-attached. */
+      let attachedSessions
+      let stopList
+      let disposed = false
+
+      /** Rebuild the visible map; report whether the rendered set changed. */
+      const recompute = () => {
+        const next = new Map()
+        for (const [key, entry] of entries) {
+          if (entry.marked) next.set(key, true)
+        }
+        if (sameMarks(visible, next)) return false
+        visible = next
+        snapshot = { marks: visible }
+        return true
+      }
+
+      recompute()
+
+      const publish = () => {
+        for (const listener of listeners) listener()
+      }
+
+      /** Fold one batch of durable entries for one Session. */
+      const absorb = (sessionId, windowEntries) => {
+        let stored = false
+        let changed = false
+        for (const entry of windowEntries) {
+          const event = entry?.event
+          if (event === null || event === undefined) continue
+          const header = routeOfHeader(event)
+          if (header !== null) {
+            routes.set(sessionId, header)
+            continue
+          }
+          if (event.type !== 'turn/end') continue
+          const route = routes.get(sessionId) ?? null
+          const marked = decideMark(event, route)
+          if (marked === null) continue
+          const result = foldMarkEntry(
+            entries, routeKeyOf(route.provider, route.model), marked, eventTimeOf(event),
+          )
+          if (result.stored) stored = true
+          if (result.visible) changed = true
+        }
+        return { stored, changed }
+      }
+
+      /** Read a window's entries defensively. */
+      const entriesOf = window => (Array.isArray(window?.entries) ? window.entries : [])
+
+      /** Apply one feed window for one Session. */
+      const applyWindow = (sessionId, window, full) => {
+        const change = window?.change
+        let result
+        if (full || change?.kind === 'replace') {
+          // The window is that Session's whole truth, so its route restarts and
+          // its entries are re-walked. Global watermarks keep a newer fact from
+          // another Session from being overwritten by this replay.
+          routes.delete(sessionId)
+          result = absorb(sessionId, entriesOf(window))
+        } else if (change?.kind === 'append') {
+          result = absorb(sessionId, change.entries)
+        } else {
+          // `prepend` pages in OLDER history and `settle-assistant` only swaps a
+          // live attempt for its durable form; neither can change a mark.
+          return
+        }
+        if (result.stored) deps.writeStored(entries)
+        if (result.changed && recompute()) publish()
+      }
+
+      /**
+       * Attach to one Session's durable feed. Idempotent, and a no-op when the
+       * Session has no retained binding (an unopened Session has no feed; its
+       * marks can only come from storage).
+       */
+      const attachSession = sessionId => {
+        if (disposed || stops.has(sessionId)) return
+        const sessions = deps.sessionsOf()
+        let binding
+        try {
+          binding = typeof sessions?.binding === 'function' ? sessions.binding(sessionId) : undefined
+        } catch {
+          binding = undefined
+        }
+        const source = binding?.eventSource
+        if (source === undefined || typeof source.subscribe !== 'function'
+          || typeof source.getSnapshot !== 'function') return
+        try {
+          applyWindow(sessionId, source.getSnapshot(), true)
+        } catch {
+          /* an unreadable feed leaves the store as it was */
+        }
+        const listener = () => {
+          try {
+            applyWindow(sessionId, source.getSnapshot(), false)
+          } catch {
+            /* a fold failure must not escape into the slot */
+          }
+        }
+        try {
+          const stop = source.subscribe(listener)
+          stops.set(sessionId, typeof stop === 'function' ? stop : () => {})
+        } catch {
+          /* subscription refused: leave this Session unattached */
+        }
+      }
+
+      /** Attach to every Session the list currently names, and drop the rest. */
+      const sync = () => {
+        if (disposed) return
+        const sessions = deps.sessionsOf()
+        if (sessions === undefined) return
+        // A client reload replaces the service; re-attach from the new one.
+        if (sessions !== attachedSessions) {
+          for (const stop of stops.values()) stop()
+          stops.clear()
+          routes.clear()
+          if (typeof stopList === 'function') stopList()
+          stopList = undefined
+          attachedSessions = sessions
+          try {
+            if (sessions.list !== undefined && typeof sessions.list.subscribe === 'function') {
+              stopList = sessions.list.subscribe(() => { sync() })
+            }
+          } catch {
+            stopList = undefined
+          }
+        }
+        let ids = []
+        try {
+          const list = sessions.list?.getSnapshot?.()
+          ids = Array.isArray(list?.ids) ? list.ids : []
+        } catch {
+          ids = []
+        }
+        for (const id of ids) attachSession(id)
+        // Drop feeds for Sessions the list no longer names, unless a mounted
+        // seat is currently reading that Session (it may not be listed yet).
+        for (const id of [...stops.keys()]) {
+          if (pinned.has(id)) continue
+          if (!ids.includes(id)) {
+            stops.get(id)?.()
+            stops.delete(id)
+            routes.delete(id)
+          }
+        }
+      }
+
+      return {
+        /** The seat's `useSyncExternalStore` pair. */
+        subscribe: listener => {
+          listeners.add(listener)
+          sync()
+          return () => { listeners.delete(listener) }
+        },
+        getSnapshot: () => snapshot,
+        /** Re-attach (services may bind after the plugin activated). */
+        sync,
+        /**
+         * Pin and immediately attach one Session's feed, for a mounted seat.
+         * The list may not name this Session yet (or at all), so it is attached
+         * directly instead of waiting for a list sync.
+         */
+        watch: sessionId => {
+          if (disposed) return
+          pinned.add(sessionId)
+          sync()
+          attachSession(sessionId)
+        },
+        /** Release every feed subscription. The marks themselves stay persisted. */
+        dispose: () => {
+          if (disposed) return
+          disposed = true
+          for (const stop of stops.values()) stop()
+          stops.clear()
+          routes.clear()
+          pinned.clear()
+          if (typeof stopList === 'function') stopList()
+          stopList = undefined
+          listeners.clear()
+        },
+      }
+    }
+
     const dict = {
       zh: {
         'provider.account': 'DeepSeek 账号',
@@ -1099,7 +1464,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
 
     /**
      * Shared empty mark map. One frozen instance keeps `getSnapshot` referentially
-     * stable for every seat that has no Session feed, so an unmarked panel never
+     * stable for every seat that has no store, so an unmarked panel never
      * re-renders because of this feature.
      */
     const EMPTY_INSUFFICIENT_MARKS = new Map()
@@ -1113,13 +1478,13 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
     const EMPTY_INSUFFICIENT_SNAPSHOT = { marks: EMPTY_INSUFFICIENT_MARKS }
 
     /**
-     * Stand-in mark face used before a Session's feed resolves (or when the face
-     * degraded). It never notifies and always answers the same empty snapshot.
+     * Stand-in mark face used when the store degraded. It never notifies and
+     * always answers the same empty snapshot.
      */
     const EMPTY_INSUFFICIENT = {
       subscribe: () => () => {},
       getSnapshot: () => EMPTY_INSUFFICIENT_SNAPSHOT,
-      dispose: () => {},
+      watch: () => {},
     }
 
     // ---------------------------------------------------------------------
@@ -1148,18 +1513,20 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       const getSnapshot = useCallback(() => store.getSnapshot(), [store])
       const state = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 
-      // Per-model insufficient-balance marks, folded from the Session's own
-      // durable event feed by the face. The fallback keeps the hook shape stable
-      // for a composition that omits the face.
+      // Per-model insufficient-balance marks, read from the ONE global store so
+      // a failure recorded in any Session or workspace strikes the model here
+      // too. The fallback keeps the hook shape stable when the face is omitted.
       const markFace = insufficient ?? EMPTY_INSUFFICIENT
       const subscribeMarks = useCallback(listener => markFace.subscribe(listener), [markFace])
       const getMarks = useCallback(() => markFace.getSnapshot(), [markFace])
       const marks = useSyncExternalStore(subscribeMarks, getMarks, getMarks)
 
-      // The mark face observes the Session feed for as long as this seat is
-      // mounted. Detaching on unmount cannot lose a mark: a remount refolds from
-      // the full durable window, so the state is rebuilt rather than remembered.
-      useEffect(() => () => { markFace.dispose() }, [markFace])
+      // Keep the store attached to this Session's feed while the seat is mounted.
+      // It is shared, so unmounting must NOT dispose it — the marks belong to the
+      // page, not to this seat.
+      useEffect(() => {
+        if (typeof markFace.watch === 'function') markFace.watch(sessionId)
+      }, [markFace, sessionId])
 
       const [open, setOpen] = useState(false)
       const [query, setQuery] = useState('')
@@ -2040,7 +2407,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       // Pure layout and grouping derivations plus the component itself,
       // exposed for `node --test` so grouping, filtering and the column
       // algorithm are pinned without a browser. The shell never reads this key.
-      __test: { familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, isInsufficientBalance, foldInsufficient, routeOfHeader, routeKeyOf },
+      __test: { familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore },
       __component: ModelFlatMap,
       __seat: Seat,
       apply(ctx) {
@@ -2097,6 +2464,33 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
           }
         }
 
+        // ---- the GLOBAL insufficient-balance store
+        //
+        // Created once per activation and shared by every seat, because the
+        // balance state belongs to the model route (and its account), not to one
+        // conversation or workspace. It observes every Session the list names,
+        // persists to `localStorage`, and starts from what the last page load
+        // recorded. A failure to build it degrades to an empty face rather than
+        // costing the control.
+        let markStore
+        try {
+          markStore = createMarkStore({
+            sessionsOf: () => {
+              try {
+                return typeof ctx.get === 'function' ? ctx.get('sessions') : undefined
+              } catch {
+                return undefined
+              }
+            },
+            readStored: readMarks,
+            writeStored: writeMarks,
+          })
+          ctx.effect(() => () => { markStore.dispose() }, 'dsh-model-flatmap: balance marks')
+        } catch (error) {
+          console.error('dsh-model-flatmap: the balance mark store failed to start', error)
+          markStore = undefined
+        }
+
         /**
          * Build the injected face for one Session.
          * @param sessionId - the Session this seat renders for.
@@ -2135,146 +2529,27 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
           }
           const first = resolve()
 
-          // ---- insufficient-balance marks, folded from the live event feed
-          //
-          // `sessions.binding(id).eventSource` is the Client's contiguous
-          // durable event window (the same feed the Chat reads `turn/end` from).
-          // The face keeps ONE immutable snapshot object and replaces it only
-          // when a fold actually changes the marks, so `useSyncExternalStore`
-          // re-renders the panel on a real transition and stays quiet on every
-          // other event.
-          const insufficientListeners = new Set()
-          let insufficientMarks = new Map()
-          let insufficientSnapshot = { marks: insufficientMarks }
-          // The route of the latest request header: a `turn/end` belongs to the
-          // model that request was dispatched to.
-          let pendingRoute = null
-          let stopInsufficient = null
-
-          /** Publish a new snapshot only when the mark set really changed. */
-          const publishInsufficient = () => {
-            insufficientSnapshot = { marks: insufficientMarks }
-            for (const listener of insufficientListeners) listener()
-          }
-
-          /** Read the durable entries out of the current window snapshot. */
-          const entriesOf = window => (Array.isArray(window?.entries) ? window.entries : [])
-
-          /**
-           * Fold one batch of durable entries into the marks. Live chunks carry
-           * no `turn/end`, so they are skipped by type inside the fold.
-           * @param entries - durable event entries from the feed.
-           * @returns whether any mark changed.
-           */
-          const absorb = entries => {
-            let changed = false
-            for (const entry of entries) {
-              const event = entry?.event
-              if (event === null || event === undefined) continue
-              const header = routeOfHeader(event)
-              if (header !== null) {
-                pendingRoute = header
-                continue
-              }
-              if (event.type !== 'turn/end') continue
-              if (foldInsufficient(insufficientMarks, event, pendingRoute)) changed = true
-            }
-            return changed
-          }
-
-          /**
-           * Attach the feed listener. A `replace` (initial load, history
-           * replacement) refolds from scratch, because the window it describes
-           * is the whole truth; an `append` folds only the new entries. A
-           * `prepend` loads OLDER history at the front and cannot change a mark
-           * (marks come from the tail), so it is ignored rather than refolded —
-           * refolding would also re-walk history on every page-in.
-           */
-          const startInsufficientFeed = () => {
-            if (stopInsufficient !== null) return
-            let binding
+          // Attach this Session's feed as soon as its seat exists, not only
+          // when a subscriber appears: the seat always subscribes, but the
+          // face is built before the first render, and a feed that is already
+          // live should contribute its history immediately.
+          if (markStore !== undefined) {
             try {
-              binding = typeof sessions?.binding === 'function' ? sessions.binding(sessionId) : undefined
+              markStore.watch(sessionId)
             } catch {
-              binding = undefined
+              /* the store degrades to storage-only state */
             }
-            const source = binding?.eventSource
-            if (source === undefined || typeof source.subscribe !== 'function'
-              || typeof source.getSnapshot !== 'function') return
-            /** Whether two mark maps hold the same entries. */
-            const sameMarks = (left, right) => {
-              if (left.size !== right.size) return false
-              for (const [key, value] of left) {
-                if (right.get(key) !== value) return false
-              }
-              return true
-            }
-            const applyWindow = (window, full) => {
-              const change = window?.change
-              if (full || change?.kind === 'replace') {
-                const previous = insufficientMarks
-                const next = new Map()
-                insufficientMarks = next
-                pendingRoute = null
-                absorb(entriesOf(window))
-                // Adopt the refolded map as the snapshot either way, so the
-                // snapshot and the live state never diverge; only NOTIFY when
-                // the marks really changed, so a history replacement that
-                // re-derives the same marks does not repaint the panel.
-                insufficientSnapshot = { marks: next }
-                if (!sameMarks(previous, next)) publishInsufficient()
-                return
-              }
-              if (change?.kind === 'append' && absorb(change.entries)) publishInsufficient()
-            }
-            try {
-              applyWindow(source.getSnapshot(), true)
-            } catch {
-              /* an unreadable feed leaves the panel unmarked, never broken */
-            }
-            const listener = () => {
-              try {
-                applyWindow(source.getSnapshot(), false)
-              } catch {
-                /* a fold failure must not escape into the slot */
-              }
-            }
-            try {
-              const stop = source.subscribe(listener)
-              stopInsufficient = typeof stop === 'function' ? stop : () => {}
-            } catch {
-              stopInsufficient = null
-            }
-          }
-
-          startInsufficientFeed()
-
-          /**
-           * The seat's read face for the marks. `subscribe` and `getSnapshot`
-           * are the `useSyncExternalStore` pair; the snapshot object is stable
-           * between real transitions.
-           */
-          const insufficient = {
-            subscribe: listener => {
-              insufficientListeners.add(listener)
-              // The binding may have materialized after the face was built.
-              startInsufficientFeed()
-              return () => { insufficientListeners.delete(listener) }
-            },
-            getSnapshot: () => insufficientSnapshot,
-            /** Stop observing the feed; called when the seat's owner disposes. */
-            dispose: () => {
-              if (stopInsufficient !== null) stopInsufficient()
-              stopInsufficient = null
-              insufficientListeners.clear()
-            },
           }
 
           return {
             sessionId,
             resolveDirectory: resolve,
             safeRead,
-            insufficient,
+            // The GLOBAL mark store, shared by every seat of this plugin
+            // generation. `subscribe` additionally attaches the store to this
+            // Session's feed, so a Session that binds late (or after the page
+            // loaded) still contributes its events.
+            insufficient: markStore ?? EMPTY_INSUFFICIENT,
             // `available: false` only for an addressed subagent Session, which
             // the shipped seat also hides.
             available: first.addressed !== true,
@@ -2334,11 +2609,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
               // component's hook shape never changes and the rows simply stay
               // unstruck. It shares the module-level empty snapshot so the
               // identity stays stable across renders.
-              insufficient: {
-                subscribe: () => () => {},
-                getSnapshot: () => EMPTY_INSUFFICIENT_SNAPSHOT,
-                dispose: () => {},
-              },
+              insufficient: EMPTY_INSUFFICIENT,
             }
           }
         }

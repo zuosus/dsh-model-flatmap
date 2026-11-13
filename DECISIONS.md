@@ -23,7 +23,45 @@ entries go below the marker, newest first; old entries are never rewritten.
 **Consequences.** 纯 CSS 变更，DOM/planner 不变。render 测试约束改为「线在
 `.dshmf-footer` 上，两个子块都没有 border-top」。分割线颜色与线宽不变（沿用 DEC-012）。
 
+## DEC-017 — 2026-11-13 — 额度不足的删除线是全局状态，不绑定 session / workspace
 
+**Context.** DEC-014 把删除线标记折叠在**单个会话**的 durable 事件流上
+（`sessions.binding(sessionId).eventSource`），face 也是按 session 构建、随座位卸载
+`dispose()` 掉的。用户指出这是错的：**「模型还有没有额度」并不跟 session 或 workspace
+绑定**——额度是模型路由（及其背后的账号）的属性。于是同一个模型在 A 会话里因欠费失败，
+B 会话、另一个工作区、甚至刷新之后仍然显示为「可用」，用户会反复撞同一堵墙。
+
+**Decision.**
+
+- **标记改为模块级全局状态。** 每次激活创建一个 `createMarkStore`，所有座位共享同一份
+  状态与同一组订阅；座位卸载**不再** `dispose()` 它（标记属于页面，不属于某个座位）。
+- **观察所有会话，而不只是当前座位那个。** store 通过 `ctx.sessions.list` 的 `ids`
+  遍历全部会话，逐个 `binding(id).eventSource` 折叠；座位在构建 face 时额外 `watch()`
+  自己那个 session 并 pin 住，避免「列表还没列出它」时漏掉。列表变化时重挂/摘除订阅，
+  换掉 `sessions` 服务（客户端重载）时整体重挂。
+- **跨会话按事件时间定序。** 会话 feed 没有跨会话序号，但每条 durable 事件都保留宿主的
+  墙钟 `time`。每条 route 记录最后一次判定的时间，**更旧的一条直接丢弃**。这解决了两类
+  真实问题：历史 replace 重放不能把已被更晚调用清除的划线复活；加载一个历史更早的会话也
+  不能覆盖更新的结论。已清除的 route 保留 watermark，正是为了挡住这种回放。
+- **用 `localStorage` 持久化，跨 reload 生效。** 与分组选择同一套「origin 作用域 +
+  失败即降级」的写法：`dshmf:insufficient` 存 `{routeKey: {marked, at}}`，读取时丢弃
+  超过 7 天的记录，写入时顺带裁剪，避免长期存活的页面无限增长。
+- **把语义与簿记拆开。** `decideMark(event, route)` 只回答「这条事件对这条 route 意味着
+  什么」（mark / clear / 不表态），`foldMarkEntry(entries, key, marked, at)` 只做带时间
+  水位的 last-writer-wins。判定规则本身（含 429 读正文）完全沿用 DEC-015，未改一字。
+
+**Rejected.** 把标记挂到「当前选中模型」上（用户可能已经切走，会标错行）；只观察当前
+座位的会话（正是本次要修的问题）；用 `sessionStorage`（仍然按标签页/会话隔离，不满足
+「跨 session 与 workspace」）；把「清除」实现成删除记录（会丢掉 watermark，回放旧历史时
+划线复活）；用「最新写入覆盖」而不是时间比较（并发/乱序到达时结果不确定）。
+
+**Consequences.** `client.js`：`foldInsufficient` 的签名与状态形状由 `Map<string, true>`
+改为 `Map<string, {marked, at}>`，新增 `decideMark` / `eventTimeOf` / `foldMarkEntry` /
+`parseMarks` / `serializeMarks` / `readMarks` / `writeMarks` / `createMarkStore` 并挂到
+`__test`；face 的 `insufficient` 改为共享 store，座位改用 `watch()` 而非 `dispose()`。
+render 测试由 95 条扩到 104 条：新增「A 会话失败 → B 会话划线」「B 会话更新的成功 → 清除」
+「更旧的失败不能复活」「reload 后从 localStorage 恢复」「持久化格式防御与过期」「存储失败
+不影响面板」「store 观察所有会话」「sessions 缺失时降级」以及「跨会话的 429 仍按正文判定」。
 ## DEC-015 — 2026-11-13 — 429 不等于限流：额度判定改由正文决定
 
 **Context.** DEC-014 把额度不足的判定写成「结构化 code 优先，402 其次，正文兜底」。

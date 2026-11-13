@@ -1618,22 +1618,25 @@ test('the fold marks a route on a balance failure and clears it when the model a
   const route = { provider: 'third-party', model: 'grok-4' }
   const fail = {
     type: 'turn/end',
+    time: 1000,
     data: { turn: 1, reason: { kind: 'error', error: { code: 'QUOTA', message: 'insufficient balance' } } },
   }
   assert.equal(INSUFFICIENT.foldInsufficient(marks, fail, route), true, 'the route is marked')
-  assert.equal(marks.get('third-party/grok-4'), true)
+  assert.deepEqual(marks.get('third-party/grok-4'), { marked: true, at: 1000 })
   // A repeated identical failure is not a new transition.
   assert.equal(INSUFFICIENT.foldInsufficient(marks, fail, route), false, 'a repeat is a no-op')
   // A completed turn proves the account was usable again.
-  const ok = { type: 'turn/end', data: { turn: 2, reason: { kind: 'completed' } } }
+  const ok = { type: 'turn/end', time: 2000, data: { turn: 2, reason: { kind: 'completed' } } }
   assert.equal(INSUFFICIENT.foldInsufficient(marks, ok, route), true, 'a success clears the mark')
-  assert.equal(marks.has('third-party/grok-4'), false)
+  assert.equal(marks.get('third-party/grok-4').marked, false, 'the route is recorded as cleared')
   // A failure for another reason also clears it: the balance was not the cause.
-  INSUFFICIENT.foldInsufficient(marks, fail, route)
-  assert.equal(marks.get('third-party/grok-4'), true)
-  const other = { type: 'turn/end', data: { turn: 3, reason: { kind: 'error', error: { code: 'TIMEOUT', message: 'timed out' } } } }
+  // The re-mark must be NEWER than the clear, or the watermark rejects it.
+  const laterFail = { type: 'turn/end', time: 3000, data: { turn: 3, reason: { kind: 'error', error: { code: 'QUOTA', message: 'insufficient balance' } } } }
+  assert.equal(INSUFFICIENT.foldInsufficient(marks, laterFail, route), true, 'a newer failure marks again')
+  assert.equal(marks.get('third-party/grok-4').marked, true)
+  const other = { type: 'turn/end', time: 4000, data: { turn: 4, reason: { kind: 'error', error: { code: 'TIMEOUT', message: 'timed out' } } } }
   assert.equal(INSUFFICIENT.foldInsufficient(marks, other, route), true, 'a non-balance failure clears it')
-  assert.equal(marks.has('third-party/grok-4'), false)
+  assert.equal(marks.get('third-party/grok-4').marked, false)
 })
 
 test('a cancellation or blocked turn does not clear the mark', () => {
@@ -1644,10 +1647,11 @@ test('a cancellation or blocked turn does not clear the mark', () => {
   const route = { provider: 'third-party', model: 'grok-4' }
   const fail = {
     type: 'turn/end',
+    time: 1000,
     data: { turn: 1, reason: { kind: 'error', error: { code: 'QUOTA', message: 'insufficient balance' } } },
   }
   INSUFFICIENT.foldInsufficient(marks, fail, route)
-  assert.equal(marks.get('third-party/grok-4'), true)
+  assert.equal(marks.get('third-party/grok-4').marked, true)
 
   for (const reason of [
     { kind: 'aborted', reason: 'user' },
@@ -1655,15 +1659,15 @@ test('a cancellation or blocked turn does not clear the mark', () => {
     { kind: 'interrupted' },
     { kind: 'forked' },
   ]) {
-    const event = { type: 'turn/end', data: { turn: 2, reason } }
+    const event = { type: 'turn/end', time: 2000, data: { turn: 2, reason } }
     assert.equal(INSUFFICIENT.foldInsufficient(marks, event, route), false, `${reason.kind} clears nothing`)
-    assert.equal(marks.get('third-party/grok-4'), true, `${reason.kind} leaves the mark standing`)
+    assert.equal(marks.get('third-party/grok-4').marked, true, `${reason.kind} leaves the mark standing`)
   }
 
   // `max-tokens` DID reach the model, so it clears.
-  const capped = { type: 'turn/end', data: { turn: 3, reason: { kind: 'max-tokens' } } }
+  const capped = { type: 'turn/end', time: 3000, data: { turn: 3, reason: { kind: 'max-tokens' } } }
   assert.equal(INSUFFICIENT.foldInsufficient(marks, capped, route), true, 'max-tokens clears the mark')
-  assert.equal(marks.has('third-party/grok-4'), false)
+  assert.equal(marks.get('third-party/grok-4').marked, false)
 })
 
 test('the fold ignores events that are not turn/end, and a turn without a route', () => {
@@ -1852,5 +1856,267 @@ test('the mark snapshot is referentially stable, so an unmarked panel cannot loo
   assert.ok(markFace, 'the degraded face still answers the mark face')
   assert.equal(markFace.getSnapshot(), markFace.getSnapshot(), 'the same snapshot object every call')
   assert.equal(markFace.getSnapshot().marks.size, 0, 'and it is empty')
+})
+
+// ---------------------------------------------------------------------------
+// GLOBAL marks: whether a model still has quota is a fact about the model
+// route (and its account), not about one conversation. A failure seen in ANY
+// Session — or recorded by an earlier page load — strikes the model in every
+// Session and workspace, and the newest observation wins.
+// ---------------------------------------------------------------------------
+
+/** Install a `localStorage` shim and return its backing map. */
+function installMarkStorage(entries = {}) {
+  const map = new Map(Object.entries(entries))
+  globalThis.localStorage = {
+    getItem: key => (map.has(key) ? map.get(key) : null),
+    setItem: (key, value) => { map.set(key, String(value)) },
+    removeItem: key => { map.delete(key) },
+  }
+  return map
+}
+
+/** A sessions service whose list names `ids` and whose bindings expose live feeds. */
+function sessionsWithManyFeeds(ids, seed = {}) {
+  const listeners = new Map()
+  const windows = new Map()
+  const feeds = new Map()
+  for (const id of ids) {
+    const entries = seed[id] ?? []
+    windows.set(id, {
+      entries: [...entries],
+      hasMore: false,
+      revision: 1,
+      change: { kind: 'replace', entries: [...entries] },
+    })
+    const set = new Set()
+    listeners.set(id, set)
+    feeds.set(id, {
+      subscribe(listener) {
+        set.add(listener)
+        return () => { set.delete(listener) }
+      },
+      getSnapshot: () => windows.get(id),
+    })
+  }
+  const listListeners = new Set()
+  const list = {
+    subscribe(listener) {
+      listListeners.add(listener)
+      return () => { listListeners.delete(listener) }
+    },
+    getSnapshot: () => ({ ids: [...windows.keys()], byId: {}, phase: 'ready', projectionsBySession: {} }),
+  }
+  const sessions = {
+    subagentAddress: () => undefined,
+    list,
+    binding: id => (feeds.has(id) ? { sessionId: id, eventSource: feeds.get(id) } : undefined),
+  }
+  return {
+    sessions,
+    /** Append one durable event to one Session's feed, like the real feed. */
+    append(id, event) {
+      const entry = { type: 'event', event }
+      const window = windows.get(id)
+      windows.set(id, {
+        entries: [...window.entries, entry],
+        hasMore: window.hasMore,
+        revision: window.revision + 1,
+        change: { kind: 'append', entries: [entry] },
+      })
+      for (const listener of listeners.get(id) ?? []) listener()
+    },
+  }
+}
+
+/** Render the seat for one session against a feed-backed sessions service. */
+function mountSeat(feed, sessionId, options = {}) {
+  runtime.reset()
+  const { ctx, seat } = makeCtx({ sessions: feed.sessions })
+  bundle.apply(ctx)
+  const face = seat().registration.inject(sessionId)
+  const props = {
+    ...face,
+    locked: false,
+    t: key => TEMPLATES[key] ?? key,
+    useProjection: key => (key === 'agentTeam' ? { enabled: false, tasks: [] } : { lastUsed: null, pending: null }),
+    useSession: () => null,
+    useSessions: () => undefined,
+    ...options.inject,
+  }
+  props.directory = snapshotStore(options.state ?? catalogState())
+  props.resolveDirectory = () => ({ store: props.directory })
+  let tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+  return { tree, props, ctx, seat }
+}
+
+test('a balance failure in ONE session strikes the model in ANOTHER session', () => {
+  // The whole point: the marks are global. Session A's failing call must strike
+  // the row Session B renders, because the account behind the model is shared.
+  const feed = sessionsWithManyFeeds(['session-a', 'session-b'])
+  const mounted = mountSeat(feed, 'session-b')
+  const rowOf = name => gridRows(mounted.tree).find(row => textOf(row).includes(name))
+  assert.equal(rowOf('Grok 4').props[ROW_INSUFFICIENT], undefined, 'nothing is struck yet')
+
+  // Session A — NOT the Session this seat renders for — fails on grok-4.
+  feed.append('session-a', { type: 'request/header', time: 1000, data: { header: { config: { provider: 'third-party', model: 'grok-4' } }, reason: 'initial' } })
+  feed.append('session-a', { type: 'turn/end', time: 1001, data: { turn: 1, reason: { kind: 'error', error: { code: 'QUOTA', message: 'insufficient balance' } } } })
+
+  const tree = runtime.render(bundle.__component, mounted.props)
+  const struck = gridRows(tree).find(row => textOf(row).includes('Grok 4'))
+  assert.equal(struck.props[ROW_INSUFFICIENT], 'true', 'the other session strikes the shared model')
+  assert.equal(gridRows(tree).find(row => textOf(row).includes('Kimi K2')).props[ROW_INSUFFICIENT], undefined)
+})
+
+test('a later success in ANOTHER session clears the strike, oldest-first by time', () => {
+  // Marks are ordered by event time across Sessions, so a newer success in a
+  // different conversation wins over an older failure.
+  const feed = sessionsWithManyFeeds(['session-a', 'session-b'])
+  const mounted = mountSeat(feed, 'session-a')
+  feed.append('session-a', { type: 'request/header', time: 1000, data: { header: { config: { provider: 'third-party', model: 'grok-4' } }, reason: 'initial' } })
+  feed.append('session-a', { type: 'turn/end', time: 1001, data: { turn: 1, reason: { kind: 'error', error: { code: 'QUOTA', message: 'insufficient balance' } } } })
+  let tree = runtime.render(bundle.__component, mounted.props)
+  assert.equal(gridRows(tree).find(row => textOf(row).includes('Grok 4')).props[ROW_INSUFFICIENT], 'true')
+
+  feed.append('session-b', { type: 'request/header', time: 2000, data: { header: { config: { provider: 'third-party', model: 'grok-4' } }, reason: 'initial' } })
+  feed.append('session-b', { type: 'turn/end', time: 2001, data: { turn: 1, reason: { kind: 'completed' } } })
+  tree = runtime.render(bundle.__component, mounted.props)
+  assert.equal(gridRows(tree).find(row => textOf(row).includes('Grok 4')).props[ROW_INSUFFICIENT], undefined,
+    'a newer success from another session clears it')
+})
+
+test('an OLDER failure cannot resurrect a mark a newer success already cleared', () => {
+  // Replaying a window (or loading a second Session whose history is older)
+  // must not override the newest fact. This is what the time watermark buys.
+  const marks = new Map()
+  const route = { provider: 'p', model: 'm' }
+  const success = { type: 'turn/end', time: 5000, data: { turn: 2, reason: { kind: 'completed' } } }
+  const oldFailure = { type: 'turn/end', time: 1000, data: { turn: 1, reason: { kind: 'error', error: { code: 'QUOTA', message: 'insufficient balance' } } } }
+  assert.equal(INSUFFICIENT.foldInsufficient(marks, success, route), false, 'a clear from an unmarked state is not a visible change')
+  assert.equal(INSUFFICIENT.foldInsufficient(marks, oldFailure, route), false, 'the older failure is ignored')
+  assert.equal(marks.get('p/m').marked, false, 'the newer clear still stands')
+})
+
+test('the marks survive a reload through localStorage', () => {
+  // A fresh page load has no live feed for the Session that failed, so the
+  // stored record is the only thing that can keep the strike.
+  const stored = installMarkStorage()
+  try {
+    // Real event times, so the 7-day expiry keeps them.
+    const now = Date.now()
+    const feed = sessionsWithManyFeeds(['session-a'])
+    const mounted = mountSeat(feed, 'session-a')
+    feed.append('session-a', { type: 'request/header', time: now - 10, data: { header: { config: { provider: 'third-party', model: 'grok-4' } }, reason: 'initial' } })
+    feed.append('session-a', { type: 'turn/end', time: now - 9, data: { turn: 1, reason: { kind: 'error', error: { code: 'QUOTA', message: 'insufficient balance' } } } })
+    runtime.render(bundle.__component, mounted.props)
+
+    const raw = stored.get(INSUFFICIENT.MARKS_KEY)
+    assert.ok(raw, 'the mark is persisted')
+    assert.equal(JSON.parse(raw)['third-party/grok-4'].marked, true)
+
+    // Simulate a reload: a brand-new plugin activation reading the same storage.
+    const fresh = sessionsWithManyFeeds(['session-b'])
+    const remounted = mountSeat(fresh, 'session-b')
+    const struck = gridRows(remounted.tree).find(row => textOf(row).includes('Grok 4'))
+    assert.equal(struck.props[ROW_INSUFFICIENT], 'true', 'the stored strike is restored on a fresh load')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('persisted marks are parsed defensively and expire', () => {
+  const now = 10_000_000
+  const parsed = INSUFFICIENT.parseMarks({
+    'p/m': { marked: true, at: now - 1000 },
+    'p/cleared': { marked: false, at: now - 2000 },
+    'p/stale': { marked: true, at: now - INSUFFICIENT.MARKS_TTL - 1 },
+    'p/garbage': 'nope',
+    'p/bad-time': { marked: true, at: 'soon' },
+    '': { marked: true, at: now },
+  }, now)
+  assert.equal(parsed.get('p/m').marked, true)
+  assert.equal(parsed.get('p/cleared').marked, false, 'a cleared watermark is kept for ordering')
+  assert.equal(parsed.has('p/stale'), false, 'an expired mark is dropped')
+  assert.equal(parsed.has('p/garbage'), false, 'a malformed entry is dropped')
+  assert.equal(parsed.get('p/bad-time').at, 0, 'a non-numeric time degrades to 0')
+  assert.equal(parsed.has(''), false, 'an empty key is dropped')
+  // Non-objects and missing storage answer an empty map instead of throwing.
+  assert.equal(INSUFFICIENT.parseMarks(null, now).size, 0)
+  assert.equal(INSUFFICIENT.parseMarks(undefined, now).size, 0)
+})
+
+test('a storage failure never costs the marks or the panel', () => {
+  // Private mode / sandboxed frame: reading and writing throw.
+  globalThis.localStorage = {
+    getItem: () => { throw new Error('denied') },
+    setItem: () => { throw new Error('denied') },
+  }
+  try {
+    assert.doesNotThrow(() => INSUFFICIENT.readMarks())
+    assert.equal(INSUFFICIENT.readMarks().size, 0, 'an unreadable store starts empty')
+    assert.doesNotThrow(() => INSUFFICIENT.writeMarks(new Map([['p/m', { marked: true, at: 1 }]])))
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('the store watches every listed session and drops unlisted feeds', () => {
+  // Attaching to every Session is what makes a failure visible everywhere; a
+  // Session that leaves the list must release its subscription.
+  const feed = sessionsWithManyFeeds(['session-a', 'session-b'])
+  const written = []
+  const store = INSUFFICIENT.createMarkStore({
+    sessionsOf: () => feed.sessions,
+    readStored: () => new Map(),
+    writeStored: entries => { written.push(entries.size) },
+  })
+  try {
+    store.sync()
+    // Both feeds are observed: a failure in either reaches the store.
+    feed.append('session-a', { type: 'request/header', time: 1000, data: { header: { config: { provider: 'p', model: 'a' } }, reason: 'initial' } })
+    feed.append('session-a', { type: 'turn/end', time: 1001, data: { turn: 1, reason: { kind: 'error', error: { code: 'QUOTA', message: 'insufficient balance' } } } })
+    assert.equal(store.getSnapshot().marks.get('p/a'), true)
+    feed.append('session-b', { type: 'request/header', time: 2000, data: { header: { config: { provider: 'p', model: 'b' } }, reason: 'initial' } })
+    feed.append('session-b', { type: 'turn/end', time: 2001, data: { turn: 1, reason: { kind: 'error', error: { code: 'QUOTA', message: 'insufficient balance' } } } })
+    assert.equal(store.getSnapshot().marks.get('p/b'), true, 'the second session is watched too')
+    assert.ok(written.length > 0, 'each stored change is persisted')
+  } finally {
+    store.dispose()
+  }
+})
+
+test('a missing sessions service leaves the store on its persisted state', () => {
+  // The service can bind after activation; the store must not throw meanwhile.
+  const store = INSUFFICIENT.createMarkStore({
+    sessionsOf: () => undefined,
+    readStored: () => new Map([['p/m', { marked: true, at: 1 }]]),
+    writeStored: () => {},
+  })
+  try {
+    assert.doesNotThrow(() => store.sync())
+    assert.equal(store.getSnapshot().marks.get('p/m'), true, 'the stored state is still served')
+  } finally {
+    store.dispose()
+  }
+})
+
+test('a 429 body decides the mark across sessions, not the status', () => {
+  // The cross-session path must keep the same 429 rule: balance wording
+  // strikes, a plain rate limit does not.
+  const feed = sessionsWithManyFeeds(['session-a', 'session-b'])
+  const mounted = mountSeat(feed, 'session-b')
+  feed.append('session-a', { type: 'request/header', time: 1000, data: { header: { config: { provider: 'third-party', model: 'glm-4.6' } }, reason: 'initial' } })
+  feed.append('session-a', { type: 'turn/end', time: 1001, data: { turn: 1, reason: { kind: 'error', error: { code: 'RATE_LIMIT', message: '429: {"type":"FreeUsageLimitError","message":"Rate limit exceeded. Please try again later."}' } } } })
+  let tree = runtime.render(bundle.__component, mounted.props)
+  assert.equal(gridRows(tree).find(row => textOf(row).includes('GLM 4.6')).props[ROW_INSUFFICIENT], undefined,
+    'a plain 429 in another session does not strike')
+
+  feed.append('session-a', { type: 'request/header', time: 2000, data: { header: { config: { provider: 'third-party', model: 'glm-4.6' } }, reason: 'change' } })
+  feed.append('session-a', { type: 'turn/end', time: 2001, data: { turn: 2, reason: { kind: 'error', error: { code: 'RATE_LIMIT', message: '429: {"message":"insufficient balance"}' } } } })
+  tree = runtime.render(bundle.__component, mounted.props)
+  assert.equal(gridRows(tree).find(row => textOf(row).includes('GLM 4.6')).props[ROW_INSUFFICIENT], 'true',
+    'a 429 with a balance body in another session does strike')
 })
 
