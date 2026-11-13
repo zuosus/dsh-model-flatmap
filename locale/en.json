@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Flat model picker",
+    "description": "Replaces the composer model selector with one flat panel: search, provider or model-family grouping, every model and every reasoning level visible at once, and the agent teamwork switch on the same surface. No second-level menus.",
+    "detail": "docs/DETAIL.md"
+  }
+}
