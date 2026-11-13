@@ -35,10 +35,16 @@ and the agent teamwork switch are all visible at once.
   column count from 1 to 3 that fits. If even three columns overflow, it keeps
   three and the grid scrolls. A group title never separates from its first
   model, and the last column's deficit is balanced against its neighbour.
-- **Reasoning levels.** The current model's advertised levels render as one row
-  of pills; a click submits through `session.selectModel` and the row refreshes
-  from the directory once it updates. A model without reasoning metadata hides
-  the row entirely, and it costs no height.
+- **Reasoning levels.** The current model's advertised levels render as one
+  labelled group, so the block reads as a setting, not a loose row: a
+  caption ("思考强度" / "Thinking intensity") with a sparkle icon and a hint
+  tooltip sits over the pills inside a tinted, rounded container. The pills
+  are radio choices — `role="radiogroup"` / `role="radio"`, exactly one
+  `aria-checked` at a time, arrow keys move the selection — and the checked
+  pill carries the brand fill, so the active level is unmistakable. A click
+  submits through `session.selectModel` and the group refreshes from the
+  directory once it updates. A model without reasoning metadata hides the
+  whole group, and it costs no height.
 - **Badges.** A model's catalog badge (for example a third-party rate
   multiplier such as `×0.1`) renders inside its row. A model with no badge
   renders no empty slot.

@@ -299,10 +299,18 @@ test('opening renders every section with no second-level menu', () => {
   assert.equal(findAll(tree, node => node.props?.role === 'menu').length, 0)
   assert.equal(findAll(tree, node => node.props?.role === 'menuitemradio').length, 0)
 
-  // reasoning levels of the current model, flat
-  const pills = findAll(tree, node => hasClass(node, 'dshmf-pill'))
+  // reasoning levels of the current model: one labelled group of
+  // mutually exclusive radio choices, exactly one checked
+  const group = findAll(tree, node => node.props?.role === 'radiogroup')[0]
+  assert.ok(group, 'the reasoning group exists')
+  const groupLabel = findAll(group, node => hasClass(node, 'dshmf-reasonLabel'))[0]
+  assert.ok(groupLabel, 'the group carries its caption')
+  assert.equal(textOf(groupLabel), 'effort.label')
+  assert.equal(group.props['aria-labelledby'], groupLabel.props.id)
+  const pills = findAll(group, node => hasClass(node, 'dshmf-pill'))
   assert.equal(pills.length, 3)
-  assert.equal(pills.filter(pill => pill.props['aria-pressed'] === true).length, 1)
+  assert.equal(pills.every(pill => pill.props.role === 'radio'), true)
+  assert.equal(pills.filter(pill => pill.props['aria-checked'] === true).length, 1)
 
   // teamwork switch on the same surface
   const switches = findAll(tree, node => node.props?.role === 'switch')
@@ -597,6 +605,22 @@ test('choosing a reasoning level keeps the model and sends the level', () => {
     model: 'deepseek-chat',
     reasoningEffort: 'low',
   }])
+})
+
+test('re-clicking the checked reasoning level submits nothing', () => {
+  runtime.reset()
+  const calls = []
+  const { props } = makeProps(catalogState(), {
+    inject: { select: selection => { calls.push(selection); return Promise.resolve({ ok: true }) } },
+  })
+  let tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+  const checked = findAll(tree, node => hasClass(node, 'dshmf-pill'))
+    .find(candidate => candidate.props['aria-checked'] === true)
+  assert.ok(checked, 'one level is checked')
+  checked.props.onClick()
+  assert.deepEqual(calls, [])
 })
 
 test('disabling teamwork asks for confirmation before it submits', () => {

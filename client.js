@@ -154,18 +154,39 @@ window.__ModuleLoader__.load({
 .dshmf-empty { grid-column: 1 / -1; padding: 10px 8px; color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; }
 .dshmf-failure { grid-column: 1 / -1; padding: 2px 6px; color: var(--dsw-alias-state-warn-label); font-size: 11px; line-height: 16px; overflow-wrap: anywhere; }
 
-/* Reasoning levels: one flat row of pills. */
-.dshmf-reason { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; overflow-x: auto; overflow-y: hidden; padding: 1px 0; scrollbar-width: none; }
-.dshmf-reason::-webkit-scrollbar { height: 0; }
+/* Reasoning levels: one labelled group of mutually exclusive pills, so the
+   block reads as a setting, not a loose row. The container carries the group
+   identity (tinted surface + radius + caption); the pills carry the choice. */
+.dshmf-reason {
+  flex: 0 0 auto; display: flex; flex-direction: column; gap: 4px;
+  margin: 0 2px; padding: 6px 7px 7px;
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-module-platform);
+}
+.dshmf-reasonLabel {
+  display: inline-flex; align-items: center; gap: 4px; min-width: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px; line-height: 16px; font-weight: 500;
+}
+.dshmf-reasonLabel svg { flex: 0 0 auto; }
+.dshmf-pills {
+  display: flex; align-items: center; gap: 4px;
+  overflow-x: auto; overflow-y: hidden; padding: 1px 0; scrollbar-width: none;
+}
+.dshmf-pills::-webkit-scrollbar { height: 0; }
 .dshmf-pill {
-  flex: 0 0 auto; height: 22px; padding: 0 9px; border: 0; border-radius: 999px; corner-shape: round;
+  flex: 0 0 auto; height: 24px; padding: 0 10px; border: 0; border-radius: 999px; corner-shape: round;
   background: transparent; color: var(--dsw-alias-label-secondary);
-  font-family: inherit; font-size: 11px; line-height: 16px; white-space: nowrap; cursor: pointer;
+  font-family: inherit; font-size: 11px; line-height: 18px; font-weight: 500; white-space: nowrap; cursor: pointer;
   transition: background 120ms ease, color 120ms ease;
 }
-@media (hover: hover) { .dshmf-pill:hover:not(:disabled):not([aria-pressed="true"]) { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); } }
-.dshmf-pill[aria-pressed="true"] { background: var(--dsw-alias-interactive-bg-active); color: var(--dsw-alias-label-primary); }
+@media (hover: hover) { .dshmf-pill:hover:not(:disabled):not([aria-checked="true"]) { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); } }
+.dshmf-pill[aria-checked="true"] {
+  background: var(--dsw-alias-brand-primary); color: var(--dsw-alias-label-primary-foreground);
+  box-shadow: var(--dsw-elevation-soft);
+}
 .dshmf-pill:disabled { color: var(--dsw-alias-label-dimmed); cursor: default; }
+.dshmf-pill:disabled[aria-checked="true"] { opacity: .5; }
 .dshmf-pill:focus-visible { outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: -2px; }
 
 /* Teamwork row: the host's row rhythm — label + switch on one line. */
@@ -236,6 +257,7 @@ window.__ModuleLoader__.load({
     const PATH_CHEVRON = 'M3.2 5.6 7 9.4 10.8 5.6'
     const PATH_CLOSE = 'M4 4 10 10M10 4 4 10'
     const PATH_INFO = 'M7 6.4v4.1M7 3.7v.8'
+    const PATH_SPARK = 'M7 1.6 8.3 5.7 12.4 7 8.3 8.3 7 12.4 5.7 8.3 1.6 7 5.7 5.7 7 1.6Z'
     const PATH_MODELS = 'M7 2.1 11.9 4.7 7 7.3 2.1 4.7 7 2.1Zm-4.9 5.1L7 9.8l4.9-2.6M2.1 10.3 7 12.9l4.9-2.6'
 
     function svg(path, size, extra) {
@@ -499,7 +521,8 @@ window.__ModuleLoader__.load({
         'trigger.ariaEffort': '选择模型，当前 {model}，推理等级 {effort}',
         'panel.aria': '模型与推理等级',
         'effort.default': 'Default',
-        'effort.aria': '推理等级',
+        'effort.label': '思考强度',
+        'effort.hint': '调整模型的思考强度：档位越高，思考越深入，但速度更慢、token 开销更大。',
         'team.label': '启用智能体团队协作',
         'team.description': '通过共享任务板协调多个智能体的分工与进度，复杂任务表现更佳，token 开销也相应更高。',
         'team.failed': '无法确认智能体团队协作设置已保存，请重试：{message}',
@@ -528,7 +551,8 @@ window.__ModuleLoader__.load({
         'trigger.ariaEffort': 'Select model, current {model}, reasoning effort {effort}',
         'panel.aria': 'Model and reasoning effort',
         'effort.default': 'Default',
-        'effort.aria': 'Reasoning effort',
+        'effort.label': 'Thinking intensity',
+        'effort.hint': 'Adjusts how deeply the model thinks: higher levels reason more deeply, but are slower and cost more tokens.',
         'team.label': 'Enable agent teamwork',
         'team.description': 'Coordinate work and progress across agents with a shared task board for better results on complex tasks, with correspondingly higher token costs.',
         'team.failed': 'Could not confirm the agent teamwork setting was saved. Try again: {message}',
@@ -1003,6 +1027,25 @@ window.__ModuleLoader__.load({
         close(true)
       }
 
+      // Radio-group keyboard: arrows move the exclusive selection to the
+      // neighbouring enabled level, so the whole group is reachable by keys.
+      const onEffortKeyDown = event => {
+        if (event.key !== 'ArrowRight' && event.key !== 'ArrowDown'
+          && event.key !== 'ArrowLeft' && event.key !== 'ArrowUp') return
+        const pills = reasonRef.current
+          ? [...reasonRef.current.querySelectorAll('button.dshmf-pill:not(:disabled)')]
+          : []
+        if (pills.length === 0) return
+        event.preventDefault()
+        const forward = event.key === 'ArrowRight' || event.key === 'ArrowDown'
+        const at = event.target instanceof Element ? pills.indexOf(event.target) : -1
+        const next = at === -1
+          ? pills[forward ? 0 : pills.length - 1]
+          : pills[(at + (forward ? 1 : -1) + pills.length) % pills.length]
+        next?.focus()
+        next?.click()
+      }
+
       return h('div', {
         className: 'dshmf-root',
         ref: rootRef,
@@ -1128,28 +1171,40 @@ window.__ModuleLoader__.load({
               state.failures.length === 0 ? null : state.failures.map(renderFailure),
             ),
 
-            // ---- fixed: reasoning levels of the current model
+            // ---- fixed: reasoning levels of the current model, rendered as
+            // one labelled group of mutually exclusive choices
             effortChoices.length === 0 ? null : h('div', {
               className: 'dshmf-reason',
               ref: reasonRef,
-              role: 'group',
-              'aria-label': t('effort.aria'),
-            }, effortChoices.map(level => {
-              const selected = effectiveEffort === level.id
-              const pendingThis = state.pending !== null
-                && state.pending.provider === state.current?.provider
-                && state.pending.model === state.current.model
-                && state.pending.reasoningEffort === level.id
-              return h('button', {
-                key: level.id,
-                type: 'button',
-                className: 'dshmf-pill',
-                'aria-pressed': selected,
-                title: level.description ?? level.name,
-                disabled: busy || state.current === null,
-                onClick: () => { chooseEffort(level.id) },
-              }, pendingThis ? h('span', { className: 'dshmf-spin' }) : level.name)
-            })),
+              role: 'radiogroup',
+              'aria-labelledby': `${id}-effort-label`,
+              onKeyDown: onEffortKeyDown,
+            },
+              h('span', {
+                className: 'dshmf-reasonLabel',
+                id: `${id}-effort-label`,
+                title: t('effort.hint'),
+              }, svg(PATH_SPARK, 12), t('effort.label')),
+              h('div', { className: 'dshmf-pills' }, effortChoices.map(level => {
+                const selected = effectiveEffort === level.id
+                const pendingThis = state.pending !== null
+                  && state.pending.provider === state.current?.provider
+                  && state.pending.model === state.current.model
+                  && state.pending.reasoningEffort === level.id
+                return h('button', {
+                  key: level.id,
+                  type: 'button',
+                  role: 'radio',
+                  className: 'dshmf-pill',
+                  'aria-checked': selected,
+                  title: level.description ?? level.name,
+                  disabled: busy || state.current === null,
+                  onClick: () => { chooseEffort(level.id) },
+                }, pendingThis
+                  ? h('span', { className: 'dshmf-spin' })
+                  : h('span', { className: 'dshmf-pillName' }, level.name))
+              })),
+            ),
 
             // ---- fixed: teamwork disable confirmation
             confirming ? h('div', {
