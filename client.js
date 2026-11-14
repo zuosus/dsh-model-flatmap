@@ -357,19 +357,22 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
 .dshmf-modeBtn:disabled { color: var(--dsw-alias-label-dimmed); cursor: default; }
 .dshmf-modeBtn:focus-visible { outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: -2px; }
 
-/* The composer-row chip that brings the panel back from native mode. It sits in
-   the toolbar row beside the Host's own model control, so it borrows the
-   composer's trigger chrome (13/20, 28px, radius-sm) instead of the panel's — it
-   reads as a toolbar control, not as a piece of the panel. */
-.dshmf-modeChip {
-  display: inline-flex; align-items: center; height: 28px; padding: 0 8px;
-  border: none; border-radius: var(--dsw-radius-sm); outline: none;
-  background: transparent; color: var(--dsw-alias-label-secondary);
+/* The row that brings the panel back from native mode. It is a row of the HOST
+   picker's own root menu (the conversation.input.model.options child slot), so
+   it borrows that menu's row recipe — 34px, radius-md, 8px inset, 13/20 label
+   at the leading edge — instead of the panel's chrome: it reads as one more row
+   of the shipped picker, because that is exactly what it is. */
+.dshmf-modeRow {
+  box-sizing: border-box; display: flex; align-items: center; gap: 6px;
+  width: auto; min-width: 100%; min-height: 34px; padding: 0 8px;
+  border: none; border-radius: var(--dsw-radius-md); outline: none;
+  background: transparent; color: var(--dsw-alias-label-primary);
   font-family: inherit; font-size: 13px; line-height: 20px; font-weight: 400;
-  white-space: nowrap; cursor: pointer;
+  white-space: nowrap; cursor: pointer; text-align: left;
 }
-@media (hover: hover) { .dshmf-modeChip:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); } }
-.dshmf-modeChip:focus-visible { box-shadow: 0 0 0 2px var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); }
+.dshmf-modeRowLabel { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.dshmf-modeRow:focus-visible { background: var(--dsw-alias-interactive-bg-hover); }
+@media (hover: hover) { .dshmf-modeRow:hover { background: var(--dsw-alias-interactive-bg-hover); } }
 
 /* Reasoning levels: a caption and a multi-segmentation control on one line;
    the track wraps below the caption only when the row cannot fit. The
@@ -3309,41 +3312,52 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
      * The way back out of native mode.
      *
      * Native mode DISPOSES this plugin's `conversation.input.model` entry, so
-     * the footer button that switched it disappears with the panel. This chip
-     * rides its own slot — `conversation.input.right`, a `list` seat ("compact
-     * controls before the composer submit action") that survives both modes —
-     * and renders NOTHING while the panel is showing. It is the mode control's
-     * only home that outlives the seat it controls.
+     * the footer button that switched it disappears with the panel. This row
+     * rides the HOST picker's own root menu instead: `conversation.input.model.
+     * options` is the list child slot the shipped `ModelSelect` declares and
+     * renders right after its Model / Effort rows, so the control appears at
+     * the bottom of the native picker's own panel — the one place that both
+     * survives the seat's disposal AND belongs to the control it acts on. No
+     * host component is rendered, imported or copied; the slot is a public
+     * declaration of the installed package.
      *
-     * It reads the same page-wide store, so a switch made here is the switch the
-     * panel sees when it comes back.
+     * It renders NOTHING unless native mode is in effect, so the shipped menu
+     * looks exactly as shipped while the flat panel is the one on screen.
+     *
+     * It reads the same page-wide store as the panel's footer button, so a
+     * switch made here is the switch the panel sees when it comes back.
      * @param props - the slot's standard props plus the injected mode face.
      */
-    function NativeChip(props) {
+    function NativeMenuRow(props) {
       const {
-        t, displayMode, setDisplayMode, nativeAvailable,
+        t, displayMode, setDisplayMode, nativeAvailable, dismiss,
       } = props
       const modeFace = displayMode ?? FLAT_DISPLAY_MODE
       const subscribeMode = useCallback(listener => modeFace.subscribe(listener), [modeFace])
       const getMode = useCallback(() => modeFace.getSnapshot(), [modeFace])
       const mode = useSyncExternalStore(subscribeMode, getMode, getMode)
-      // Flat is the panel's own business: this chip exists for the other mode.
+      // The panel's own business: this row exists only while the Host's picker
+      // is the seat on screen.
       if (mode !== 'native') return null
       const canGoFlat = typeof nativeAvailable !== 'function' || nativeAvailable() === true
       if (!canGoFlat) return null
       const translate = typeof t === 'function' ? t : key => key
-      const switchMode = next => {
-        if (typeof setDisplayMode === 'function') setDisplayMode(next)
-        else modeFace.set(next)
-      }
       return h('button', {
         type: 'button',
-        className: 'dshmf-modeChip',
-        'aria-pressed': true,
+        role: 'menuitem',
+        className: 'dshmf-modeRow',
         'aria-label': translate('native.back'),
         title: translate('native.back'),
-        onClick: () => { switchMode('flat') },
-      }, translate('native.label'))
+        onClick: () => {
+          // Let the host close its own menu before switching: the switch
+          // disposes the entry that owns this menu, and closing on the host's
+          // own terms (its state, its listener cleanup, its focus handoff)
+          // beats having a portaled menu unmount underneath the click.
+          if (typeof dismiss === 'function') dismiss()
+          if (typeof setDisplayMode === 'function') setDisplayMode('flat')
+          else modeFace.set('flat')
+        },
+      }, h('span', { className: 'dshmf-modeRowLabel' }, translate('native.back')))
     }
 
     // ---------------------------------------------------------------------
@@ -3363,7 +3377,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       __test: { marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, readDisplayMode, writeDisplayMode, createDisplayModeStore, DISPLAY_MODE_KEY, DISPLAY_MODE_DEFAULT, FLAT_DISPLAY_MODE, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore, quantizeMetric, metricChanged, METRIC_HYSTERESIS },
       __component: ModelFlatMap,
       __seat: Seat,
-      __nativeChip: NativeChip,
+      __nativeMenuRow: NativeMenuRow,
       apply(ctx) {
         const read = name => {
           try {
@@ -3741,16 +3755,19 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         // ---- the chip that brings the panel back from native mode
         //
         // Native mode disposes the seat, and with it the footer button that
-        // switched. This companion entry lives in a `list` slot of the composer
-        // row, so it survives both modes; it renders nothing while the panel is
-        // showing (`NativeChip` returns null unless the mode is `native`).
+        // switched. The way back rides the HOST picker's OWN root menu instead:
+        // `conversation.input.model.options` is the list child slot the shipped
+        // `ModelSelect` declares and renders after its Model / Effort rows, so
+        // our row appears at the bottom of the native panel itself. It survives
+        // the seat's disposal (it belongs to the shipped entry, not to ours) and
+        // renders nothing while the flat panel is the seat on screen.
         try {
           if (typeof slots.inject === 'function') {
-            slots.inject('conversation.input.right', () => {
+            slots.inject('conversation.input.model.options', () => {
               if (typeof slots.register !== 'function') return () => {}
               try {
                 return slots.register({
-                  name: 'conversation.input.right',
+                  name: 'conversation.input.model.options',
                   id: 'dsh-model-flatmap.native',
                   order: 50,
                   locale: NS,
@@ -3759,17 +3776,17 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
                     setDisplayMode: value => { modeStore.set(value) },
                     nativeAvailable: canStepAside,
                   }),
-                }, NativeChip)
+                }, NativeMenuRow)
               } catch (error) {
-                console.error('dsh-model-flatmap: the native-mode chip was not registered', error)
+                console.error('dsh-model-flatmap: the native-mode menu row was not registered', error)
                 return () => {}
               }
             })
           }
         } catch (error) {
-          // Losing the chip costs the way BACK, never the way in: the panel and
+          // Losing the row costs the way BACK, never the way in: the panel and
           // its footer button still work, and a reload restores flat mode.
-          console.error('dsh-model-flatmap: slots.inject failed for the native-mode chip', error)
+          console.error('dsh-model-flatmap: slots.inject failed for the native-mode menu row', error)
         }
       },
     }

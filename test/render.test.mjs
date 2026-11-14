@@ -3243,7 +3243,7 @@ test('a persisted native mode activates straight into the shipped picker', async
   }
 })
 
-test('the composer-row chip is the way back, and renders nothing in flat mode', async () => {
+test('the native picker\'s own menu carries the way back, and nothing in flat mode', async () => {
   installModeStorage()
   try {
     runtime.reset()
@@ -3251,37 +3251,59 @@ test('the composer-row chip is the way back, and renders nothing in flat mode', 
       extraEntries: { 'conversation.input.model': [() => null] },
     })
     bundle.apply(ctx)
-    const chip = liveOf('conversation.input.right')[0]
-    assert.ok(chip, 'the chip owns its own slot entry, so it survives the seat disposal')
-    const chipFace = chip.registration.inject()
+    const row = liveOf('conversation.input.model.options')[0]
+    assert.ok(row, 'the row rides the shipped picker\'s own root-menu slot')
+    assert.equal(row.registration.id, 'dsh-model-flatmap.native')
+    const rowFace = row.registration.inject()
+    // The shipped menu hands its occupants a `dismiss`; the row must close the
+    // menu before it disposes the entry that owns it.
+    let dismissed = 0
+    const props = { ...rowFace, dismiss: () => { dismissed += 1 }, t: key => key }
 
-    const flatTree = runtime.render(bundle.__nativeChip, { ...chipFace, t: key => key })
-    assert.equal(flatTree, null, 'in flat mode the chip draws nothing at all')
+    const flatTree = runtime.render(bundle.__nativeMenuRow, props)
+    assert.equal(flatTree, null, 'in flat mode the row draws nothing at all')
 
     bundle.__component
-    // Flip through the chip's own face: that is exactly what a user in native
+    // Flip through the row's own face: that is exactly what a user in native
     // mode would click.
-    chipFace.setDisplayMode('native')
+    rowFace.setDisplayMode('native')
     await flushMicrotasks()
-    const nativeTree = runtime.render(bundle.__nativeChip, { ...chipFace, t: key => key })
+    const nativeTree = runtime.render(bundle.__nativeMenuRow, props)
     assert.ok(nativeTree !== null, 'native mode shows the way back')
-    assert.equal(hasClass(nativeTree, 'dshmf-modeChip'), true)
-    assert.equal(nativeTree.props['aria-pressed'], true)
+    assert.equal(hasClass(nativeTree, 'dshmf-modeRow'), true)
+    assert.equal(nativeTree.props.role, 'menuitem', 'it is a row of the host menu, not a stray button')
     assert.equal(nativeTree.props.title, 'native.back')
     // Which mode is live does not depend on the seat being mounted.
     assert.equal(liveOf('conversation.input.model').length, 1)
 
     nativeTree.props.onClick()
     await flushMicrotasks()
-    assert.equal(runtime.render(bundle.__nativeChip, { ...chipFace, t: key => key }), null,
-      'clicking it returns to flat, which hides the chip again')
+    assert.equal(dismissed, 1, 'the host menu is closed before the entry it belongs to goes away')
+    assert.equal(runtime.render(bundle.__nativeMenuRow, props), null,
+      'clicking it returns to flat, which hides the row again')
     assert.equal(liveOf('conversation.input.model').length, 2, 'and the panel is back')
   } finally {
     delete globalThis.localStorage
   }
 })
 
-test('unloading the plugin releases both the seat and the chip', async () => {
+test('the composer tool row no longer carries a mode control', async () => {
+  installModeStorage({ 'dshmf:mode': 'native' })
+  try {
+    runtime.reset()
+    const { ctx, liveOf } = makeCtx({
+      extraEntries: { 'conversation.input.model': [() => null] },
+    })
+    bundle.apply(ctx)
+    await flushMicrotasks()
+    assert.equal(liveOf('conversation.input.right').length, 0,
+      'the way back lives in the native picker itself, not beside its trigger')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('unloading the plugin releases both the seat and the menu row', async () => {
   installModeStorage()
   try {
     runtime.reset()
@@ -3290,13 +3312,13 @@ test('unloading the plugin releases both the seat and the chip', async () => {
     })
     bundle.apply(ctx)
     const seatInject = registered.find(entry => entry.key === 'conversation.input.model')
-    const chipInject = registered.find(entry => entry.key === 'conversation.input.right')
+    const rowInject = registered.find(entry => entry.key === 'conversation.input.model.options')
     assert.ok(seatInject, 'the seat waits on its declaration')
-    assert.ok(chipInject, 'the chip waits on its declaration')
+    assert.ok(rowInject, 'the row waits on the shipped picker\'s declaration')
     seatInject.dispose()
-    chipInject.dispose()
+    rowInject.dispose()
     assert.equal(liveOf('conversation.input.model').length, 1, 'no residue: only the Host is left')
-    assert.equal(liveOf('conversation.input.right').length, 0, 'the chip is gone too')
+    assert.equal(liveOf('conversation.input.model.options').length, 0, 'the row is gone too')
   } finally {
     delete globalThis.localStorage
   }

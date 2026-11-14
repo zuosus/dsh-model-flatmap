@@ -223,11 +223,21 @@ with a tooltip explaining why. A persisted `native` mode from a previous install
 therefore lands on the flat panel instead of an empty composer.
 
 **The way back.** Native mode disposes the entry that owns the footer button, so
-the button cannot switch back. A second, independent registration carries the
-return trip: a compact `原生` chip in `conversation.input.right` (the composer
-tool row before the submit action — a `list` slot, so it composes alongside the
-host's own controls rather than replacing them). It renders `null` in flat mode,
-so it costs no space, and a pressed button in native mode.
+the button cannot switch back. The return trip instead rides the HOST picker's
+own panel: `conversation.input.model.options` is the list child slot the shipped
+`ModelSelect` declares and renders directly after its Model / Effort rows, so our
+row appears at the bottom of the native menu itself. It belongs to the shipped
+entry, not to ours, so it outlives the disposal; and it renders `null` in flat
+mode, so the shipped menu looks exactly as shipped while the panel is on screen.
+Clicking it dismisses the host menu first (the entry that owns the menu is about
+to be disposed) and then flips the mode back.
+
+Nothing here is a copy of the host control: the row is one entry in a slot the
+installed package publicly declares, drawn with that menu's own row recipe. The
+former placement — a chip in `conversation.input.right`, beside the native
+trigger — was dropped because it read as a toolbar control belonging to nothing
+in particular, and because it forced the mode control to sit outside the panel
+it acts on.
 
 **One shared store.** Both controls read one page-wide mode store, so a flip made
 from either is what the other sees. The store persists the choice to

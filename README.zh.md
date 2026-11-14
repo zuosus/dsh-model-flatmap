@@ -69,8 +69,10 @@
   出厂的 `ModelSelect`，不是它的复制品。做法是**让位**：本插件 dispose 掉自己在
   `conversation.input.model` 的注册，槽于是选中下方那条出厂条目，由宿主渲染它自己的组件。没有
   import、没有拷贝、没有 re-mount，所以 DSH 升级后出现的自然是它最新的 picker，这个模式**结构上
-  不可能过期**。输入框行内的紧凑 `原生` chip 负责切回面板，选择跨重载保留。若宿主没有可交出的
-  选择器，按钮会置灰、面板保持显示——composer 永远不会失去模型控件。
+  不可能过期**。切回面板的入口长在**原生选择器自己的菜单底部**（复用出厂 `ModelSelect` 声明的
+  `conversation.input.model.options` 子插槽），所以它属于那个面板、而不是输入框工具栏；平铺模式下
+  该行渲染 `null`，原生菜单与出厂状态完全一致。选择跨重载保留。若宿主没有可交出的选择器，按钮会
+  置灰、面板保持显示——composer 永远不会失去模型控件。
 
 完整行为规格见 [`docs/DETAIL.md`](./docs/DETAIL.md)，设计决策见
 [`DECISIONS.md`](./DECISIONS.md)。

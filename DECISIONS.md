@@ -5,6 +5,47 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-028 — 2026-11-14 — 切回平铺的入口长在原生选择器自己的菜单底部
+
+**Context.** 用户指出 DEC-027 的返程控件位置不对：`原生` chip 挂在
+`conversation.input.right`，只能出现在原生 trigger 的**左边**，而且它属于输入框工具栏、
+不属于它所操作的那个面板。用户明确否掉「CSS `order` 挪到右边」和「两处都放」，只要一个
+形态：**原生选择器自己的面板里，底部一行**。
+
+**Findings.** 读本机安装（`app.asar`）：
+
+- 出厂 `ModelSelect` 注册 `conversation.input.model` 时用 `children` 声明了
+  `conversation.input.model.label`（single，inline）和 `.options`（list）。前者在
+  trigger 内部与菜单行里，后者在根菜单 Model / Effort 两行**之后**
+  （`ModelSelect.tsx:505`）。
+- 这个声明归**出厂条目**所有（`docs/subsystems/slots.md:23`：一个 declaration 只由一个
+  活条目拥有），所以 `.options` 的生命周期跟随出厂条目——恰好横跨我们 dispose 座位的那段时间。
+- 它是 `list`，注册只需一个全新 `id`，**不会**与已占用的 `agent-team` 冲突
+  （`SlotCore.register` 只按 `(id, priority)` 查重）。
+- 条目其它形态要么不可用、要么会踢掉功能：`.label` 是 single 且已在触发器内部渲染；
+  `.model` 是 single，只能有一个胜出者，仍要自己渲染出厂组件（DEC-027 已否）；宿主没有
+  覆盖工具行的 `hoc` 槽（现存 `hoc` 只有 `hero.frame` / `chat.markdown.fence` /
+  `sidebar.session.action`）。
+
+**Decision.** 返程控件改注册到 `conversation.input.model.options`
+（`id: 'dsh-model-flatmap.native'`, `order: 50`），渲染一行与出厂菜单同规格的
+`<button role="menuitem">`（34px、radius-md、13/20、hover 用
+`--dsw-alias-interactive-bg-hover`）。平铺模式下该组件返回 `null`，出厂菜单与出厂状态完全
+一致。点击顺序固定：先调宿主给这个插槽的 `dismiss()` 关菜单，再切换模式——切换会 dispose
+掉拥有该菜单的条目，否则焦点会落在已卸载的节点上。
+
+同时**删除** `conversation.input.right` 的那条注册与 `.dshmf-modeChip` 样式：留两处入口会
+让「模式控件属于谁」继续含糊，正是用户要收敛的那一点。
+
+**Rejected.**（1）CSS `order: 1` 把 chip 挪到 trigger 右侧：不是面板，只是邻居，且仍属于
+工具栏。（2）`order: 1` 与菜单行并存：一个控件两个家。（3）把出厂组件塞进自建的
+outer panel：`renderSlot` 绑定在所属条目上，且我们要声明 `.label`/`.options` 时注册期就会抛
+`slot "…" is already declared`。
+
+**Consequences.** 返程入口只在原生菜单打开后可见（少了常驻性），这是用户接受的取舍：它现在
+100% 属于它所操作的面板，并且永远跟随出厂的菜单实现升级。菜单行的标签复用
+`native.back`（「回到平铺模型面板」），不再需要 `native.label` 的 chip 语义。
+
 ## DEC-027 — 2026-11-14 — 原生模式：把座位**让出去**，而不是把宿主控件搬进来
 
 **Context.** 用户要求在面板右下角加一个 `原生` / `Original` 按钮：按下后本插件显示宿主
