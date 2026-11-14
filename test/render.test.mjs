@@ -3440,3 +3440,140 @@ test('the measure key names the footer CONTENT, since the footer is always drawn
   assert.doesNotMatch(measure, /teamRowShown = !\(/,
     'the old "footer may be absent" negation is gone with the always-on footer')
 })
+
+// ---------------------------------------------------------------------------
+// The trigger's label cell (DEC-028)
+//
+// The shipped picker renders `conversation.input.model.label` on its trigger
+// and lets the winning connection plugin decorate the name. This plugin
+// shadows that picker but not the label cell's DECLARATION, so the winner can
+// still be read and rendered here. This harness builds elements without
+// rendering them recursively, so the occupant is asserted as an element (its
+// type and the props it would receive) rather than as painted text.
+// ---------------------------------------------------------------------------
+function labelProps(entry, overrides = {}) {
+  return {
+    labelEntry: () => entry,
+    labelSeatFor: () => (key, params) => {
+      const template = `seat:${key}`
+      if (params === undefined) return template
+      return template.replace(/\{(\w+)\}/g, (_, name) => String(params[name] ?? ''))
+    },
+    // Mirrors the real face: a session-scoped entry's inject receives the
+    // Session id and its result is merged under the owner props.
+    labelFace: entry => (typeof entry?.inject === 'function' ? entry.inject('session-1') : {}),
+    labelSlot: { subscribe: () => () => {}, getSnapshot: () => 0 },
+    ...overrides,
+  }
+}
+
+/** The label occupant element the trigger built, if any. */
+function labelOccupant(tree, Occupant) {
+  const trigger = findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0]
+  return trigger === undefined ? undefined : findAll(trigger, node => node.type === Occupant)[0]
+}
+
+test('the trigger renders the label slot winner, not just the catalog name', () => {
+  runtime.reset()
+  const Occupant = () => null
+  const { props } = makeProps(catalogState(), {
+    inject: labelProps({ component: Occupant, locale: 'test-ns' }),
+  })
+  const tree = runtime.render(bundle.__component, props)
+  const occupant = labelOccupant(tree, Occupant)
+  assert.ok(occupant !== undefined, 'the winning label entry is rendered inside the trigger')
+  assert.equal(occupant.props.provider.id, 'deepseek-account')
+  assert.equal(occupant.props.model.id, 'deepseek-chat')
+  assert.equal(occupant.props.placement, 'trigger')
+  assert.equal(occupant.props.selected, true)
+  // The occupant's own locale namespace is bound, so its own keys resolve.
+  assert.equal(occupant.props.t('badge.label'), 'seat:badge.label')
+  // …and the catalog name is NOT also drawn beside it: the occupant replaces it.
+  assert.equal(findAll(findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0], node => hasClass(node, 'dshmf-triggerName')).length, 0)
+})
+
+test('an occupant receives its own inject face under the owner props', () => {
+  runtime.reset()
+  const Occupant = () => null
+  const { props } = makeProps(catalogState(), {
+    inject: labelProps({
+      component: Occupant,
+      locale: 'test-ns',
+      inject: sessionId => ({ fromInject: `face:${sessionId}` }),
+    }),
+  })
+  const tree = runtime.render(bundle.__component, props)
+  const occupant = labelOccupant(tree, Occupant)
+  assert.equal(occupant.props.fromInject, 'face:session-1')
+})
+
+test('the occupant sits behind its own error boundary', () => {
+  runtime.reset()
+  const Occupant = () => null
+  const { props } = makeProps(catalogState(), {
+    inject: labelProps({ component: Occupant, locale: 'test-ns' }),
+  })
+  const tree = runtime.render(bundle.__component, props)
+  const trigger = findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0]
+  const boundary = findAll(trigger, node => node.type === bundle.__test.LabelBoundary)[0]
+  assert.ok(boundary !== undefined, 'the occupant is wrapped, so a crash cannot escape the trigger')
+  assert.equal(boundary.props.fallback, undefined, 'the boundary falls through to the catalog name')
+})
+
+test('a failing occupant degrades to the catalog name instead of crashing the seat', () => {
+  const Boundary = bundle.__test.LabelBoundary
+  const instance = new Boundary({ fallback: undefined })
+  instance.state = Boundary.getDerivedStateFromError(new Error('occupant exploded'))
+  assert.equal(instance.render(), null, 'the boundary answers the fallback, never throws')
+})
+
+test('no label occupant falls back to the catalog name', () => {
+  runtime.reset()
+  const { props } = makeProps(catalogState(), { inject: labelProps(undefined) })
+  const tree = runtime.render(bundle.__component, props)
+  const trigger = findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0]
+  assert.match(textOf(trigger), /DeepSeek Chat/)
+  assert.equal(findAll(trigger, node => hasClass(node, 'dshmf-triggerBadge')).length, 0)
+})
+
+test('the fallback draws the catalog badge the way the shipped trigger does', () => {
+  runtime.reset()
+  const { props } = makeProps(catalogState({
+    current: { provider: 'third-party', model: 'grok-4', reasoningEffort: 'on' },
+  }), { inject: labelProps(undefined) })
+  const tree = runtime.render(bundle.__component, props)
+  const trigger = findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0]
+  const badges = findAll(trigger, node => hasClass(node, 'dshmf-triggerBadge'))
+  assert.equal(badges.length, 1)
+  assert.equal(textOf(badges[0]), '\u00d70.1')
+  assert.equal(badges[0].props['data-tone'], 'success')
+  // Badge BEFORE the name on the trigger, matching the shipped fallback.
+  const text = textOf(trigger)
+  assert.ok(text.indexOf('\u00d70.1') < text.indexOf('Grok 4'), `badge precedes the name: ${text}`)
+})
+
+test('a host without entriesOfSlot degrades to the catalog name', () => {
+  runtime.reset()
+  const { props } = makeProps(catalogState(), { inject: labelProps(undefined) })
+  const tree = runtime.render(bundle.__component, props)
+  assert.equal(findAll(tree, node => hasClass(node, 'dshmf-trigger')).length, 1)
+})
+
+test('the occupant keeps the same seats across renders (no perpetual remount)', () => {
+  runtime.reset()
+  const Occupant = () => null
+  // One stable seat, as a real (face, namespace, revision) cache produces.
+  const stableSeat = key => `seat:${key}`
+  const { props } = makeProps(catalogState(), {
+    inject: labelProps({ component: Occupant, locale: 'test-ns' }, {
+      labelSeatFor: () => stableSeat,
+    }),
+  })
+  let tree = runtime.render(bundle.__component, props)
+  const first = labelOccupant(tree, Occupant)
+  tree = runtime.render(bundle.__component, props)
+  const second = labelOccupant(tree, Occupant)
+  assert.equal(first.props.t, second.props.t, 'the translate seat keeps its identity')
+  assert.equal(first.props.provider, second.props.provider, 'the provider share keeps its identity')
+  assert.equal(first.props.model, second.props.model, 'the model share keeps its identity')
+})

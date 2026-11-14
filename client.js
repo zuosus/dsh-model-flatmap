@@ -54,6 +54,31 @@ window.__ModuleLoader__.load({
 .dshmf-trigger:disabled { color: var(--dsw-alias-label-dimmed); cursor: default; }
 .dshmf-triggerIcon { display: var(--dsh-composer-model-icon-display, none); flex: 0 0 auto; }
 .dshmf-triggerText { display: var(--dsh-composer-model-text-display, block); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The trigger's label cell, whatever fills it: the shipped picker's own label
+   slot (a provider's chip, its rate, its load mark) or this plugin's fallback.
+   An inline-flex box keeps a chip on the text baseline instead of riding high,
+   and a full-width cap lets the occupant ellipsise inside the trigger rather
+   than widening it. */
+.dshmf-triggerLabel { display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; vertical-align: baseline; }
+/* Fallback chip, matching the shipped Tag's geometry (11/17, 1px 8px, 999px)
+   so a model the catalog badges looks the same whether a label occupant drew
+   it or this plugin did. */
+.dshmf-triggerBadge {
+  flex: none; display: inline-flex; align-items: center; padding: 1px 8px;
+  border-radius: 999px; corner-shape: round;
+  font-size: 11px; line-height: 17px; font-weight: 500; white-space: nowrap;
+  background: var(--dsw-alias-bg-module-platform); color: var(--dsw-alias-label-secondary);
+}
+.dshmf-triggerBadge[data-tone="info"] { background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 10%, transparent); color: var(--dsw-alias-state-business-primary); }
+.dshmf-triggerBadge[data-tone="success"] { background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 10%, transparent); color: var(--dsw-alias-state-success-primary); }
+.dshmf-triggerBadge[data-tone="warning"] { background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 12%, transparent); color: var(--dsw-alias-state-warn-primary); }
+.dshmf-triggerBadge[data-tone="danger"] { background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 10%, transparent); color: var(--dsw-alias-state-error-primary); }
+.dshmf-triggerBadge[data-tone="solid"] { background: var(--dsw-alias-label-primary); color: var(--dsw-alias-bg-layer-3); }
+.dshmf-triggerBadge[data-tone="outline"] { border: 0.5px solid var(--dsw-alias-border-l4); color: var(--dsw-alias-label-tertiary); }
+.dshmf-triggerBadge[data-tone="quiet"] { background: transparent; color: var(--dsw-alias-label-tertiary); }
+/* A model name inside the label cell: ellipsised like the shipped trigger's,
+   so a long name truncates instead of pushing the chevron out. */
+.dshmf-triggerName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dshmf-triggerEffort { flex-shrink: 1000; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-label-caption); }
 .dshmf-chevron { flex: 0 0 auto; color: var(--dsw-alias-label-caption); transition: transform 120ms ease; }
 .dshmf-chevronOpen { transform: rotate(180deg); }
@@ -549,6 +574,26 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       const template = String(t(key))
       if (values === undefined) return template
       return template.replace(/\{(\w+)\}/g, (_, name) => String(values[name] ?? ''))
+    }
+
+    /**
+     * A provider's display label, resolved from the catalog's own name.
+     *
+     * Extracted so the trigger's label seat and the panel's group headings
+     * cannot drift: both hand the label slot the same `provider.name`, and a
+     * heading that said "豆包(doubao)" while the trigger said "Doubao" would be
+     * two spellings of one provider on one screen.
+     * @param {{id: string, name: unknown}} group - one provider entry.
+     * @param {Function} t - the panel's own translate seat.
+     * @param {Function|undefined} resolveText - the host's catalog-text resolver.
+     * @returns {string} a display-ready label; never empty.
+     */
+    function providerLabel(group, t, resolveText) {
+      if (group.id === 'deepseek-account') return t('provider.account')
+      const resolved = resolveText === undefined ? undefined : resolveText(group.name)
+      if (typeof resolved === 'string' && resolved.trim() !== '') return resolved
+      const fallback = fallbackText(group.name)
+      return fallback.trim() === '' ? group.id : fallback
     }
 
     /**
@@ -2027,6 +2072,126 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
     }
 
     /**
+     * The slot whose occupant decorates a model name in the shipped picker.
+     *
+     * It is a `single`, session-scoped child slot declared by the shipped
+     * `ModelSelect` entry. This plugin shadows that entry but never disposes it,
+     * so the declaration and every contribution to it stay alive — which is
+     * exactly why the trigger can draw the same occupant the native picker
+     * would (DEC-028).
+     */
+    const LABEL_SLOT = 'conversation.input.model.label'
+
+    /**
+     * Read the entry that currently OWNS the label cell, or undefined.
+     *
+     * `entriesOfSlot` is the documented "winner per cell" accessor (the same
+     * one the renderer's outlet uses), so this asks the host the same question
+     * the native trigger does rather than guessing at priorities. Anything
+     * unexpected — an older host without the accessor, a thrown service call, a
+     * slot that lost its declaration — answers undefined and the trigger falls
+     * back to the catalog name, which is the shipped fallback's own behaviour.
+     * @param {object|undefined} slots - the `slots` client service.
+     * @returns {object|undefined} the winning StoredEntry.
+     */
+    function readLabelEntry(slots) {
+      if (slots === undefined || slots === null || typeof slots.entriesOfSlot !== 'function') return undefined
+      try {
+        const winners = slots.entriesOfSlot(LABEL_SLOT)
+        const entry = Array.isArray(winners) ? winners[0] : undefined
+        // A component is the whole point; an entry without one (or a cell that
+        // abdicated after a crash) is the same as no occupant at all.
+        return entry !== undefined && typeof entry.component === 'function' ? entry : undefined
+      } catch {
+        return undefined
+      }
+    }
+
+    /** One shared passthrough, so a degraded seat is not a new reference per render. */
+    const identityTranslate = key => String(key)
+
+    /** Shared empty business face, for the same reason as `identityTranslate`. */
+    const EMPTY_LABEL_FACE = {}
+
+    /** Per (locale face, namespace, revision) translate seats, mirroring the renderer. */
+    const labelSeatCache = new WeakMap()
+
+    /**
+     * Build the locale seat a label occupant expects.
+     *
+     * A registered entry's `t` is synthesized by the renderer from its declared
+     * `locale` namespace (`entry.locale`) through the installed locale face's
+     * `bind()`. Rendering that component ourselves means synthesizing the same
+     * seat; a contribution that declares no namespace gets a passthrough that
+     * answers its own key, which is what the renderer's kit would omit anyway.
+     * @param {object|undefined} locale - the `locale` client service.
+     * @param {string|undefined} namespace - the occupant's declared namespace.
+     * @returns {Function} a translate seat.
+     */
+    function labelSeat(locale, namespace) {
+      if (typeof namespace !== 'string' || namespace === '') return identityTranslate
+      if (locale === undefined || typeof locale.bind !== 'function') return identityTranslate
+      try {
+        // Cached per (face, namespace, revision) exactly as the renderer's own
+        // `localeSeat` does. The identity matters: the occupant is a React
+        // component, and a fresh `t` on every render would look like new props
+        // on every paint — a memoized chip would re-render forever, and an
+        // effect keyed on `t` would re-run forever.
+        const revision = typeof locale.getSnapshot === 'function'
+          ? locale.getSnapshot()?.revision
+          : undefined
+        let perNamespace = labelSeatCache.get(locale)
+        if (perNamespace === undefined) {
+          perNamespace = new Map()
+          labelSeatCache.set(locale, perNamespace)
+        }
+        const cached = perNamespace.get(namespace)
+        if (cached !== undefined && cached.revision === revision) return cached.t
+        const bound = locale.bind(namespace)
+        const t = typeof bound === 'function'
+          ? (key, params) => bound(key, params)
+          : identityTranslate
+        perNamespace.set(namespace, { revision, t })
+        return t
+      } catch {
+        return identityTranslate
+      }
+    }
+
+    /**
+     * A `useSyncExternalStore` source over "who owns the label cell".
+     *
+     * The trigger has to re-read the winner when a connection plugin registers
+     * or disposes — otherwise a plugin that loads a second after boot keeps its
+     * chip off the trigger until a page reload. The host already publishes the
+     * change channel: `slots.subscribe(key, fn)` plus a monotonic `getVersion`,
+     * which is the documented uSES pairing (`SlotRegistry.getVersion`).
+     *
+     * A host without those accessors yields a source that never notifies and
+     * always answers 0 — the trigger then simply renders whatever it read on
+     * its first paint.
+     * @param {object|undefined} slots - the `slots` client service.
+     * @returns {{subscribe: Function, getSnapshot: Function}} a stable source.
+     */
+    const labelSlotSources = new WeakMap()
+    function labelSlotSource(slots) {
+      const noop = { subscribe: () => () => {}, getSnapshot: () => 0 }
+      if (slots === undefined || slots === null || typeof slots !== 'object') return noop
+      if (typeof slots.subscribe !== 'function' || typeof slots.getVersion !== 'function') return noop
+      const cached = labelSlotSources.get(slots)
+      if (cached !== undefined) return cached
+      const source = {
+        subscribe: listener => slots.subscribe(LABEL_SLOT, listener),
+        getSnapshot: () => slots.getVersion(LABEL_SLOT),
+      }
+      labelSlotSources.set(slots, source)
+      return source
+    }
+
+    /** The source a seat uses when the face was degraded or omitted. */
+    const NO_LABEL_SLOT = { subscribe: () => () => {}, getSnapshot: () => 0 }
+
+    /**
      * How long the pointer must rest on a truncated model name before the
      * marquee starts. Long enough that sweeping across the grid never starts a
      * scroll, short enough to feel like a direct response (DEC-021).
@@ -2356,13 +2521,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
          * @param {{id: string, name: unknown}} group - one provider entry.
          * @returns {string} a display-ready label; never empty.
          */
-        const providerLabelOf = group => {
-          if (group.id === 'deepseek-account') return t('provider.account')
-          const resolved = resolveText === undefined ? undefined : resolveText(group.name)
-          if (typeof resolved === 'string' && resolved.trim() !== '') return resolved
-          const fallback = fallbackText(group.name)
-          return fallback.trim() === '' ? group.id : fallback
-        }
+        const providerLabelOf = group => providerLabel(group, t, resolveText)
         /**
          * A provider whose own name or id matches the query keeps its whole
          * catalog: `dou` shows the `豆包(doubao)` provider with every model it
@@ -2733,6 +2892,101 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         return { label, tone: badge.tone ?? 'neutral' }
       }
 
+      // ---- the trigger's label cell (DEC-028)
+      //
+      // The shipped picker does not paint a model name on its trigger: it
+      // renders the `conversation.input.model.label` slot and lets the winner
+      // decorate the name. Connection plugins use that seam for things the
+      // catalog does not carry — a promotion chip, a rate, and workbuddy's
+      // load mark (one/two/three queued people, or a rocket when idle). Drawing
+      // a bare name here therefore loses decoration the native trigger shows.
+      //
+      // This plugin cannot DECLARE that slot (the shipped entry already did, and
+      // a second declaration throws), but it does not need to: the declaration
+      // outlives our shadowing entry, so `entriesOfSlot` still names its owner
+      // and that owner's component can be rendered directly with the seats it
+      // expects. The occupant is third-party code, so the whole cell sits behind
+      // its own error boundary — a crashing chip must cost the chip, never the
+      // seat.
+      const labelSlot = props.labelSlot ?? NO_LABEL_SLOT
+      const subscribeLabel = useCallback(listener => labelSlot.subscribe(listener), [labelSlot])
+      const getLabelVersion = useCallback(() => labelSlot.getSnapshot(), [labelSlot])
+      useSyncExternalStore(subscribeLabel, getLabelVersion, getLabelVersion)
+      // Re-read on every render: the winner can change without the version
+      // changing (a disposed entry re-elected to its predecessor in the same
+      // microtask batch), and the read is a map lookup.
+      const labelEntry = typeof props.labelEntry === 'function'
+        ? derive('reading the model label slot', () => props.labelEntry(), undefined)
+        : undefined
+      /**
+       * The occupant's own props: the shipped owner share, exactly as the native
+       * picker passes it. Memoized on the identity of what it names, so the
+       * occupant does not see a "new" provider/model object on every paint.
+       */
+      const labelOwnerProps = useMemo(() => {
+        if (currentModel === null || currentModel === undefined) return undefined
+        const group = currentModel.group
+        return {
+          provider: {
+            id: group.id,
+            // The catalog's own name, unresolved: the occupant resolves it with
+            // its own locale seat, exactly as it does inside the native picker.
+            name: group.id === 'deepseek-account' ? t('provider.account') : group.name,
+          },
+          model: currentModel.model,
+          placement: 'trigger',
+          selected: true,
+        }
+      }, [currentModel, t])
+      /**
+       * The occupant's props, assembled once per (entry, model, label text).
+       *
+       * The identity has to be stable across renders: the occupant is an
+       * ordinary React component, and a fresh props object on every paint makes
+       * a memoized one re-render forever. `entry.inject(sessionId)` is the
+       * expensive half (it reads services and builds a face), so it is part of
+       * the same memo rather than a separate call per render.
+       */
+      const labelNode = useMemo(() => {
+        if (labelEntry === undefined || labelOwnerProps === undefined) return undefined
+        const Occupant = labelEntry.component
+        const face = typeof props.labelFace === 'function'
+          ? derive('building the model label face', () => props.labelFace(labelEntry), {})
+          : EMPTY_LABEL_FACE
+        const translate = typeof props.labelSeatFor === 'function'
+          ? derive('binding the model label locale', () => props.labelSeatFor(labelEntry.locale), identityTranslate)
+          : identityTranslate
+        return h(LabelBoundary, {
+          // Keyed by the winner, so a change of occupant remounts rather than
+          // handing one plugin's component another plugin's state.
+          key: `label-${labelEntry.options?.id ?? labelEntry.registrant ?? 'entry'}`,
+          fallback: undefined,
+        }, h(Occupant, { ...face, t: translate, ...labelOwnerProps }))
+      }, [labelEntry, labelOwnerProps, props.labelFace, props.labelSeatFor])
+
+      /**
+       * What the trigger draws when no label occupant answered: the catalog
+       * name, plus the model's own `badge` chip.
+       *
+       * This is the shipped picker's own fallback (name + `Tag`), reproduced
+       * rather than imported — the host's `Tag` lives in a primitives package
+       * this plugin does not depend on, and the chip's geometry is four
+       * declarations. Drawing the badge here matters even with an occupant
+       * installed: an occupant that wins the cell but does not reproduce a
+       * sibling's `model.badge` (or no occupant at all) would otherwise lose the
+       * promotion marker the native trigger shows.
+       */
+      const triggerFallbackLabel = () => {
+        const badge = triggerModel === undefined ? null : badgeOf(triggerModel)
+        if (badge === null) return h('span', { className: 'dshmf-triggerName' }, modelLabel)
+        return h('span', { className: 'dshmf-triggerLabel' },
+          // The shipped fallback puts the badge BEFORE the name on the trigger
+          // and after it in menus; the trigger is what this draws.
+          h('span', { className: 'dshmf-triggerBadge', 'data-tone': badge.tone }, badge.label),
+          h('span', { className: 'dshmf-triggerName' }, modelLabel),
+        )
+      }
+
       /**
        * Split a model name into React children, lifting any "xN" multiplier
        * marker (rate/size tags like "x0.01", "x1.5", "X 2.2") into a smaller,
@@ -2982,7 +3236,8 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
           },
         },
           svg(PATH_MODELS, 16, { className: 'dshmf-triggerIcon' }),
-          h('span', { className: 'dshmf-triggerText' }, modelLabel),
+          h('span', { className: 'dshmf-triggerText' },
+            labelNode === undefined ? triggerFallbackLabel() : labelNode),
           effortLabel === undefined ? null : h('span', { className: 'dshmf-triggerEffort' }, effortLabel),
           busy
             ? h('span', { className: 'dshmf-spin' })
@@ -3225,6 +3480,43 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
     }
 
     // ---------------------------------------------------------------------
+    // Label boundary
+    // ---------------------------------------------------------------------
+    /**
+     * Keep the trigger alive when the label cell's occupant fails.
+     *
+     * The occupant is another plugin's component, rendered here on the
+     * documented owner-props contract but without the renderer's own per-entry
+     * error boundary. It can therefore throw on a host whose props differ from
+     * the ones it was written for, or on data it did not expect. Catching it
+     * here costs the decoration, never the seat: the caller's `fallback` is
+     * `undefined`, which makes the trigger draw the catalog name exactly as the
+     * shipped picker does when the cell has no occupant.
+     *
+     * The report is once per failure, not once per render — a chip that throws
+     * on every paint would otherwise flood the console.
+     */
+    class LabelBoundary extends React.Component {
+      constructor(props) {
+        super(props)
+        this.state = { failed: false }
+      }
+
+      static getDerivedStateFromError() {
+        return { failed: true }
+      }
+
+      componentDidCatch(error, info) {
+        console.error('dsh-model-flatmap: the model label slot failed; the trigger falls back to the catalog name', error, info)
+      }
+
+      render() {
+        if (this.state.failed) return this.props.fallback ?? null
+        return this.props.children
+      }
+    }
+
+    // ---------------------------------------------------------------------
     // Seat boundary
     // ---------------------------------------------------------------------
     /**
@@ -3360,7 +3652,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       // Pure layout and grouping derivations plus the component itself,
       // exposed for `node --test` so grouping, filtering and the column
       // algorithm are pinned without a browser. The shell never reads this key.
-      __test: { marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, readDisplayMode, writeDisplayMode, createDisplayModeStore, DISPLAY_MODE_KEY, DISPLAY_MODE_DEFAULT, FLAT_DISPLAY_MODE, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore, quantizeMetric, metricChanged, METRIC_HYSTERESIS },
+      __test: { marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, readDisplayMode, writeDisplayMode, createDisplayModeStore, DISPLAY_MODE_KEY, DISPLAY_MODE_DEFAULT, FLAT_DISPLAY_MODE, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore, quantizeMetric, metricChanged, METRIC_HYSTERESIS, LabelBoundary, readLabelEntry, labelSeat, labelSlotSource, LABEL_SLOT, providerLabel },
       __component: ModelFlatMap,
       __seat: Seat,
       __nativeChip: NativeChip,
@@ -3607,6 +3899,28 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
             // register AFTER this face is built, and the button has to enable
             // itself without a reload.
             nativeAvailable: canStepAside,
+            // The trigger's label: the entry that owns the shipped picker's
+            // model-label cell, plus the two seats it needs to render (its own
+            // locale namespace and its business inject). Resolved per call so a
+            // connection plugin that registers a moment after boot still gets
+            // its chip on the trigger without a reload (DEC-028).
+            labelEntry: () => readLabelEntry(safeRead('slots')),
+            labelSeatFor: namespace => labelSeat(safeRead('locale'), namespace),
+            labelFace: entry => {
+              if (entry === undefined || typeof entry.inject !== 'function') return {}
+              try {
+                // The renderer's own contract: a session-scoped entry's inject
+                // receives the Session id and is merged UNDER the owner props.
+                const face = entry.inject(sessionId)
+                return face !== null && typeof face === 'object' ? face : {}
+              } catch (error) {
+                console.error('dsh-model-flatmap: the label slot face failed to build', error)
+                return {}
+              }
+            },
+            // A stable subscribe/getSnapshot pair so the trigger re-reads the
+            // winning entry when a connection plugin registers or disposes.
+            labelSlot: labelSlotSource(safeRead('slots')),
           }
         }
 
