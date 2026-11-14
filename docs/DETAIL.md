@@ -315,6 +315,59 @@ panel, so it opens closed with an empty query. Focus follows the disposed
 button down to the document; cross-plugin DOM queries for focus are not allowed,
 so it is not chased.
 
+## Project link
+
+Immediately left of the `默认样式` / `Default style` button sits an icon button
+that opens this project's GitHub page in a new tab. The two are one trailing
+pair: the icon carries the footer's auto margin, and the mode button follows it,
+so the pair stays pinned to the panel's bottom-right and wraps together on a
+narrow panel.
+
+**The address is derived, never hardcoded.** The browser half has no filesystem
+and no subprocess, so the Host reads the checkout with
+`git remote -v` and converts the first usable GitHub remote into a page URL.
+`origin` is tried first, then `upstream`, then the rest in configuration order.
+Every spelling git writes for the same repository resolves to the same page:
+
+| Configured remote | Opened page |
+|---|---|
+| `git@github.com:owner/repo.git` | `https://github.com/owner/repo` |
+| `https://github.com/owner/repo.git` | `https://github.com/owner/repo` |
+| `ssh://git@github.com/owner/repo` | `https://github.com/owner/repo` |
+| `git://github.com/owner/repo.git` | `https://github.com/owner/repo` |
+| `github.com:owner/repo` | `https://github.com/owner/repo` |
+
+A remote on another host (GitLab, Bitbucket, a self-hosted server) is refused
+rather than rewritten: opening a *different* repository than the one configured
+would be worse than opening the fallback, because nothing on screen would say
+the destination changed. Renaming the repository, moving it to another owner, or
+adding a fork upstream all change the destination without touching this plugin.
+
+**When there is no GitHub remote.** An npm-installed copy ships no `.git`, and a
+plain tarball has none either, so the button opens
+`https://github.com/zuosus/dsh-model-flatmap` — this project's own page — and
+its tooltip says so. That address is the one hardcoded value in the feature,
+declared once in `repo-url.js` and pinned by a test to `package.json`'s
+`repository.url` and `homepage` so the three cannot drift apart. The browser
+half repeats it (it cannot import a Host-only module), and a second test pins
+that repetition.
+
+**The click does not wait on the network.** The URL is prefetched when the panel
+opens, so the ordinary click has it in hand and opens the tab synchronously —
+`window.open` after an `await` is a popup the browser may block. Only a click
+that beats the prefetch takes the async path. A tab the browser refuses anyway
+is reported in the button's tooltip instead of being swallowed, and only an
+`http(s)` address can reach `window.open` at all: a payload naming
+`javascript:`, `file:` or any other scheme is discarded for the fallback.
+
+**Transport.** The Host answers one read-only route,
+`/dsh-model-flatmap/project-link`, resolved on every request rather than at
+activation — a remote added while the Host is running is picked up by the next
+click. It is guarded by the same Host/Origin fence and authenticated-Peer check
+the shipped plugins apply to their own routes, and fails closed if that check
+cannot answer. A composition without a web server simply does not register it,
+and the button falls back.
+
 ## Data and interaction
 
 Everything goes through public Client APIs:

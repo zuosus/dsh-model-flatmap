@@ -82,6 +82,18 @@
   时间」，因此一天之后再打开列表，那一行就是干净的。观察按同一个时间排序，最新的一条说了算，
   所以回放更早的历史既不能让一条已被后续调用清除的划线复活，也不能让一条已经过期的复活。
 - **跟随主题。** 仅使用宿主主题令牌着色，在浅色与深色主题下都正确。
+- **网页链接。** `默认样式` 按钮**左侧紧邻**有一个链接图标按钮，在新标签页打开本项目的
+  GitHub 页面。地址**不是写死的**：宿主半边用 `git remote -v` 读取 checkout 已配置的 remote
+  （`origin` 优先，其次 `upstream`，再其次其余），把 `git@github.com:owner/repo.git`、
+  `https://github.com/owner/repo.git`、`ssh://`、`git://`、`github.com:owner/repo` 等各种
+  拼写统一转成 `https://github.com/owner/repo` 页面地址。非 GitHub 宿主（GitLab、
+  Bitbucket、自建服务器）的 remote 会被**跳过而不是改写成 github.com**——改写会打开另一个
+  仓库，而界面上不会有任何提示。改名、换 owner、加 fork 都会自动跟随，不用改代码。当
+  checkout 没有任何可用的 GitHub remote（例如从 registry 装进 `node_modules`，那里没有
+  `.git`），按钮打开本项目主页 `https://github.com/zuosus/dsh-model-flatmap`，并在 tooltip
+  里说明这是兜底。面板打开时**预取**地址，所以正常点击是同步 `window.open`，不会被弹窗拦截；
+  新标签页带 `noopener,noreferrer`，且只有 `http(s)` 地址能进 `window.open`。点击行为与
+  `默认样式` 按钮互不影响，后者的外观、`aria-pressed` 语义与禁用规则一字未改。
 - **原生模式。** 面板右下角的 `默认样式` 按钮把输入框的模型座位交还给**宿主自己的**选择器——真正
   出厂的 `ModelSelect`，不是它的复制品。做法是**让位**：本插件 dispose 掉自己在
   `conversation.input.model` 的注册，槽于是选中下方那条出厂条目，由宿主渲染它自己的组件。没有

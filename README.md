@@ -112,6 +112,25 @@ levels, and the agent-teamwork switch on one surface:
   by a later call or by age.
 - **Theme-aware.** Styled with host theme tokens only; looks correct in both
   light and dark themes.
+- **Project link.** Immediately left of the `Default style` button sits a link
+  icon that opens this project's GitHub page in a new tab. The address is **not
+  hardcoded**: the Host reads the checkout's configured remotes with
+  `git remote -v` (`origin` first, then `upstream`, then the rest) and turns
+  every spelling git writes — `git@github.com:owner/repo.git`,
+  `https://github.com/owner/repo.git`, `ssh://`, `git://`,
+  `github.com:owner/repo` — into the same `https://github.com/owner/repo` page.
+  A remote on another host (GitLab, Bitbucket, a self-hosted server) is skipped
+  rather than rewritten to github.com: rewriting would open a *different*
+  repository with nothing on screen saying so. Renaming the repository, moving
+  it to another owner, or adding a fork upstream all change the destination
+  without touching this plugin. When the checkout has no usable GitHub remote
+  (an npm-installed copy ships no `.git`), the button opens this project's home
+  page and its tooltip says that is the fallback. The URL is prefetched when the
+  panel opens, so an ordinary click is a synchronous `window.open` that a popup
+  blocker will not eat; the tab opens with `noopener,noreferrer`, and only
+  `http(s)` addresses can reach it. Clicking it does not affect the
+  `Default style` button, whose look, `aria-pressed` meaning and disabled rule
+  are unchanged.
 - **Native mode.** The panel's bottom-right `Default style` button hands the
   composer's model seat back to the **host's own** picker — the real shipped
   `ModelSelect`, not a reproduction of it. The plugin does this by *stepping

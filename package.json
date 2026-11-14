@@ -21,6 +21,7 @@
   },
   "files": [
     "index.js",
+    "repo-url.js",
     "telemetry.js",
     "client.js",
     "cordis.patch.yml",

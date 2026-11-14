@@ -6,27 +6,168 @@
  * in the client UI, and reads the Session's model directory, projections and
  * `session.selectModel` through public Client APIs.
  *
- * The Host contributes no service, tool or event. It has exactly one job of its
- * own: the anonymous daily heartbeat in `telemetry.js` (see DEC-031), which is
- * how the project can tell how many machines actually run the picker and how
- * many of them ran it today. npm downloads cannot answer that (CI, mirrors and
- * reinstalls all count) and a Client-side counter cannot either (a tab that is
- * never reloaded reports nothing).
+ * The Host contributes no service, tool or event. It has exactly two jobs of
+ * its own:
  *
- * Two rules keep that job from ever becoming the Host's problem:
+ * 1. The anonymous daily heartbeat in `telemetry.js` (see DEC-031), which is
+ *    how the project can tell how many machines actually run the picker and how
+ *    many of them ran it today. npm downloads cannot answer that (CI, mirrors
+ *    and reinstalls all count) and a Client-side counter cannot either (a tab
+ *    that is never reloaded reports nothing).
+ * 2. One read-only route answering the panel's "open the project page" button
+ *    with the URL its checkout configures (see `repo-url.js`). The browser half
+ *    has no filesystem and no subprocess, so the checkout can only be read
+ *    here. The route resolves on EVERY request rather than at activation: a
+ *    remote added while the Host is running is picked up by the next click,
+ *    and a checkout that is not a repository yet can become one.
  *
- * 1. It runs inside `void` — it is a bypass, never on any startup path, and the
- *    picker's UI is already live before the request is even built.
- * 2. Every failure is swallowed into at most one log line. A dead endpoint, a
- *    read-only home directory or a missing `crypto` must cost the plugin
- *    nothing; statistics failing can never be a plugin fault.
+ * Two rules keep those jobs from ever becoming the Host's problem:
+ *
+ * 1. Both run off any startup path — the heartbeat inside `void`, the route
+ *    only when the button is pressed — so the picker's UI is live before
+ *    either does anything.
+ * 2. Every failure is swallowed into at most one log line, or into the
+ *    documented fallback. A dead endpoint, a read-only home directory, a
+ *    missing `crypto` or a checkout with no GitHub remote must cost the plugin
+ *    nothing; neither statistics nor a link can ever be a plugin fault.
  */
 import { readFileSync } from 'node:fs'
 
+import { FALLBACK_PROJECT_URL, resolveProjectUrl } from './repo-url.js'
 import { TelemetryReporter, resolveDataDir } from './telemetry.js'
 
 export const name = 'dsh-model-flatmap'
+
+/**
+ * Services the Host half reads, all optional at call time.
+ *
+ * `webServer` carries the read-only project-link route; `connection` supplies
+ * the trust fence that route is checked against. Neither is required for the
+ * picker itself, so a composition without them still loads: the route is then
+ * simply not registered, and the button falls back to {@link FALLBACK_PROJECT_URL}.
+ */
 export const inject = []
+
+/**
+ * Path of the read-only route answering the panel's project-link button.
+ *
+ * Namespaced under the package name so it cannot collide with another plugin's
+ * route, and document-relative when the browser fetches it, like every other
+ * app-owned route. It deliberately does NOT live under `/api`: that prefix is
+ * the Connection carrier's, and a route there would have to reproduce its
+ * envelope instead of returning plain JSON.
+ */
+export const PROJECT_LINK_PATH = '/dsh-model-flatmap/project-link'
+
+/**
+ * Answer one project-link read.
+ *
+ * The URL is resolved per request, so the answer always reflects the checkout
+ * as it is now. A failure inside the resolution is answered with the fallback
+ * rather than an error status: the button's job is to have somewhere to go, and
+ * a 500 would leave it dead for a reason the user cannot act on.
+ *
+ * @returns {Promise<{url: string, source: 'remote'|'fallback', remote?: string}>}
+ *   The page URL and where it came from.
+ */
+async function projectLinkPayload() {
+  try {
+    return await resolveProjectUrl()
+  } catch {
+    return { url: FALLBACK_PROJECT_URL, source: 'fallback' }
+  }
+}
+
+/**
+ * Register the read-only project-link route.
+ *
+ * Registration is best-effort by design: a composition without a web server
+ * (the Desktop app serves its own files) must still load the picker, so a
+ * missing service or a rejected registration costs the link, never the plugin.
+ *
+ * @param {object} ctx - the Host plugin context.
+ * @returns {void}
+ */
+function registerProjectLink(ctx) {
+  let webServer
+  try {
+    webServer = typeof ctx?.get === 'function' ? ctx.get('webServer') : undefined
+  } catch {
+    webServer = undefined
+  }
+  if (webServer === undefined || typeof webServer.register !== 'function') return
+
+  try {
+    const register = () => webServer.register({
+      kind: 'exact',
+      path: PROJECT_LINK_PATH,
+      handler: async (req, res) => {
+        // The route answers the Host/Origin fence and an authenticated Peer
+        // exactly as the shipped plugins' own routes do. Without the fence a
+        // page on any origin could read this machine's checkout details.
+        const rejection = trustRejection(ctx, req)
+        if (rejection !== undefined) {
+          res.statusCode = rejection
+          res.end()
+          return
+        }
+        if (req.method !== 'GET' && req.method !== 'HEAD') {
+          res.statusCode = 405
+          res.setHeader('allow', 'GET, HEAD')
+          res.end()
+          return
+        }
+        const payload = await projectLinkPayload()
+        const body = JSON.stringify(payload)
+        res.statusCode = 200
+        res.setHeader('content-type', 'application/json; charset=utf-8')
+        res.setHeader('cache-control', 'no-store')
+        res.setHeader('content-length', Buffer.byteLength(body))
+        res.end(req.method === 'HEAD' ? undefined : body)
+      },
+    })
+    // `ctx.effect` ties the route to the plugin's lifetime, so disabling the
+    // plugin removes it. A context without it still gets the route — a route
+    // left behind is a smaller fault than a button that silently never works —
+    // and the disposer the server hands back is then simply dropped.
+    if (typeof ctx?.effect === 'function') {
+      ctx.effect(() => register(), 'dsh-model-flatmap: project-link route')
+    } else {
+      register()
+    }
+  } catch (error) {
+    warnOnce(ctx, `dsh-model-flatmap: the project-link route was not registered (plugin unaffected): ${String(error?.message ?? error)}`)
+  }
+}
+
+/**
+ * Apply the Host/Origin fence and require an authenticated live Peer.
+ *
+ * `connection.requestRejection` is the public entry point for exactly this
+ * check. When the Connection service is absent (a composition that serves no
+ * browser), there is no fence to consult and the route stays reachable — which
+ * is the same trust level as the surrounding server.
+ *
+ * @param {object} ctx - the Host plugin context.
+ * @param {import('node:http').IncomingMessage} req - the request to check.
+ * @returns {number|undefined} the rejection status, or `undefined` to proceed.
+ */
+function trustRejection(ctx, req) {
+  let connection
+  try {
+    connection = typeof ctx?.get === 'function' ? ctx.get('connection') : undefined
+  } catch {
+    connection = undefined
+  }
+  if (connection === undefined || typeof connection.requestRejection !== 'function') return undefined
+  try {
+    const rejection = connection.requestRejection(req)
+    return typeof rejection === 'number' ? rejection : undefined
+  } catch {
+    // A fence that cannot answer must not open the route: fail closed.
+    return 403
+  }
+}
 
 /**
  * How often a still-running Host re-checks whether today's heartbeat is done.
@@ -159,4 +300,9 @@ export function apply(ctx) {
     // No timer only costs the across-midnight case, never the launch heartbeat.
     warnOnce(ctx, `dsh-model-flatmap: heartbeat re-check was not scheduled (plugin unaffected): ${String(error?.message ?? error)}`)
   }
+
+  // The panel's project-link button reads the checkout through this route (see
+  // `repo-url.js`). It is registered last and swallows its own failures: a
+  // composition with no web server must still load the picker.
+  registerProjectLink(ctx)
 }

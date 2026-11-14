@@ -5,6 +5,62 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## LES-027 — 2026-11-15 — 浏览器半边读不到 checkout，别去翻客户端的 API
+
+给面板加「打开项目网页」按钮时，第一反应是在客户端找一个「当前仓库 remote」的
+访问器。**没有，而且不该有**：客户端插件没有 fs、没有 subprocess，全库检索
+`@deepseek-ai/*` 后确认宿主也不提供这样的服务或路由——`workspace.follow()` 只给
+工作区**目录路径**，`repository.url` 只在 plugin-market 里描述**插件包自己**。
+
+于是「怎么把宿主的数据弄到浏览器」变成真问题。三条路里只有一条对用户安装的 bundle
+成立：
+
+- **Typert Remote namespace** —— 客户端装配 `@deepseek-ai/dsh-api-remotes` 是一张
+  **构建期白名单**，加 namespace 要改 DSH 自身源码并重新生成 `./remote` 产物。
+  用户装的 bundle 扩不了这张表，写了也不生效。
+- **boot global（`window.__DSH_BOOT__`）** —— 页面加载时的静态值，随 checkout 变化
+  的地址用不上。
+- **`ctx.webServer.register` 自建路由 + 浏览器 `fetch`** —— 唯一可行，而且本机
+  profile 里已有先例（`dsh-file-finder`）。配套的两件事必须一起抄：
+  `connection.requestRejection(req)` 过宿主信任栅栏，以及**该函数抛错时 fail closed**。
+
+**教训**：判断一个能力「客户端能不能做」时，先问它需要的是**浏览器里的状态**还是
+**机器上的事实**。后者一律得走宿主半边，而宿主半边的通道在用户安装的 bundle 里
+只有 HTTP 路由这一条。
+
+## LES-028 — 2026-11-15 — 「不硬编码」和「要有兜底」可以同时成立，只要兜底是最后一步
+
+需求同时说了「不要硬编码项目地址」和「没有 remote 时就用这个地址」。这两句不矛盾，
+但**实现顺序决定了它是不是真的没硬编码**：
+
+先写 `FALLBACK_PROJECT_URL` 常量，再让解析流程**遍历完所有 remote 才**返回它——
+这时常量只是最后一步。反过来先写常量再「顺手」加个 remote 读取，常量就成了答案。
+
+守住这条线的三个具体动作：
+
+1. **兜底常量只声明一次**（宿主半边 `repo-url.js` 顶部），浏览器半边因为不能
+   import 宿主模块而重复一份，就**用测试钉住两份相等**，并另用测试钉住它与
+   `package.json` 的 `repository.url` / `homepage` 一致。重复不可怕，没人钉才可怕。
+2. **非目标宿主的 remote 要拒绝，不要改写**。把 GitLab 地址改写成 github.com 会
+   打开**另一个仓库**，界面上没有任何提示说目的地变了——这比打开兜底页更糟。
+3. **返回值带上来源**（`source: 'remote' | 'fallback'`），让 UI 能如实说自己是
+   从 remote 来的还是兜底的。一个说不清自己地址哪来的按钮，等于在骗用户。
+
+## LES-029 — 2026-11-15 — 点击后才 `await` 再 `window.open`，等于把按钮交给弹窗拦截器
+
+「网页链接」按钮第一版想的是：点击 → `fetch` 拿地址 → `window.open`。这是错的。
+`await` 之后调用 `window.open` 已经脱离了用户手势，浏览器有权把它当弹窗拦掉，
+表现是「有时能开、有时没反应」——最难查的那类 bug。
+
+正确的做法是**把网络从点击路径上挪走**：面板打开时就预取地址，点击时拿着现成结果
+**同步** `window.open`。只有抢在预取完成前的点击才走异步路径。
+
+另外两件一起做掉：`window.open(url, '_blank', 'noopener,noreferrer')` 切断 opener
+（否则新页面能拿到 `window.opener` 反向操作本页），以及**只放行 `http(s)`**——
+宿主返回的字符串是**数据**不是指令，`javascript:` / `file:` / `data:` 一律丢弃。
+真的被拦截时在 tooltip 里说明，不要装作打开了。
+
+
 ## LES-026 — 2026-11-14 — 「实测通过」要连着测几次，尾延迟会替你判失败
 
 加心跳时，`POST https://dsh.zuos.us/api/e` 单次实测成功、返回 202，于是把请求预算定成

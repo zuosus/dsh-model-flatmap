@@ -382,6 +382,31 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
 .dshmf-modeBtn:disabled { color: var(--dsw-alias-label-dimmed); cursor: default; }
 .dshmf-modeBtn:focus-visible { outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: -2px; }
 
+/* Project-link button: the icon member sitting IMMEDIATELY LEFT of the
+   display-mode button.
+   It is not a second trailing member: the two are one trailing PAIR, so the
+   auto margin that pins the pair to the right lives on this button and the
+   mode button follows it with no margin of its own. That keeps the icon
+   adjacent to the mode button in the ordinary case and, because they are
+   separate flex items, still lets the footer wrap the pair together when the
+   panel is narrow — the icon keeps its margin, so the pair stays right.
+   The 22px height and radius-xs mirror the mode button, so the two read as one
+   control group; the 2px gap is the same inset the segment control uses. */
+.dshmf-linkBtn {
+  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  margin-left: auto; margin-right: 2px;
+  width: 22px; height: 22px; padding: 0; border: 0; border-radius: var(--dsw-radius-xs);
+  background: transparent; color: var(--dsw-alias-label-secondary);
+  cursor: pointer; transition: color 120ms ease, background 120ms ease;
+}
+@media (hover: hover) { .dshmf-linkBtn:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); } }
+.dshmf-linkBtn:disabled { color: var(--dsw-alias-label-dimmed); cursor: default; }
+.dshmf-linkBtn:focus-visible { outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: -2px; }
+/* When the pair wraps onto its own line the mode button must NOT take the
+   margin back: the icon already carries it, and two auto margins would split
+   the free space and push the icon away from the button it belongs beside. */
+.dshmf-linkBtn + .dshmf-modeBtn { margin-left: 0; }
+
 /* The bottom action that brings the panel back from native mode. It occupies
    the HOST picker's own root-menu slot (conversation.input.model.options), which
    renders its occupants after the Model / Effort rows. The slot hands us a bare
@@ -582,6 +607,12 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
     /* Four tiles: the flat panel this control returns to, so the icon names the
        DESTINATION rather than repeating the model glyph above it. */
     const PATH_GRID = 'M2.4 2.4h3.6v3.6H2.4zM8 2.4h3.6v3.6H8zM2.4 8h3.6v3.6H2.4zM8 8h3.6v3.6H8z'
+    /* Two interlocking links, drawn at the panel's own 1.5px stroke weight and
+       centred in the 14-unit box (bbox 1.2–12.8). It names the ACTION — leave
+       the panel for a web page — rather than the destination's owner, because
+       the owner is whatever repository the checkout configures and can change
+       without this file. */
+    const PATH_LINK = 'M5.833 7.583a2.917 2.917 0 0 0 4.398.315l1.75-1.75a2.917 2.917 0 0 0-4.124-4.124l-1.003.997M8.167 6.417a2.917 2.917 0 0 0-4.398-.315l-1.75 1.75a2.917 2.917 0 0 0 4.124 4.124l.997-.997'
 
     function svg(path, size, extra) {
       return h('svg', {
@@ -1494,6 +1525,100 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
     }
 
     // ---------------------------------------------------------------------
+    // Project link: the icon button beside the display-mode button.
+    //
+    // The browser cannot read the checkout — no filesystem, no subprocess — so
+    // the Host answers ONE read-only route with the repository's page URL (see
+    // `repo-url.js`). This half only fetches that route and opens the result.
+    //
+    // Two properties matter more than the fetch itself:
+    //
+    // 1. **The click never waits on the network.** The URL is prefetched when
+    //    the panel opens, so the usual click has an answer in hand and opens
+    //    the tab synchronously — a `window.open` after an `await` is a popup
+    //    the browser is entitled to block. Only a click that arrives before the
+    //    prefetch finished takes the async path, and that path is still allowed
+    //    to fail visibly rather than doing nothing.
+    // 2. **The address is never hardcoded here.** The Host resolves it from the
+    //    configured remote, so a fork, a rename or a different owner changes
+    //    the destination without touching this file. The constant below is the
+    //    Host's documented fallback, repeated only so a build whose route is
+    //    unreachable still has somewhere to go.
+    // ---------------------------------------------------------------------
+    const PROJECT_LINK_PATH = 'dsh-model-flatmap/project-link'
+    const PROJECT_LINK_FALLBACK = 'https://github.com/zuosus/dsh-model-flatmap'
+    /**
+     * How long the prefetch may take before the button settles for the
+     * fallback. Short on purpose: a click must open a tab promptly, and this
+     * route answers from local disk with no network hop of its own.
+     */
+    const PROJECT_LINK_TIMEOUT_MS = 4_000
+
+    /**
+     * Ask the Host for the project page URL.
+     *
+     * Every failure — an unreachable route, a non-JSON body, a malformed
+     * payload, a timeout, a build with no Host half at all — resolves to the
+     * fallback instead of rejecting. The button's job is to have somewhere to
+     * go, so "could not resolve" must never mean "does nothing".
+     *
+     * @param {Function} [fetchImpl] - fetch override, for tests.
+     * @returns {Promise<{url: string, source: string}>} the URL and its origin.
+     */
+    async function fetchProjectLink(fetchImpl) {
+      const doFetch = typeof fetchImpl === 'function'
+        ? fetchImpl
+        : (typeof fetch === 'function' ? fetch : undefined)
+      if (doFetch === undefined) return { url: PROJECT_LINK_FALLBACK, source: 'fallback' }
+      const controller = typeof AbortController === 'function' ? new AbortController() : undefined
+      const timer = controller === undefined ? undefined : setTimeout(() => { controller.abort() }, PROJECT_LINK_TIMEOUT_MS)
+      try {
+        const response = await doFetch(PROJECT_LINK_PATH, {
+          method: 'GET',
+          headers: { accept: 'application/json' },
+          credentials: 'same-origin',
+          cache: 'no-store',
+          ...controller === undefined ? {} : { signal: controller.signal },
+        })
+        if (response === undefined || response === null || response.ok !== true) {
+          return { url: PROJECT_LINK_FALLBACK, source: 'fallback' }
+        }
+        const payload = await response.json()
+        const url = payload !== null && typeof payload === 'object' ? payload.url : undefined
+        // Only an http(s) address is ever opened: a payload naming another
+        // scheme (a `javascript:` URL, a `file:` path) is not a web page and
+        // must not reach `window.open`.
+        if (typeof url !== 'string' || !/^https?:\/\//iu.test(url)) {
+          return { url: PROJECT_LINK_FALLBACK, source: 'fallback' }
+        }
+        const source = payload.source === 'remote' ? 'remote' : 'fallback'
+        return { url, source }
+      } catch {
+        return { url: PROJECT_LINK_FALLBACK, source: 'fallback' }
+      } finally {
+        if (timer !== undefined) clearTimeout(timer)
+      }
+    }
+
+    /**
+     * Open one URL in a new tab, without handing the opener a handle on this
+     * page. A blocked popup returns `null`, which the caller reports instead of
+     * silently pretending the tab opened.
+     *
+     * @param {string} url - an http(s) address.
+     * @returns {boolean} whether a tab was requested.
+     */
+    function openInNewTab(url) {
+      try {
+        if (typeof window === 'undefined' || typeof window.open !== 'function') return false
+        const opened = window.open(url, '_blank', 'noopener,noreferrer')
+        return opened !== null && opened !== undefined
+      } catch {
+        return false
+      }
+    }
+
+    // ---------------------------------------------------------------------
     // Insufficient-balance marks are GLOBAL, not Session-scoped.
     //
     // Whether a model has any quota left is a fact about the model route (and
@@ -2012,6 +2137,11 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         'native.enter': '切换到默认样式',
         'native.back': '回到平铺模型面板',
         'native.unavailable': '默认样式当前不可用',
+        'link.label': '网页链接',
+        'link.open': '在新标签页打开项目网页',
+        'link.openFrom': '在新标签页打开项目网页：{url}',
+        'link.fallback': '未找到可用的 GitHub 远程地址，打开本项目主页',
+        'link.failed': '浏览器阻止了新标签页，请允许弹出窗口后重试',
       },
       en: {
         'provider.account': 'DeepSeek Account',
@@ -2046,6 +2176,11 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         'native.enter': 'Switch to the default style',
         'native.back': 'Back to the flat model panel',
         'native.unavailable': 'The default style is unavailable right now',
+        'link.label': 'Web page',
+        'link.open': 'Open the project web page in a new tab',
+        'link.openFrom': 'Open the project web page in a new tab: {url}',
+        'link.fallback': 'No usable GitHub remote was found; open this project\'s home page',
+        'link.failed': 'The browser blocked the new tab. Allow pop-ups and try again.',
       },
     }
 
@@ -2396,6 +2531,33 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         else modeFace.set(next)
       }
 
+      /**
+       * Open the project page in a new tab.
+       *
+       * The prefetched URL is used synchronously when it is already in hand,
+       * which is the ordinary case and the only one that reliably survives a
+       * popup blocker. Before it lands, the same fetch is awaited once and then
+       * opened; if the browser still refuses, the button says so rather than
+       * looking dead.
+       *
+       * @returns {void}
+       */
+      const openProjectLink = () => {
+        const launch = url => {
+          if (openInNewTab(url)) setLinkFailure(false)
+          else setLinkFailure(true)
+        }
+        if (projectLink !== null) {
+          launch(projectLink.url)
+          return
+        }
+        // Not prefetched yet (or the prefetch failed): resolve once, then open.
+        fetchProjectLink().then(result => {
+          setProjectLink(result)
+          launch(result.url)
+        })
+      }
+
       // Keep the store attached to this Session's feed while the seat is mounted.
       // It is shared, so unmounting must NOT dispose it — the marks belong to the
       // page, not to this seat.
@@ -2414,6 +2576,13 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       const [teamFailure, setTeamFailure] = useState(null)
       const [confirming, setConfirming] = useState(false)
       const [replan, setReplan] = useState(0)
+      // The project page URL, prefetched while the panel is open. `null` means
+      // "not resolved yet"; the button stays enabled either way, because the
+      // fallback is a real destination rather than a failure.
+      const [projectLink, setProjectLink] = useState(null)
+      // Set when the browser refused to open a tab, so the button can say why
+      // instead of appearing to do nothing.
+      const [linkFailure, setLinkFailure] = useState(false)
 
       const rootRef = useRef(null)
       const triggerRef = useRef(null)
@@ -2814,10 +2983,27 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         setQuery('')
         setConfirming(false)
         setTeamFailure(null)
+        setLinkFailure(false)
         load()
         const timer = window.setTimeout(() => { searchRef.current?.focus() }, 0)
         return () => { window.clearTimeout(timer) }
       }, [open, load])
+
+      // Prefetch the project page URL while the panel is open.
+      //
+      // Doing this on open rather than on click is what lets the click open the
+      // tab SYNCHRONOUSLY: `window.open` after an `await` is a popup the browser
+      // may block, and a link button that only sometimes opens is worse than one
+      // that always does. The fetch is cancelled on close and on unmount, so a
+      // panel nobody is looking at holds no request open.
+      useEffect(() => {
+        if (!open) return undefined
+        let cancelled = false
+        fetchProjectLink().then(result => {
+          if (!cancelled) setProjectLink(result)
+        })
+        return () => { cancelled = true }
+      }, [open])
 
       const close = useCallback((restoreFocus = false) => {
         setOpen(false)
@@ -3421,6 +3607,29 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
                     }, h('span', { className: 'dshmf-thumb' })),
                   ),
 
+                // ---- project link: the icon member IMMEDIATELY LEFT of the
+                // display-mode button, so the two read as one trailing pair.
+                // It opens the repository page this checkout configures, in a
+                // new tab. It is never disabled for "no remote": the Host
+                // answers with this project's own page in that case, which is a
+                // real destination rather than a failure. The only thing that
+                // can make it unusable is a browser refusing the tab, and that
+                // is reported in the tooltip instead of being pre-empted.
+                h('button', {
+                  type: 'button',
+                  className: 'dshmf-linkBtn',
+                  'aria-label': t('link.label'),
+                  title: linkFailure
+                    ? t('link.failed')
+                    : (projectLink === null
+                      ? t('link.open')
+                      : (projectLink.source === 'remote'
+                        ? fill(t, 'link.openFrom', { url: projectLink.url })
+                        : t('link.fallback'))),
+                  'data-source': projectLink === null ? undefined : projectLink.source,
+                  onClick: () => { openProjectLink() },
+                }, svg(PATH_LINK, 12)),
+
                 // ---- display mode: hand the seat back to the Host's own
                 // picker, or take it back. One button, `aria-pressed` carrying
                 // the state. It is the footer's trailing member, so an auto left
@@ -3699,7 +3908,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       // Pure layout and grouping derivations plus the component itself,
       // exposed for `node --test` so grouping, filtering and the column
       // algorithm are pinned without a browser. The shell never reads this key.
-      __test: { marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, readDisplayMode, writeDisplayMode, createDisplayModeStore, DISPLAY_MODE_KEY, DISPLAY_MODE_DEFAULT, FLAT_DISPLAY_MODE, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore, quantizeMetric, metricChanged, METRIC_HYSTERESIS, LabelBoundary, readLabelEntry, labelSeat, labelSlotSource, LABEL_SLOT, providerLabel },
+      __test: { marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, readDisplayMode, writeDisplayMode, createDisplayModeStore, DISPLAY_MODE_KEY, DISPLAY_MODE_DEFAULT, FLAT_DISPLAY_MODE, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore, quantizeMetric, metricChanged, METRIC_HYSTERESIS, LabelBoundary, readLabelEntry, labelSeat, labelSlotSource, LABEL_SLOT, providerLabel, fetchProjectLink, openInNewTab, PROJECT_LINK_PATH, PROJECT_LINK_FALLBACK, PROJECT_LINK_TIMEOUT_MS },
       __component: ModelFlatMap,
       __seat: Seat,
       __nativeMenuRow: NativeMenuRow,

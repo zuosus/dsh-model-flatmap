@@ -5,6 +5,95 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-032 — 2026-11-15 — 网页链接按钮：地址从 checkout 的 remote 推导，宿主半边读、浏览器半边开
+
+**Context.** 用户要求在「展示方式切换按钮」（即页脚的 `默认样式` 按钮）左侧紧邻位置
+新增一个「网页链接」图标按钮：点击时读取**当前代码仓库已配置的 GitHub remote**，
+转成浏览器可访问的 GitHub 页面 URL，在新标签页打开；并明确两条红线——**不要硬编码
+项目地址**，**不要改变现有「展示方式切换」按钮的功能**。
+
+追问澄清时用户给了两点：目标 URL 是 `https://github.com/zuosus/dsh-model-flatmap`，
+且当没有可用 remote 时就回退到它（原话 `hardcode: https://github.com/zuosus/dsh-model-flatmap`）。
+这两点合起来是「地址优先从 remote 推导，remote 不可用时用本项目主页兜底」。
+
+**Findings.**
+
+- 浏览器半边**读不到 checkout**：客户端插件没有 fs、没有 subprocess。全库检索
+  `@deepseek-ai/*` 后确认，宿主**没有任何**「返回当前仓库 remote / 仓库根」的服务或
+  路由；`ctx.remote.workspace.follow()` 只给工作区**目录路径**，
+  `repository.url` 只出现在 plugin-market 里描述**插件包自己**的元数据。
+- 因此需要一个宿主→浏览器的通道。三条候选：(1) `ctx.webServer.register` 自建
+  HTTP 路由，浏览器直接 `fetch`；(2) Typert Remote namespace；(3) boot global 注入。
+- **(2) 走不通**：`@deepseek-ai/dsh-api-remotes` 的客户端装配是一张**构建期白名单**，
+  新增 namespace 必须改 DSH 自身源码并重新生成 `./remote` 产物——用户安装的 bundle
+  无法扩这张表。**(3) 不适用**：boot global 是页面加载时的静态值，而这个地址要随
+  checkout 变化。**(1) 可行**，且本机 profile 里已有先例：
+  `dsh-file-finder` 就是 `ctx.webServer.register` + 浏览器 `fetch('/dsh-file-finder/...')`，
+  并用 `connection.requestRejection(req)` 过宿主的信任栅栏。
+- `git remote -v` 会为每个 remote 打印 fetch/push **两行**，顺序**不保证**；
+  `git remote get-url` 只给单个 remote。要「origin 优先 + 兜底任意可用 remote」，
+  用 `git remote -v` 自己去重排序更直接。
+
+**Decision.**
+
+1. **宿主半边读 remote，浏览器半边只开标签页**。新增 `repo-url.js`：`git remote -v`
+   → 按 `origin` / `upstream` / 其余排序 → 逐个 `githubPageUrl()` 转换 → 第一个可用的
+   就是答案。地址**从不写死**：改名、换 owner、加 fork 都会自动跟随。
+2. **只认 github.com，其它宿主一律拒绝而不是改写成 github.com**。把 GitLab 地址
+   改写成 github.com 会打开**另一个仓库**，而界面上不会有任何提示说明目的地变了——
+   那比打开兜底页更糟。非 GitHub remote 会被跳过，继续试下一个。
+3. **兜底地址是唯一写死的常量，且只有它在所有 remote 都失败后才出现**。
+   `FALLBACK_PROJECT_URL` 在 `repo-url.js` 顶部声明一次；浏览器半边因为不能 import
+   宿主模块而**重复**一份，用两个测试分别钉住：一个比对 `package.json` 的
+   `repository.url` / `homepage`，一个比对宿主与浏览器的两份常量。
+4. **路由按请求解析，不在激活时缓存**。`/dsh-model-flatmap/project-link` 每次被请求
+   都重新跑一遍解析：Host 运行期间新加的 remote 下一次点击就生效，而「此刻还不是仓库、
+   等会儿才 `git init`」也能自己好起来。
+5. **点击不等网络**。面板打开时就预取地址，正常点击拿着现成结果**同步** `window.open`
+   ——`await` 之后再 `window.open` 是浏览器有权拦截的弹窗。只有抢在预取完成前的点击
+   才走异步路径。真的被拦截时在 tooltip 里说明，而不是装作打开了。
+6. **只有 `http(s)` 地址能进 `window.open`**。payload 里的 `javascript:`、`file:`、
+   `data:` 一律丢弃改用兜底——这是把宿主返回的字符串当**数据**而不是当可信指令。
+7. **路由过宿主自己的信任栅栏**：`connection.requestRejection(req)`，与
+   `dsh-file-finder` 等自带路由的插件一致；该函数抛错时**fail closed**（403），
+   不能因为栅栏答不上来就把路由敞开。没有 `webServer` 的组合就不注册，按钮走兜底。
+8. **`margin-left: auto` 从模式按钮搬到链接按钮上**，两者成为**一个尾部对**：
+   图标带 auto margin、模式按钮紧跟（`.dshmf-linkBtn + .dshmf-modeBtn { margin-left: 0 }`）。
+   这样「紧邻」是结构性的，且面板变窄时这一对一起换行仍然靠右。模式按钮自身的
+   外观、`aria-pressed` 语义、`disabled` 规则**一个字符都没动**。
+
+**Rejected.**（1）用 Typert Remote namespace：需要改 DSH 自身的构建期装配白名单，
+用户安装的 bundle 做不到。（2）在客户端写死 GitHub 地址：用户明确禁止，且 fork/改名
+就会失效。（3）用 `/plugins/<id>/assets/*.json` 传地址：那条路由只服务 5 种图片扩展名，
+`.json` 直接 404。（4）把非 GitHub remote 改写成 github.com：会打开错误的仓库且无提示。
+（5）在没有 remote 时禁用按钮：用户明确要求这种情况下仍打开本项目主页，禁用会让
+按钮看起来坏了。（6）点击时才发请求：`await` 后的 `window.open` 容易被弹窗拦截，
+所以改为打开面板时预取。
+
+**Consequences.**
+
+- `index.js` 的 `inject` 仍为空数组：`webServer` / `connection` 都在调用时用
+  `ctx.get` 惰性读取，缺失只是不注册路由，不会让插件加载失败。
+- 新增 `repo-url.js` 已加入 `package.json` 的 `files`（未加 `exports`：它是内部模块，
+  由 `index.js` 相对 import）。
+- 测试从 176 增至 215：`test/repo-url.test.mjs` 24 项覆盖各种 remote 拼写、
+  非 GitHub 拒绝、去重排序、兜底路径、两份常量一致性，以及宿主路由本身
+  （JSON 应答、405、信任栅栏与 fail-closed、无 `webServer` / 无 `ctx.effect` /
+  注册抛错都不影响插件加载）；`test/render.test.mjs` 新增 15 项覆盖位置
+  （结构相邻 + 文档顺序）、非 toggle、预取/兜底/协议白名单/新标签页与
+  `noopener,noreferrer`、CSS 配对规则与主题 token、双语词条与占位符一致性。
+- **没有 `ctx.effect` 时仍然注册路由**：这是实现后自查发现的边界。最初写成
+  `ctx.effect(() => register())`，在没有该生命周期助手的上下文里会**静默不注册**，
+  按钮就永远走兜底。现在 `ctx.effect` 存在才挂 disposer，否则直接注册——
+  **一条留下的路由比一个悄悄永远不工作的按钮便宜**。
+- **tooltip 占位符名与填充名必须一致**：`link.openFrom` 最初写成 `{remote}` 而调用点
+  填的是 `url`，结果是屏幕上直接显示 `{remote}`。字典测试看不出来（模板本身合法），
+  所以补了一个把「模板声明的占位符」和「调用点填的名字」对上的测试。
+- 已知边界：地址来自**插件自身所在 checkout**的 remote。profile 以 `link:` 安装时
+  即本仓库；从 registry 装进 `node_modules` 时该目录通常不在任何仓库内，
+  于是走兜底——这正是兜底存在的原因。
+
+
 ## DEC-031 — 2026-11-14 — DAU 统计：宿主半边每日匿名心跳，复用 dsh.zuos.us/api/e
 
 **Context.** 用户要求「增加 DAU 统计功能」，并指向 `../dsh-decision-engine/` 的

@@ -3606,3 +3606,238 @@ test('the occupant keeps the same seats across renders (no perpetual remount)', 
   assert.equal(first.props.provider, second.props.provider, 'the provider share keeps its identity')
   assert.equal(first.props.model, second.props.model, 'the model share keeps its identity')
 })
+
+// ---------------------------------------------------------------------------
+// Project-link button: the icon member immediately left of the mode button.
+//
+// It opens the repository page the checkout configures, in a new tab. These
+// tests pin the three things the request is specific about: WHERE it sits, that
+// the address comes from the Host rather than from this file, and that adding
+// it changed nothing about the display-mode button beside it.
+// ---------------------------------------------------------------------------
+test('the project-link button sits immediately left of the display-mode button', () => {
+  const { tree } = openPanel(catalogState())
+  const footer = findAll(tree, node => hasClass(node, 'dshmf-footer'))[0]
+  const link = findAll(footer, node => hasClass(node, 'dshmf-linkBtn'))
+  const mode = findAll(footer, node => hasClass(node, 'dshmf-modeBtn'))
+  assert.equal(link.length, 1, 'exactly one link button, inside the footer')
+  assert.equal(mode.length, 1, 'the display-mode button is still there')
+
+  // Adjacency is a structural claim, not a visual one: the link button is the
+  // footer child DIRECTLY before the mode button, with nothing between them.
+  const children = footer.children.flat(Infinity).filter(child => child !== null && child !== undefined)
+  const linkIndex = children.findIndex(child => hasClass(child, 'dshmf-linkBtn'))
+  const modeIndex = children.findIndex(child => hasClass(child, 'dshmf-modeBtn'))
+  assert.ok(linkIndex >= 0, 'the link button is a direct footer child')
+  assert.equal(modeIndex, linkIndex + 1, 'and the mode button is the very next child')
+})
+
+test('the link button precedes the mode button in document order', () => {
+  const { tree } = openPanel(catalogState())
+  const footer = findAll(tree, node => hasClass(node, 'dshmf-footer'))[0]
+  // findAll walks in document order, so the two hits come back in visual order.
+  const buttons = findAll(footer, node => hasClass(node, 'dshmf-linkBtn') || hasClass(node, 'dshmf-modeBtn'))
+  assert.equal(buttons.length, 2)
+  assert.ok(hasClass(buttons[0], 'dshmf-linkBtn'), 'the link button comes first')
+  assert.ok(hasClass(buttons[1], 'dshmf-modeBtn'), 'the mode button follows it')
+})
+
+test('the mode button keeps its own behavior: still a toggle, still labelled', () => {
+  installModeStorage()
+  try {
+    runtime.reset()
+    const { ctx, seat } = makeCtx({ extraEntries: { 'conversation.input.model': [() => null] } })
+    bundle.apply(ctx)
+    const face = seat().registration.inject('session-1')
+    const tree = runtime.render(bundle.__component, { ...face, locked: false, t: key => key })
+    findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+    const open = runtime.render(bundle.__component, { ...face, locked: false, t: key => key })
+    const button = findAll(open, node => hasClass(node, 'dshmf-modeBtn'))[0]
+    assert.equal(button.props['aria-pressed'], false, 'flat mode is still the default')
+    assert.equal(button.props['aria-label'], 'native.enter', 'the label is unchanged')
+    assert.equal(button.props.disabled, false)
+    assert.equal(textOf(button), 'native.label', 'the visible copy is unchanged')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('the link button is not a toggle and carries no pressed state', () => {
+  const { tree } = openPanel(catalogState())
+  const button = findAll(tree, node => hasClass(node, 'dshmf-linkBtn'))[0]
+  assert.equal(button.type, 'button', 'a real button')
+  assert.equal(button.props['aria-pressed'], undefined, 'it is an action, not a state')
+  assert.equal(button.props.disabled, undefined, 'and it is never pre-disabled')
+  assert.equal(button.props['aria-label'], 'link.label', 'it names itself for assistive tech')
+  // The icon is decorative: the accessible name comes from the label.
+  const icon = findAll(button, node => node.type === 'svg')[0]
+  assert.ok(icon !== undefined, 'it draws an icon')
+  assert.equal(icon.props['aria-hidden'], 'true', 'the glyph is not announced twice')
+})
+
+test('the link button resolves its address from the Host, not from a constant', async () => {
+  // The Host route answers with whatever the checkout configures; the button
+  // must open THAT. A different repository here proves nothing is hardcoded.
+  const { fetchProjectLink } = bundle.__test
+  const seen = []
+  const result = await fetchProjectLink(async (url, init) => {
+    seen.push({ url, method: init?.method })
+    return {
+      ok: true,
+      json: async () => ({ url: 'https://github.com/some-owner/a-different-repo', source: 'remote', remote: 'origin' }),
+    }
+  })
+  assert.equal(result.url, 'https://github.com/some-owner/a-different-repo')
+  assert.equal(result.source, 'remote')
+  assert.equal(seen.length, 1)
+  assert.equal(seen[0].method, 'GET')
+  assert.ok(seen[0].url.includes('project-link'), `it asks the project-link route: ${seen[0].url}`)
+})
+
+test('an unreachable Host route settles for the documented fallback instead of failing', async () => {
+  const { fetchProjectLink, PROJECT_LINK_FALLBACK } = bundle.__test
+  const cases = [
+    async () => { throw new Error('network down') },
+    async () => ({ ok: false, status: 404, json: async () => ({}) }),
+    async () => ({ ok: true, json: async () => { throw new Error('not json') } }),
+    async () => ({ ok: true, json: async () => null }),
+    async () => ({ ok: true, json: async () => ({ url: 42 }) }),
+    async () => ({ ok: true, json: async () => ({ url: 'javascript:alert(1)' }) }),
+    async () => ({ ok: true, json: async () => ({ url: 'file:///etc/passwd' }) }),
+  ]
+  for (const impl of cases) {
+    const result = await fetchProjectLink(impl)
+    assert.equal(result.url, PROJECT_LINK_FALLBACK, 'a failure still has somewhere to go')
+    assert.equal(result.source, 'fallback')
+  }
+})
+
+test('only an http(s) address can ever reach window.open', async () => {
+  const { fetchProjectLink } = bundle.__test
+  for (const url of ['javascript:alert(1)', 'file:///etc/passwd', 'data:text/html,hi', 'chrome://settings']) {
+    const result = await fetchProjectLink(async () => ({ ok: true, json: async () => ({ url, source: 'remote' }) }))
+    assert.match(result.url, /^https:\/\//u, `${url} must not survive`)
+  }
+})
+
+test('the link opens in a NEW tab with the opener severed', () => {
+  const { openInNewTab } = bundle.__test
+  const calls = []
+  const previous = globalThis.window
+  globalThis.window = { open: (...args) => { calls.push(args); return {} } }
+  try {
+    assert.equal(openInNewTab('https://github.com/owner/repo'), true)
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0][0], 'https://github.com/owner/repo')
+    assert.equal(calls[0][1], '_blank', 'a new tab, never the current one')
+    assert.match(calls[0][2], /noopener/, 'the opened page gets no handle on this one')
+    assert.match(calls[0][2], /noreferrer/, 'and no referrer')
+  } finally {
+    globalThis.window = previous
+  }
+})
+
+test('a blocked popup is reported rather than silently swallowed', () => {
+  const { openInNewTab } = bundle.__test
+  const previous = globalThis.window
+  try {
+    globalThis.window = { open: () => null }
+    assert.equal(openInNewTab('https://github.com/owner/repo'), false, 'a blocked tab is not success')
+
+    globalThis.window = { open: () => { throw new Error('blocked') } }
+    assert.equal(openInNewTab('https://github.com/owner/repo'), false, 'a throwing opener is not success')
+
+    globalThis.window = {}
+    assert.equal(openInNewTab('https://github.com/owner/repo'), false, 'no opener at all is not success')
+  } finally {
+    globalThis.window = previous
+  }
+})
+
+test('the link button opens the page the Host resolved, in one click', async () => {
+  const { fetchProjectLink, openInNewTab, PROJECT_LINK_PATH } = bundle.__test
+  // The prefetch and the click share ONE helper; this pins that the helper
+  // yields the Host's answer and that it is the exact route the Host registers.
+  const result = await fetchProjectLink(async () => ({
+    ok: true,
+    json: async () => ({ url: 'https://github.com/zuosus/dsh-model-flatmap', source: 'remote', remote: 'origin' }),
+  }))
+  assert.equal(result.url, 'https://github.com/zuosus/dsh-model-flatmap')
+  assert.equal(PROJECT_LINK_PATH, 'dsh-model-flatmap/project-link',
+    'the browser half asks the same path the Host half registers')
+})
+
+test('the link button CSS pins the pair to the right without moving the mode button', () => {
+  const css = source.match(/const CSS = `([\s\S]*?)`/)[1]
+  // The auto margin moved from the mode button to the link button so the two
+  // travel together. Both halves are asserted: the pair stays right, and the
+  // mode button is not left with a second auto margin that would separate them.
+  const link = css.match(/\.dshmf-linkBtn \{([\s\S]*?)\}/)[1]
+  assert.match(link, /margin-left:\s*auto/, 'the pair is pinned to the right by the icon')
+  assert.match(link, /margin-right:\s*2px/, 'a 2px gap keeps them one group')
+  assert.match(link, /width:\s*22px/, 'a square icon target')
+  assert.match(link, /height:\s*22px/, 'the same height as the mode button')
+  assert.match(link, /border-radius:\s*var\(--dsw-radius-xs\)/, 'the panel\'s own radius')
+  assert.match(css, /\.dshmf-linkBtn \+ \.dshmf-modeBtn \{[^}]*margin-left:\s*0/,
+    'the mode button does not take a second auto margin')
+  // The mode button keeps its own look; only the margin rule was added.
+  const mode = css.match(/\.dshmf-modeBtn \{([\s\S]*?)\}/)[1]
+  assert.match(mode, /height:\s*22px/)
+  assert.match(mode, /padding:\s*0 8px/)
+})
+
+test('the link button uses theme tokens, never a fixed colour', () => {
+  const css = source.match(/const CSS = `([\s\S]*?)`/)[1]
+  const link = css.match(/\.dshmf-linkBtn \{([\s\S]*?)\}/)[1]
+  assert.match(link, /color:\s*var\(--dsw-alias-label-secondary\)/)
+  assert.doesNotMatch(link, /#[0-9a-f]{3,8}\b/i, 'no hardcoded colour in the button itself')
+  assert.match(css, /\.dshmf-linkBtn:focus-visible \{[^}]*--dsw-focus-ring/u, 'the panel focus ring')
+})
+
+test('every project-link key is translated in both languages', () => {
+  runtime.reset()
+  const { ctx, dictionaryRegistrations } = makeCtx()
+  bundle.apply(ctx)
+  const dicts = dictionaryRegistrations[0].dicts
+  for (const key of ['link.label', 'link.open', 'link.openFrom', 'link.fallback', 'link.failed']) {
+    assert.equal(typeof dicts.zh[key], 'string', `zh ${key}`)
+    assert.equal(typeof dicts.en[key], 'string', `en ${key}`)
+    assert.notEqual(dicts.zh[key], '', `zh ${key} is not empty`)
+    assert.notEqual(dicts.en[key], '', `en ${key} is not empty`)
+  }
+  assert.equal(dicts.zh['link.label'], '网页链接')
+  assert.equal(dicts.en['link.label'], 'Web page')
+  // The tooltip carries the resolved ADDRESS, and its placeholder must match
+  // the name the call site fills, or `fill` would silently print the raw
+  // template and the user would see `{url}` on screen.
+  assert.match(dicts.zh['link.openFrom'], /\{url\}/u)
+  assert.match(dicts.en['link.openFrom'], /\{url\}/u)
+})
+
+test('the tooltip template and its call site agree on the placeholder name', () => {
+  // A template whose placeholder does not match what the call site fills renders
+  // the literal `{url}` to the user. The dictionary check alone cannot see that,
+  // so this pins the two halves against each other: every placeholder the
+  // template declares must be one the call site actually supplies.
+  runtime.reset()
+  const { ctx, dictionaryRegistrations } = makeCtx()
+  bundle.apply(ctx)
+  const dicts = dictionaryRegistrations[0].dicts
+  for (const locale of ['zh', 'en']) {
+    const template = String(dicts[locale]['link.openFrom'])
+    const declared = [...template.matchAll(/\{(\w+)\}/gu)].map(match => match[1])
+    assert.deepEqual(declared, ['url'], `${locale} declares exactly the placeholder the call site fills`)
+    // Fill it the way the component does, and confirm nothing is left raw.
+    const filled = template.replace(/\{(\w+)\}/gu, (_, name) => (name === 'url' ? 'https://github.com/o/r' : ''))
+    assert.doesNotMatch(filled, /\{\w+\}/u, `${locale} renders no raw placeholder`)
+    assert.ok(filled.includes('https://github.com/o/r'), `${locale} actually shows the address`)
+  }
+})
+
+test('the rendered tooltip never leaks a raw placeholder', () => {
+  const { tree } = openPanel(catalogState())
+  const button = findAll(tree, node => hasClass(node, 'dshmf-linkBtn'))[0]
+  // Before the prefetch lands the title is the plain action text; whatever it
+  // is, it must never be a half-substituted template.
+  assert.doesNotMatch(String(button.props.title), /\{\w+\}/u)
+})
