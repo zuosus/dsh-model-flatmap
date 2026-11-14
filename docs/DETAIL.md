@@ -104,9 +104,10 @@ and the agent teamwork switch are all visible at once.
   translucent white chip so it stays legible on the blue fill.
 - **Out-of-balance models are struck through.** When a model call fails because
   the account has no usable balance, credit, or quota left, that model's row
-  text is drawn with a `line-through` decoration, and the strike stays until a
+  text is drawn with a `line-through` decoration. The strike stays until a
   later call for the same model returns something other than an
-  insufficient-balance failure. The row is not recoloured, so the strike reads
+  insufficient-balance failure, **or** until it has gone 24 hours without a new
+  attempt — whichever comes first. The row is not recoloured, so the strike reads
   the same on the selected row's blue band and in both themes, and it does not
   compete with the error strip's red. Only the row's text (the name and a
   family variant tag) is struck; the badge chip and the pending spinner are
@@ -144,6 +145,21 @@ and the agent teamwork switch are all visible at once.
     that failed for a different reason. A cancellation (`aborted`), a `blocked`
     turn, and the synthetic `interrupted` / `forked` closers clear nothing —
     the model never answered, so they say nothing about the account.
+  - **How long it is drawn without one.** Every record keeps the wall-clock
+    time of the observation that made it, which is what separates "this model is
+    out of balance" from "this model has not been tried since that verdict". A
+    mark older than 24 hours is not drawn: an exhausted balance gets topped up
+    and a quota resets daily, so a strike nobody refreshed has stopped being
+    information. A retry restamps the record and restarts the window, so the
+    rule is "24 hours since the newest thing we learned about this route", not
+    "24 hours since the row was painted". Retiring a strike is the one transition
+    no event reports, so the store watches the clock itself: on every fold, when
+    a seat subscribes, when the panel is opened, and on a timer set for the
+    soonest deadline (that handle is `unref`'d, so a day-long wait never holds
+    the host process). The record SURVIVES its own expiry, as the watermark for
+    the route — which is why re-folding the very failure that made it, after a
+    reload or when a second Session's older history is walked, cannot put the
+    decoration back.
   - **The marks are global, not per conversation.** Whether a model has quota
     left is a fact about the model route and its account, so the state is NOT
     scoped to the Session a panel happens to render for. One module-level store
@@ -154,8 +170,12 @@ and the agent teamwork switch are all visible at once.
   - **It survives a reload.** The marks are persisted to `localStorage`
     (origin-scoped, like the grouping choice), so a fresh page load starts from
     the last known state instead of an empty one. Reads and writes degrade
-    silently when storage is unavailable, and records older than 7 days are
-    dropped so a stale strike cannot live forever.
+    silently when storage is unavailable. Two lifetimes apply to that record and
+    they are not the same one: a mark stops being DRAWN after 24 hours without a
+    new observation, while the record itself is kept for 7 days, because it is
+    also the watermark that keeps an older replayed failure from restamping the
+    route. So a reload of a day-old verdict restores the row as plain text, and
+    the fold that re-reads the failure that produced it changes nothing.
   - **The newest observation wins.** A Session feed carries no cross-Session
     sequence number, but every durable event keeps the Host's wall-clock `time`.
     Each route keeps the time of its last decision, and an observation older
@@ -189,7 +209,11 @@ Everything goes through public Client APIs:
   Session the Session list names (`ctx.sessions.list`) to derive the global
   per-model insufficient-balance marks, persists them to `localStorage`, and
   every seat subscribes through `useSyncExternalStore` so a mark transition
-  repaints the panel while every other event stays quiet.
+  repaints the panel while every other event stays quiet. The same store also
+  re-reads the clock on subscribe, on panel open and on a self-armed timer,
+  because a strike reaching its 24-hour age is a transition no feed will ever
+  report. A snapshot is replaced only when the set of drawn marks actually
+  changed, so those extra reads cannot churn the panel.
 - `ctx.get('remote').agentTeams.setEnabled()` writes the teamwork selection.
 - `ctx.locale` supplies the copy, resolves catalog badge text, and prefers the
   host's own `agent-team` wording when that namespace is registered.
