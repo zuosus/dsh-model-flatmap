@@ -319,9 +319,17 @@ so it is not chased.
 
 Immediately left of the `默认样式` / `Default style` button sits an icon button
 that opens this project's GitHub page in a new tab. The two are one trailing
-pair: the icon carries the footer's auto margin, and the mode button follows it,
-so the pair stays pinned to the panel's bottom-right and wraps together on a
-narrow panel.
+**pair**, held in a single container (`.dshmf-actions`) with a 2px gap between
+them; the pair carries the footer's auto margin, so it stays pinned to the
+panel's bottom-right and wraps as one unit on a narrow panel.
+
+Grouping them is what makes that gap small. The footer spaces its own groups by
+`column-gap: 30px` — the distance between the reasoning group, the teamwork row
+and the trailing pair — and that gap applies between flex items. While the two
+buttons were separate footer items it fell between them too, so the space was
+30px + the icon's margin, and no margin on either button could shrink it. As one
+item the 30px stays outside the pair and the inner spacing is the container's
+own 2px.
 
 **The address is derived, never hardcoded.** The browser half has no filesystem
 and no subprocess, so the Host reads the checkout with

@@ -3623,13 +3623,25 @@ test('the project-link button sits immediately left of the display-mode button',
   assert.equal(link.length, 1, 'exactly one link button, inside the footer')
   assert.equal(mode.length, 1, 'the display-mode button is still there')
 
-  // Adjacency is a structural claim, not a visual one: the link button is the
-  // footer child DIRECTLY before the mode button, with nothing between them.
-  const children = footer.children.flat(Infinity).filter(child => child !== null && child !== undefined)
-  const linkIndex = children.findIndex(child => hasClass(child, 'dshmf-linkBtn'))
-  const modeIndex = children.findIndex(child => hasClass(child, 'dshmf-modeBtn'))
-  assert.ok(linkIndex >= 0, 'the link button is a direct footer child')
-  assert.equal(modeIndex, linkIndex + 1, 'and the mode button is the very next child')
+  // Adjacency is structural: the two buttons are the two children of ONE
+  // container, the icon first. They must NOT be siblings of the footer, because
+  // the footer's own 30px column-gap would then fall between them — that gap
+  // separates the footer's groups, and no margin on either button could shrink
+  // it. Grouping them is what makes the space between them the pair's own 2px.
+  const pair = findAll(footer, node => hasClass(node, 'dshmf-actions'))[0]
+  assert.ok(pair !== undefined, 'the two buttons share one trailing container')
+  const pairChildren = pair.children.flat(Infinity).filter(child => child !== null && child !== undefined)
+  assert.equal(pairChildren.length, 2, 'the pair holds exactly the two buttons')
+  assert.ok(hasClass(pairChildren[0], 'dshmf-linkBtn'), 'the icon is the leading member')
+  assert.ok(hasClass(pairChildren[1], 'dshmf-modeBtn'), 'the mode button follows it immediately')
+
+  // And the footer holds the pair as ONE item, not the two buttons separately.
+  const footerChildren = footer.children.flat(Infinity).filter(child => child !== null && child !== undefined)
+  assert.equal(footerChildren.filter(child => hasClass(child, 'dshmf-actions')).length, 1)
+  assert.equal(footerChildren.filter(child => hasClass(child, 'dshmf-linkBtn')).length, 0,
+    'the icon is not a footer child, so the footer gap cannot reach it')
+  assert.equal(footerChildren.filter(child => hasClass(child, 'dshmf-modeBtn')).length, 0,
+    'nor is the mode button')
 })
 
 test('the link button precedes the mode button in document order', () => {
@@ -3767,24 +3779,58 @@ test('the link button opens the page the Host resolved, in one click', async () 
     'the browser half asks the same path the Host half registers')
 })
 
-test('the link button CSS pins the pair to the right without moving the mode button', () => {
+test('the pair carries the right alignment and the tight inner gap', () => {
   const css = source.match(/const CSS = `([\s\S]*?)`/)[1]
-  // The auto margin moved from the mode button to the link button so the two
-  // travel together. Both halves are asserted: the pair stays right, and the
-  // mode button is not left with a second auto margin that would separate them.
+  // The auto margin lives on the PAIR, not on either button: that is what keeps
+  // the icon beside the mode button instead of pinned away from it.
+  const pair = css.match(/\.dshmf-actions \{([\s\S]*?)\}/)[1]
+  assert.match(pair, /margin-left:\s*auto/, 'the pair is pinned to the panel\'s bottom-right')
+  assert.match(pair, /display:\s*inline-flex/, 'the two buttons are one inline row')
+  assert.match(pair, /align-items:\s*center/, 'they share a baseline')
+
+  // THE POINT OF THIS CHANGE: the inner gap is the pair's own, and it is small.
+  // Reading it as a number is what makes "极小" testable rather than a claim.
+  const gap = /(?:^|;)\s*gap:\s*([^;]+);/.exec(pair)
+  assert.ok(gap !== null, 'the pair declares its own inner gap')
+  const gapPx = Number.parseFloat(gap[1])
+  assert.equal(gap[1].trim(), '2px', 'the gap between the two buttons is 2px')
+  assert.ok(gapPx <= 2, `and it is genuinely small (${gap[1]})`)
+
+  // Neither button may reintroduce a horizontal margin of its own: a leftover
+  // auto margin on the mode button would split the free space and pull the two
+  // apart again, which is exactly the bug this grouping fixes.
   const link = css.match(/\.dshmf-linkBtn \{([\s\S]*?)\}/)[1]
-  assert.match(link, /margin-left:\s*auto/, 'the pair is pinned to the right by the icon')
-  assert.match(link, /margin-right:\s*2px/, 'a 2px gap keeps them one group')
+  const mode = css.match(/\.dshmf-modeBtn \{([\s\S]*?)\}/)[1]
+  for (const [name, rule] of [['linkBtn', link], ['modeBtn', mode]]) {
+    assert.doesNotMatch(rule, /margin-left:/, `${name} carries no left margin of its own`)
+    assert.doesNotMatch(rule, /margin-right:/, `${name} carries no right margin of its own`)
+  }
+  // The buttons keep their own look.
   assert.match(link, /width:\s*22px/, 'a square icon target')
   assert.match(link, /height:\s*22px/, 'the same height as the mode button')
   assert.match(link, /border-radius:\s*var\(--dsw-radius-xs\)/, 'the panel\'s own radius')
-  assert.match(css, /\.dshmf-linkBtn \+ \.dshmf-modeBtn \{[^}]*margin-left:\s*0/,
-    'the mode button does not take a second auto margin')
-  // The mode button keeps its own look; only the margin rule was added.
-  const mode = css.match(/\.dshmf-modeBtn \{([\s\S]*?)\}/)[1]
   assert.match(mode, /height:\s*22px/)
   assert.match(mode, /padding:\s*0 8px/)
 })
+
+test('the footer\'s own 30px group gap cannot reach inside the pair', () => {
+  const css = source.match(/const CSS = `([\s\S]*?)`/)[1]
+  // The footer keeps its 30px column-gap: that is the spacing between the
+  // reasoning group, the teamwork row and the trailing pair, and it is not this
+  // change's business. The fix is structural — the pair is ONE flex item, so
+  // the gap applies outside it and never between the two buttons.
+  const footer = css.match(/\.dshmf-footer \{([\s\S]*?)\}/)[1]
+  assert.match(footer, /column-gap:\s*30px/, 'the footer still spaces its own groups by 30px')
+  // And no rule anywhere widens the inner gap back up.
+  assert.doesNotMatch(css, /\.dshmf-linkBtn \+ \.dshmf-modeBtn/, 'the old sibling-margin rule is gone')
+  assert.doesNotMatch(pair_rule(css), /column-gap:\s*30px/, 'the pair never inherits the group gap')
+})
+
+/** The `.dshmf-actions` rule body. */
+function pair_rule(css) {
+  const hit = /\.dshmf-actions \{([\s\S]*?)\}/.exec(css)
+  return hit === null ? '' : hit[1]
+}
 
 test('the link button uses theme tokens, never a fixed colour', () => {
   const css = source.match(/const CSS = `([\s\S]*?)`/)[1]

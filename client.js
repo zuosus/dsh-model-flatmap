@@ -359,14 +359,29 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
 body[data-ds-dark-theme] .dshmf-footer,
 html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
 
-/* Display-mode button: the footer's trailing member, pinned to the panel's
-   bottom-right by an auto left margin. Drawn with the panel's own segment
-   recipe (toned track, 2px inset, radius-xs) so it reads as the same design
-   system as the header grouping control and the reasoning levels, and so the
-   pressed state is unmistakable in both themes. The auto margin also survives
-   the wrap case: alone on its line it still sits right. */
+/* The trailing PAIR: the project-link icon and the display-mode button.
+   It is ONE footer child, and that is what makes the gap between the two
+   buttons small. As two separate footer children they were also two flex items
+   on the footer's line, so the footer's own column-gap of 30px — the spacing
+   that separates the reasoning group from the teamwork row — was applied
+   BETWEEN them as well, and no margin on either button could shrink it.
+   Grouping them here takes them out of that gap's reach: the 30px now applies
+   once, outside the pair, and the space INSIDE is this container's own 2px gap.
+   The pair also carries the auto margin, so the two travel together to the
+   panel's bottom-right and wrap as one unit on a narrow panel. */
+.dshmf-actions {
+  flex: 0 0 auto; display: inline-flex; align-items: center;
+  gap: 2px; margin-left: auto;
+}
+
+/* Display-mode button: the pair's trailing member. Drawn with the panel's own
+   segment recipe (toned track, 2px inset, radius-xs) so it reads as the same
+   design system as the header grouping control and the reasoning levels, and
+   so the pressed state is unmistakable in both themes. It carries no auto
+   margin of its own: the PAIR owns the right alignment, which is what keeps it
+   beside the icon rather than pinned away from it. */
 .dshmf-modeBtn {
-  flex: 0 0 auto; margin-left: auto;
+  flex: 0 0 auto;
   height: 22px; padding: 0 8px; border: 0; border-radius: var(--dsw-radius-xs);
   background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-secondary);
@@ -382,19 +397,12 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
 .dshmf-modeBtn:disabled { color: var(--dsw-alias-label-dimmed); cursor: default; }
 .dshmf-modeBtn:focus-visible { outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: -2px; }
 
-/* Project-link button: the icon member sitting IMMEDIATELY LEFT of the
-   display-mode button.
-   It is not a second trailing member: the two are one trailing PAIR, so the
-   auto margin that pins the pair to the right lives on this button and the
-   mode button follows it with no margin of its own. That keeps the icon
-   adjacent to the mode button in the ordinary case and, because they are
-   separate flex items, still lets the footer wrap the pair together when the
-   panel is narrow — the icon keeps its margin, so the pair stays right.
-   The 22px height and radius-xs mirror the mode button, so the two read as one
-   control group; the 2px gap is the same inset the segment control uses. */
+/* Project-link button: the pair's leading member, the icon IMMEDIATELY LEFT of
+   the display-mode button. The 22px height and radius-xs mirror the mode
+   button so the two read as one control group, and the pair's own 2px gap is
+   the only space between them. */
 .dshmf-linkBtn {
   flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
-  margin-left: auto; margin-right: 2px;
   width: 22px; height: 22px; padding: 0; border: 0; border-radius: var(--dsw-radius-xs);
   background: transparent; color: var(--dsw-alias-label-secondary);
   cursor: pointer; transition: color 120ms ease, background 120ms ease;
@@ -402,10 +410,6 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
 @media (hover: hover) { .dshmf-linkBtn:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); } }
 .dshmf-linkBtn:disabled { color: var(--dsw-alias-label-dimmed); cursor: default; }
 .dshmf-linkBtn:focus-visible { outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: -2px; }
-/* When the pair wraps onto its own line the mode button must NOT take the
-   margin back: the icon already carries it, and two auto margins would split
-   the free space and push the icon away from the button it belongs beside. */
-.dshmf-linkBtn + .dshmf-modeBtn { margin-left: 0; }
 
 /* The bottom action that brings the panel back from native mode. It occupies
    the HOST picker's own root-menu slot (conversation.input.model.options), which
@@ -3607,52 +3611,62 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
                     }, h('span', { className: 'dshmf-thumb' })),
                   ),
 
-                // ---- project link: the icon member IMMEDIATELY LEFT of the
-                // display-mode button, so the two read as one trailing pair.
-                // It opens the repository page this checkout configures, in a
-                // new tab. It is never disabled for "no remote": the Host
-                // answers with this project's own page in that case, which is a
-                // real destination rather than a failure. The only thing that
-                // can make it unusable is a browser refusing the tab, and that
-                // is reported in the tooltip instead of being pre-empted.
-                h('button', {
-                  type: 'button',
-                  className: 'dshmf-linkBtn',
-                  'aria-label': t('link.label'),
-                  title: linkFailure
-                    ? t('link.failed')
-                    : (projectLink === null
-                      ? t('link.open')
-                      : (projectLink.source === 'remote'
-                        ? fill(t, 'link.openFrom', { url: projectLink.url })
-                        : t('link.fallback'))),
-                  'data-source': projectLink === null ? undefined : projectLink.source,
-                  onClick: () => { openProjectLink() },
-                }, svg(PATH_LINK, 12)),
+                // ---- the trailing PAIR: the project link and the display
+                // mode button, as ONE footer child.
+                // They are grouped rather than siblings because the footer's
+                // own 30px column-gap applies between its flex items, and it
+                // would otherwise land between these two buttons — no margin
+                // on either could shrink it. As one item, that 30px separates
+                // the pair from the groups to its left, and the space INSIDE
+                // is this container's 2px gap.
+                h('div', { className: 'dshmf-actions' },
+                  // The icon IMMEDIATELY LEFT of the display-mode button. It
+                  // opens the repository page this checkout configures, in a
+                  // new tab. It is never disabled for "no remote": the Host
+                  // answers with this project's own page in that case, which is
+                  // a real destination rather than a failure. The only thing
+                  // that can make it unusable is a browser refusing the tab,
+                  // and that is reported in the tooltip instead of being
+                  // pre-empted.
+                  h('button', {
+                    type: 'button',
+                    className: 'dshmf-linkBtn',
+                    'aria-label': t('link.label'),
+                    title: linkFailure
+                      ? t('link.failed')
+                      : (projectLink === null
+                        ? t('link.open')
+                        : (projectLink.source === 'remote'
+                          ? fill(t, 'link.openFrom', { url: projectLink.url })
+                          : t('link.fallback'))),
+                    'data-source': projectLink === null ? undefined : projectLink.source,
+                    onClick: () => { openProjectLink() },
+                  }, svg(PATH_LINK, 12)),
 
-                // ---- display mode: hand the seat back to the Host's own
-                // picker, or take it back. One button, `aria-pressed` carrying
-                // the state. It is the footer's trailing member, so an auto left
-                // margin pins it to the panel's bottom-right and the wrap rule
-                // keeps every other member left-aligned.
-                // Disabled while the Host ships no picker to hand over to — a
-                // seat nobody would take must never empty the composer.
-                // Clicking TOGGLES: a pressed button means native mode is in
-                // effect, so it must offer the way back rather than re-assert
-                // the mode that is already on.
-                h('button', {
-                  type: 'button',
-                  className: 'dshmf-modeBtn',
-                  'aria-pressed': modeIsNative,
-                  'aria-label': modeIsNative
-                    ? t('native.back')
-                    : (canGoNative ? t('native.enter') : t('native.unavailable')),
-                  title: modeIsNative
-                    ? t('native.back')
-                    : (canGoNative ? t('native.enter') : t('native.unavailable')),
-                  disabled: !canGoNative,
-                  onClick: () => { switchMode(modeIsNative ? 'flat' : 'native') },
-                }, t('native.label')),
+                  // Display mode: hand the seat back to the Host's own picker,
+                  // or take it back. One button, `aria-pressed` carrying the
+                  // state. The PAIR holds the auto margin that pins it to the
+                  // panel's bottom-right, so this button keeps no margin of its
+                  // own and stays beside the icon.
+                  // Disabled while the Host ships no picker to hand over to — a
+                  // seat nobody would take must never empty the composer.
+                  // Clicking TOGGLES: a pressed button means native mode is in
+                  // effect, so it must offer the way back rather than re-assert
+                  // the mode that is already on.
+                  h('button', {
+                    type: 'button',
+                    className: 'dshmf-modeBtn',
+                    'aria-pressed': modeIsNative,
+                    'aria-label': modeIsNative
+                      ? t('native.back')
+                      : (canGoNative ? t('native.enter') : t('native.unavailable')),
+                    title: modeIsNative
+                      ? t('native.back')
+                      : (canGoNative ? t('native.enter') : t('native.unavailable')),
+                    disabled: !canGoNative,
+                    onClick: () => { switchMode(modeIsNative ? 'flat' : 'native') },
+                  }, t('native.label')),
+                ),
               ),
 
             // ---- fixed: teamwork disable confirmation

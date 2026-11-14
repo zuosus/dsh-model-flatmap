@@ -5,6 +5,50 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-033 — 2026-11-15 — 链接按钮与切换按钮的间距：从 32px 压到 2px，靠分组而不是调 margin
+
+**Context.** 用户反馈「和切换按钮的 gap/margin 太大了，要让 gap 极小」。
+
+**Findings.**
+
+- 表面上间距是我写的 `margin-right: 2px`，实际是 **32px**：页脚是 flex 行，
+  `column-gap: 30px` 作用在**每个相邻 flex 子项之间**，而链接按钮和切换按钮当时是
+  页脚的两个**独立子项**，于是那 30px 正好落在它们中间，再加上 2px 的 margin。
+- 这 30px **不能为了这个按钮调小**：它的职责是分隔页脚的三个成员——推理等级组、
+  团队协作行、尾部按钮组。把 `column-gap` 改成 2px 会把整个页脚的分组间距一起毁掉。
+- 结论：**在按钮上怎么调 margin 都压不下去**，因为要压的是容器的 gap，不是按钮的
+  margin。这是一个结构问题，不是数值问题。
+
+**Decision.**
+
+1. **把两个按钮收进一个容器 `.dshmf-actions`**，作为页脚的**一个**子项。
+   这样 30px 只作用于这个容器**外侧**（它和左侧分组之间），容器内部的间距由它自己的
+   `gap: 2px` 决定 —— **32px → 2px**，且页脚的分组间距一个像素没动。
+2. **auto margin 从两个按钮上移到容器上**。`margin-left: auto` 属于「这一组靠右」，
+   不属于任何单个按钮；留在按钮上会分裂自由空间、把两个按钮重新拉开——这正是旧写法
+   需要 `.dshmf-linkBtn + .dshmf-modeBtn { margin-left: 0 }` 去补的坑。分组之后那条
+   补丁规则**直接删掉**，因为它补的问题已经不存在了。
+3. **2px 是刻意的「极小」**：两个按钮同为 22px 高、同 `radius-xs`，2px 让它们读起来是
+   一个控件组，同时保留各自的 hover/focus 命中区互不重叠。
+4. **切换按钮本身零改动**：`onClick`、`aria-pressed`、`disabled`、`aria-label`、文案
+   全部原样，这次只动了它的**布局归属**（从页脚子项变成容器子项）。
+
+**Rejected.**（1）把页脚 `column-gap` 从 30px 调小：会一并破坏推理等级组与团队协作行
+之间的间距，那是另一个已定稿的视觉决策（DEC-016 的同一块布局）。（2）给两个按钮加
+负 margin 去抵掉 gap：脆且不可读，换行时还会把右侧边缘拖出面板。
+（3）用 `margin-right: 0` + 让切换按钮 `margin-left: 2px`：治标，30px 依旧在。
+
+**Consequences.**
+
+- 新增 `.dshmf-actions` 规则；`.dshmf-linkBtn` / `.dshmf-modeBtn` 都不再带任何横向
+  margin；`.dshmf-linkBtn + .dshmf-modeBtn` 规则删除。
+- 渲染树里页脚只剩 `reason` 与 `actions` 两个子项，`actions` 内含 `linkBtn`、`modeBtn`
+  两个按钮（已实测确认）。
+- 测试 215 → 216：原「两个按钮是页脚相邻子项」的断言**被新结构推翻**，改为断言
+  「同属一个容器且图标在前、二者都不是页脚直接子项」，并新增按**数值**读 `gap`
+  的断言（`2px` 且 `<= 2`），以及「页脚 30px 分组间距仍在、且够不到容器内部」的断言。
+  这样「极小」是被测出来的，而不是注释里的一句话。
+
 ## DEC-032 — 2026-11-15 — 网页链接按钮：地址从 checkout 的 remote 推导，宿主半边读、浏览器半边开
 
 **Context.** 用户要求在「展示方式切换按钮」（即页脚的 `默认样式` 按钮）左侧紧邻位置
