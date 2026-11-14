@@ -5,7 +5,7 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
-## LES-023 — 2026-11-14 — 「不能声明子槽」不等于「不能用那个子槽」
+## LES-025 — 2026-11-14 — 「不能声明子槽」不等于「不能用那个子槽」
 
 这次需求是「trigger 显示得和原生一样丰富」。第一反应是去查这个槽能不能用，答案是不能：
 `conversation.input.model.label` 已被出厂条目声明，我们再声明一次就抛 `already declared`

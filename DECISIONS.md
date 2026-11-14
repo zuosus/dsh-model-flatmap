@@ -5,7 +5,7 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
-## DEC-028 — 2026-11-14 — trigger 的模型名不自己画：渲染 label 槽的胜出组件
+## DEC-030 — 2026-11-14 — trigger 的模型名不自己画：渲染 label 槽的胜出组件
 
 **Context.** 用户报告：composer 的 model picker trigger 显示的内容在原生时和使用本插件时
 不一致，原生的更丰富——原生会显示 tag（如 `夜间折扣`），甚至还能显示表示是否忙碌的小人图标。

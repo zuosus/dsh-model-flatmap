@@ -2078,7 +2078,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
      * `ModelSelect` entry. This plugin shadows that entry but never disposes it,
      * so the declaration and every contribution to it stay alive — which is
      * exactly why the trigger can draw the same occupant the native picker
-     * would (DEC-028).
+     * would (DEC-030).
      */
     const LABEL_SLOT = 'conversation.input.model.label'
 
@@ -2892,7 +2892,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         return { label, tone: badge.tone ?? 'neutral' }
       }
 
-      // ---- the trigger's label cell (DEC-028)
+      // ---- the trigger's label cell (DEC-030)
       //
       // The shipped picker does not paint a model name on its trigger: it
       // renders the `conversation.input.model.label` slot and lets the winner
@@ -3903,7 +3903,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
             // model-label cell, plus the two seats it needs to render (its own
             // locale namespace and its business inject). Resolved per call so a
             // connection plugin that registers a moment after boot still gets
-            // its chip on the trigger without a reload (DEC-028).
+            // its chip on the trigger without a reload (DEC-030).
             labelEntry: () => readLabelEntry(safeRead('slots')),
             labelSeatFor: namespace => labelSeat(safeRead('locale'), namespace),
             labelFace: entry => {
