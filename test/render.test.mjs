@@ -2087,6 +2087,16 @@ test('the mark snapshot is referentially stable, so an unmarked panel cannot loo
 // Session and workspace, and the newest observation wins.
 // ---------------------------------------------------------------------------
 
+/**
+ * A wall-clock stamp `ms` in the past.
+ *
+ * Event times are the Host's `Date.now()` at append, and a strike is only drawn
+ * while it is younger than STRIKE_TTL against that same clock — so the times a
+ * test feeds in have to be REAL times. A bare `1000` is January 1970 and reads
+ * as a verdict that expired half a century ago.
+ */
+const ago = ms => Date.now() - ms
+
 /** Install a `localStorage` shim and return its backing map. */
 function installMarkStorage(entries = {}) {
   const map = new Map(Object.entries(entries))
@@ -2183,8 +2193,8 @@ test('a balance failure in ONE session strikes the model in ANOTHER session', ()
   assert.equal(rowOf('Grok 4').props[ROW_INSUFFICIENT], undefined, 'nothing is struck yet')
 
   // Session A — NOT the Session this seat renders for — fails on grok-4.
-  feed.append('session-a', { type: 'request/header', time: 1000, data: { header: { config: { provider: 'third-party', model: 'grok-4' } }, reason: 'initial' } })
-  feed.append('session-a', { type: 'turn/end', time: 1001, data: { turn: 1, reason: { kind: 'error', error: { code: 'QUOTA', message: 'insufficient balance' } } } })
+  feed.append('session-a', { type: 'request/header', time: ago(2000), data: { header: { config: { provider: 'third-party', model: 'grok-4' } }, reason: 'initial' } })
+  feed.append('session-a', { type: 'turn/end', time: ago(1999), data: { turn: 1, reason: { kind: 'error', error: { code: 'QUOTA', message: 'insufficient balance' } } } })
 
   const tree = runtime.render(bundle.__component, mounted.props)
   const struck = gridRows(tree).find(row => textOf(row).includes('Grok 4'))
@@ -2197,13 +2207,13 @@ test('a later success in ANOTHER session clears the strike, oldest-first by time
   // different conversation wins over an older failure.
   const feed = sessionsWithManyFeeds(['session-a', 'session-b'])
   const mounted = mountSeat(feed, 'session-a')
-  feed.append('session-a', { type: 'request/header', time: 1000, data: { header: { config: { provider: 'third-party', model: 'grok-4' } }, reason: 'initial' } })
-  feed.append('session-a', { type: 'turn/end', time: 1001, data: { turn: 1, reason: { kind: 'error', error: { code: 'QUOTA', message: 'insufficient balance' } } } })
+  feed.append('session-a', { type: 'request/header', time: ago(2000), data: { header: { config: { provider: 'third-party', model: 'grok-4' } }, reason: 'initial' } })
+  feed.append('session-a', { type: 'turn/end', time: ago(1999), data: { turn: 1, reason: { kind: 'error', error: { code: 'QUOTA', message: 'insufficient balance' } } } })
   let tree = runtime.render(bundle.__component, mounted.props)
   assert.equal(gridRows(tree).find(row => textOf(row).includes('Grok 4')).props[ROW_INSUFFICIENT], 'true')
 
-  feed.append('session-b', { type: 'request/header', time: 2000, data: { header: { config: { provider: 'third-party', model: 'grok-4' } }, reason: 'initial' } })
-  feed.append('session-b', { type: 'turn/end', time: 2001, data: { turn: 1, reason: { kind: 'completed' } } })
+  feed.append('session-b', { type: 'request/header', time: ago(1000), data: { header: { config: { provider: 'third-party', model: 'grok-4' } }, reason: 'initial' } })
+  feed.append('session-b', { type: 'turn/end', time: ago(999), data: { turn: 1, reason: { kind: 'completed' } } })
   tree = runtime.render(bundle.__component, mounted.props)
   assert.equal(gridRows(tree).find(row => textOf(row).includes('Grok 4')).props[ROW_INSUFFICIENT], undefined,
     'a newer success from another session clears it')
@@ -2297,11 +2307,11 @@ test('the store watches every listed session and drops unlisted feeds', () => {
   try {
     store.sync()
     // Both feeds are observed: a failure in either reaches the store.
-    feed.append('session-a', { type: 'request/header', time: 1000, data: { header: { config: { provider: 'p', model: 'a' } }, reason: 'initial' } })
-    feed.append('session-a', { type: 'turn/end', time: 1001, data: { turn: 1, reason: { kind: 'error', error: { code: 'QUOTA', message: 'insufficient balance' } } } })
+    feed.append('session-a', { type: 'request/header', time: ago(2000), data: { header: { config: { provider: 'p', model: 'a' } }, reason: 'initial' } })
+    feed.append('session-a', { type: 'turn/end', time: ago(1999), data: { turn: 1, reason: { kind: 'error', error: { code: 'QUOTA', message: 'insufficient balance' } } } })
     assert.equal(store.getSnapshot().marks.get('p/a'), true)
-    feed.append('session-b', { type: 'request/header', time: 2000, data: { header: { config: { provider: 'p', model: 'b' } }, reason: 'initial' } })
-    feed.append('session-b', { type: 'turn/end', time: 2001, data: { turn: 1, reason: { kind: 'error', error: { code: 'QUOTA', message: 'insufficient balance' } } } })
+    feed.append('session-b', { type: 'request/header', time: ago(1000), data: { header: { config: { provider: 'p', model: 'b' } }, reason: 'initial' } })
+    feed.append('session-b', { type: 'turn/end', time: ago(999), data: { turn: 1, reason: { kind: 'error', error: { code: 'QUOTA', message: 'insufficient balance' } } } })
     assert.equal(store.getSnapshot().marks.get('p/b'), true, 'the second session is watched too')
     assert.ok(written.length > 0, 'each stored change is persisted')
   } finally {
@@ -2313,7 +2323,7 @@ test('a missing sessions service leaves the store on its persisted state', () =>
   // The service can bind after activation; the store must not throw meanwhile.
   const store = INSUFFICIENT.createMarkStore({
     sessionsOf: () => undefined,
-    readStored: () => new Map([['p/m', { marked: true, at: 1 }]]),
+    readStored: () => new Map([['p/m', { marked: true, at: Date.now() - 1000 }]]),
     writeStored: () => {},
   })
   try {
@@ -2329,19 +2339,219 @@ test('a 429 body decides the mark across sessions, not the status', () => {
   // strikes, a plain rate limit does not.
   const feed = sessionsWithManyFeeds(['session-a', 'session-b'])
   const mounted = mountSeat(feed, 'session-b')
-  feed.append('session-a', { type: 'request/header', time: 1000, data: { header: { config: { provider: 'third-party', model: 'glm-4.6' } }, reason: 'initial' } })
-  feed.append('session-a', { type: 'turn/end', time: 1001, data: { turn: 1, reason: { kind: 'error', error: { code: 'RATE_LIMIT', message: '429: {"type":"FreeUsageLimitError","message":"Rate limit exceeded. Please try again later."}' } } } })
+  feed.append('session-a', { type: 'request/header', time: ago(2000), data: { header: { config: { provider: 'third-party', model: 'glm-4.6' } }, reason: 'initial' } })
+  feed.append('session-a', { type: 'turn/end', time: ago(1999), data: { turn: 1, reason: { kind: 'error', error: { code: 'RATE_LIMIT', message: '429: {"type":"FreeUsageLimitError","message":"Rate limit exceeded. Please try again later."}' } } } })
   let tree = runtime.render(bundle.__component, mounted.props)
   assert.equal(gridRows(tree).find(row => textOf(row).includes('GLM 4.6')).props[ROW_INSUFFICIENT], undefined,
     'a plain 429 in another session does not strike')
 
-  feed.append('session-a', { type: 'request/header', time: 2000, data: { header: { config: { provider: 'third-party', model: 'glm-4.6' } }, reason: 'change' } })
-  feed.append('session-a', { type: 'turn/end', time: 2001, data: { turn: 2, reason: { kind: 'error', error: { code: 'RATE_LIMIT', message: '429: {"message":"insufficient balance"}' } } } })
+  feed.append('session-a', { type: 'request/header', time: ago(1000), data: { header: { config: { provider: 'third-party', model: 'glm-4.6' } }, reason: 'change' } })
+  feed.append('session-a', { type: 'turn/end', time: ago(999), data: { turn: 2, reason: { kind: 'error', error: { code: 'RATE_LIMIT', message: '429: {"message":"insufficient balance"}' } } } })
   tree = runtime.render(bundle.__component, mounted.props)
   assert.equal(gridRows(tree).find(row => textOf(row).includes('GLM 4.6')).props[ROW_INSUFFICIENT], 'true',
     'a 429 with a balance body in another session does strike')
 })
 
+
+// ---------------------------------------------------------------------------
+// STRIKE LIFETIME. A mark keeps the wall-clock time of the observation that
+// made it, which is what tells "this model is out of balance" apart from "this
+// model has not been tried since that verdict". A day without a new attempt
+// retires the DECORATION; the record stays as the watermark that keeps a
+// replayed older failure from putting it back (DEC-024).
+// ---------------------------------------------------------------------------
+
+const HOUR = 60 * 60 * 1000
+const DAY = 24 * HOUR
+
+test('a mark is drawn only while it is set AND younger than the strike lifetime', () => {
+  const now = 1_700_000_000_000
+  const live = INSUFFICIENT.markIsLive
+  assert.equal(INSUFFICIENT.STRIKE_TTL, DAY, 'the window is one day')
+  assert.equal(live({ marked: true, at: now - 23 * HOUR }, now), true, 'a mark from this morning is still news')
+  assert.equal(live({ marked: true, at: now - DAY }, now), false, 'a full day of silence retires it')
+  assert.equal(live({ marked: true, at: now - 25 * HOUR }, now), false, 'older than the window draws nothing')
+  assert.equal(live({ marked: true, at: now + 5000 }, now), true, 'a stamp ahead of the clock is fresh, never expired')
+  assert.equal(live({ marked: false, at: now }, now), false, 'a cleared record draws nothing')
+  assert.equal(live(undefined, now), false, 'a route never tried draws nothing')
+  assert.equal(live({ marked: true, at: now - 30 * HOUR }, now, 36 * HOUR), true, 'the lifetime is honoured per call')
+})
+
+test('the store draws only the fresh marks it was handed', () => {
+  const store = INSUFFICIENT.createMarkStore({
+    sessionsOf: () => undefined,
+    readStored: () => new Map([
+      ['p/fresh', { marked: true, at: Date.now() - 2 * HOUR }],
+      ['p/stale', { marked: true, at: Date.now() - 26 * HOUR }],
+      ['p/cleared', { marked: false, at: Date.now() }],
+    ]),
+    writeStored: () => {},
+  })
+  try {
+    assert.equal(store.getSnapshot().marks.get('p/fresh'), true)
+    assert.equal(store.getSnapshot().marks.has('p/stale'), false, 'the user never retried it: the row is not struck')
+    assert.equal(store.getSnapshot().marks.has('p/cleared'), false)
+  } finally {
+    store.dispose()
+  }
+})
+
+test('a refresh that changes nothing keeps the snapshot identity the seats compare', () => {
+  // The clock check now runs on every display, every fold and every timer, and
+  // `useSyncExternalStore` compares snapshots BY IDENTITY. An unchanged recompute
+  // that still built a fresh `{ marks }` would make the panel re-render forever.
+  const store = INSUFFICIENT.createMarkStore({
+    sessionsOf: () => undefined,
+    readStored: () => new Map([['p/a', { marked: true, at: Date.now() - HOUR }]]),
+    writeStored: () => {},
+  })
+  let notified = 0
+  const stop = store.subscribe(() => { notified += 1 })
+  try {
+    const before = store.getSnapshot()
+    assert.equal(store.refresh(), false, 'nothing aged out')
+    assert.equal(store.getSnapshot(), before, 'so the snapshot object is untouched')
+    store.sync()
+    store.refresh()
+    assert.equal(store.getSnapshot(), before, 'and a fold-less re-read does not swap it either')
+    assert.equal(notified, 0, 'no notification without a change')
+  } finally {
+    stop()
+    store.dispose()
+  }
+})
+
+test('a stale strike never comes back on its own, but a fresh failure restrikes it', () => {
+  let clock = Date.now()
+  const feed = sessionsWithManyFeeds(['session-a'])
+  const written = []
+  const store = INSUFFICIENT.createMarkStore({
+    sessionsOf: () => feed.sessions,
+    readStored: () => new Map(),
+    writeStored: entries => written.push(entries),
+    now: () => clock,
+  })
+  const sizes = []
+  const stop = store.subscribe(() => { sizes.push(store.getSnapshot().marks.size) })
+  try {
+    const header = { type: 'request/header', time: clock, data: { header: { config: { provider: 'p', model: 'a' } }, reason: 'initial' } }
+    const failure = { type: 'turn/end', time: clock, data: { turn: 1, reason: { kind: 'error', error: { code: 'QUOTA', message: 'insufficient balance' } } } }
+    feed.append('session-a', header)
+    feed.append('session-a', failure)
+    assert.equal(store.getSnapshot().marks.get('p/a'), true, 'the failure strikes the row')
+
+    // The user never came back to this model. Displaying the list again a day
+    // later must not keep claiming it is unusable.
+    clock += 25 * HOUR
+    assert.equal(store.refresh(), true, 'the display reports that a mark went away')
+    assert.equal(store.getSnapshot().marks.has('p/a'), false, 'the strike is gone')
+    assert.deepEqual(sizes, [1, 0], 'the seats were told, once each way')
+
+    // The record itself SURVIVES: it is the watermark for this route, and the
+    // only reason a replay of the old failure cannot restrike it again.
+    const records = written[written.length - 1]
+    assert.equal(records.get('p/a').marked, true, 'expiry retires the decoration, not the record')
+    const replay = sessionsWithManyFeeds(['session-b'], { 'session-b': [{ event: header }, { event: failure }] })
+    const reloaded = INSUFFICIENT.createMarkStore({
+      sessionsOf: () => replay.sessions,
+      readStored: () => new Map(records),
+      writeStored: () => {},
+      now: () => clock,
+    })
+    try {
+      reloaded.sync()
+      assert.equal(reloaded.getSnapshot().marks.has('p/a'), false,
+        'replaying the same older failure cannot resurrect an expired strike')
+    } finally {
+      reloaded.dispose()
+    }
+
+    // A NEW attempt is new news: the same route is struck again, and the window
+    // restarts from this observation.
+    feed.append('session-a', { type: 'request/header', time: clock, data: { header: { config: { provider: 'p', model: 'a' } }, reason: 'change' } })
+    feed.append('session-a', { type: 'turn/end', time: clock, data: { turn: 2, reason: { kind: 'error', error: { code: 'QUOTA', message: 'insufficient balance' } } } })
+    assert.equal(store.getSnapshot().marks.get('p/a'), true, 'a retry that fails on balance strikes it again')
+    assert.equal(store.refresh(), false, 'and it stays struck for another full day')
+  } finally {
+    stop()
+    store.dispose()
+  }
+})
+
+test('the store retires a strike on its own when nothing else happens', async () => {
+  // The one transition no event reports: the user simply never retried the
+  // model. A page left open across the deadline has to wake itself, or a stale
+  // line-through would sit on the row until something else repainted it.
+  const feed = sessionsWithManyFeeds(['session-a'])
+  const store = INSUFFICIENT.createMarkStore({
+    sessionsOf: () => feed.sessions,
+    readStored: () => new Map(),
+    writeStored: () => {},
+    strikeTtl: 30,
+  })
+  let notified = 0
+  const stop = store.subscribe(() => { notified += 1 })
+  try {
+    feed.append('session-a', { type: 'request/header', time: Date.now(), data: { header: { config: { provider: 'p', model: 'a' } }, reason: 'initial' } })
+    feed.append('session-a', { type: 'turn/end', time: Date.now(), data: { turn: 1, reason: { kind: 'error', error: { code: 'QUOTA', message: 'insufficient balance' } } } })
+    assert.equal(store.getSnapshot().marks.get('p/a'), true, 'struck to begin with')
+    await new Promise(resolve => setTimeout(resolve, 120))
+    assert.equal(store.getSnapshot().marks.has('p/a'), false, 'the strike aged out with no new event at all')
+    assert.ok(notified > 0, 'and the seats were told about it')
+  } finally {
+    stop()
+    store.dispose()
+  }
+})
+
+test('a strike that went stale while the panel was closed is gone when it opens again', () => {
+  // The reload case: the failing conversation is long gone from this page, the
+  // stored verdict is a day old, and the model list must not open with a lie on
+  // that row. The 2h-old mark next to it proves the row is not simply blank.
+  installMarkStorage({
+    [INSUFFICIENT.MARKS_KEY]: JSON.stringify({
+      'third-party/grok-4': { marked: true, at: Date.now() - 25 * HOUR },
+      'third-party/kimi-k2': { marked: true, at: Date.now() - 2 * HOUR },
+    }),
+  })
+  try {
+    const feed = sessionsWithManyFeeds(['session-a'])
+    const mounted = mountSeat(feed, 'session-a')
+    const rowOf = name => gridRows(mounted.tree).find(row => textOf(row).includes(name))
+    assert.equal(rowOf('Kimi K2').props[ROW_INSUFFICIENT], 'true', 'a mark from this morning is still drawn')
+    assert.equal(rowOf('Grok 4').props[ROW_INSUFFICIENT], undefined, 'a day of silence is not a verdict any more')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('opening the panel re-reads the clock', () => {
+  // The user's requirement end to end: a strike set now is drawn, and the next
+  // time the list is displayed more than a day later — with no attempt in
+  // between — the decoration is off that row.
+  runtime.reset()
+  const feed = sessionsWithManyFeeds(['session-a'])
+  const mounted = mountSeat(feed, 'session-a')
+  const rowOf = tree => name => gridRows(tree).find(row => textOf(row).includes(name))
+  feed.append('session-a', { type: 'request/header', time: Date.now(), data: { header: { config: { provider: 'third-party', model: 'grok-4' } }, reason: 'initial' } })
+  feed.append('session-a', { type: 'turn/end', time: Date.now(), data: { turn: 1, reason: { kind: 'error', error: { code: 'QUOTA', message: 'insufficient balance' } } } })
+  let tree = runtime.render(bundle.__component, mounted.props)
+  assert.equal(rowOf(tree)('Grok 4').props[ROW_INSUFFICIENT], 'true', 'struck while the news is fresh')
+
+  const trigger = () => findAll(runtime.render(bundle.__component, mounted.props), node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  const realNow = Date.now
+  Date.now = () => realNow() + 25 * HOUR
+  try {
+    trigger() // close
+    tree = runtime.render(bundle.__component, mounted.props)
+    trigger() // and display it again, a day later
+    tree = runtime.render(bundle.__component, mounted.props)
+    assert.equal(rowOf(tree)('Grok 4').props[ROW_INSUFFICIENT], undefined,
+      'a day without an attempt lifts the strike on the next display')
+  } finally {
+    Date.now = realNow
+  }
+})
 
 // ---------------------------------------------------------------------------
 // Model-name marquee (DEC-021).

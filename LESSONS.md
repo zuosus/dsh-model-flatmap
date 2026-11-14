@@ -5,6 +5,28 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## LES-019 — 2026-11-14 — 「恒为真」的比较函数在冷路径上不会报错，只会等着
+
+`for (const key of map)` 拿到的是 `[key, value]` 数组，不是 key。`sameMarks()` 一直这么写，
+于是 `right.has(pair)` 恒为 false，函数在两个非空 Map 上恒答「不一样」。它在 main 上活了很久
+都没被发现，因为调用点长成 `if (result.changed && recompute()) publish()`：只有
+`result.changed` 为真（确实发生了一次状态迁移）才会跑到 `sameMarks`，而那一刻集合确实刚刚变过
+——错误的「不一样」和正确的「不一样」撞在一起，看不出任何差别。
+
+这次把 24h 划线有效期加进去之后，`recompute()` 从「偶尔跑到」变成热路径：每次 fold、每次订阅、
+每次展示都要重算，而「没有变化就必须保持 snapshot 引用不变」是 `useSyncExternalStore` 的硬要求。
+这个函数第一次以「两个相同的集合」为输入被调用，就立刻炸成无限重渲染。
+
+- **结论**：要问的不是「这个函数对不对」，而是「它在哪些输入上被调用过」。给一个函数加新的调用
+  路径（尤其从「仅在变化时」变成「每次都跑」）时，把它对「无变化」输入的返回值单独钉成一条用例。
+  这次落成的断言是：`refresh()` 什么都没改动时，`getSnapshot()` 必须还是同一个对象、listener
+  一次都不能被通知。
+- **Map / Set 的遍历要写明确**：`for (const [key, value] of map)`、`map.keys()`、`map.values()`。
+  单变量 `for (const x of map)` 十有八九不是想要的（本次同一轮里 `scheduleExpiry` 也踩了同一下，
+  结果是定时器根本不设，测试不报异常、只是永远不响）。
+- **`unref` 的顺带一课**：一个「一天后才响」的定时器会把 Node 测试进程吊住不放。浏览器里句柄是
+  数字、没有 `unref`，所以写成 `typeof handle?.unref === 'function' && handle.unref()`，两边都安全。
+
 ## LES-018 — 2026-11-13 — 删字符串要分「子串」还是「整词」，选错会静默地什么都不删
 
 这轮要做的事本质是一句「把重复的信息去掉」：family 标题已经写了 `Qwen`，行里就别再

@@ -258,7 +258,8 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
   .dshmf-groupTitleTrack[data-running="true"] { animation: none; }
 }
 /* The model's last call failed on insufficient balance / credit / quota, and no
-   later call for the same model has cleared it. The row text is struck through
+   later call for the same model has cleared it, nor has the mark aged past
+   STRIKE_TTL (24h) without a fresh attempt. The row text is struck through
    rather than recoloured: the strike survives both themes and the selected
    row's blue band, and it does not compete with the error strip's own red.
    The decoration is applied to the row's text only (name + variant tag), not
@@ -548,6 +549,15 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
     // The wording pass is deliberately narrow: a bare "402"/"429" only counts
     // when it reads as the leading status, never as a number inside another
     // message, and every example below is taken from a real recorded session.
+    //
+    // A strike also EXPIRES. Every record keeps the wall-clock moment the
+    // observation was made, which is what lets the panel tell "this model is out
+    // of balance" apart from "this model has not been tried since that verdict".
+    // Quotas reset daily and balances get topped up, so a strike that nobody
+    // refreshed stops being drawn after STRIKE_TTL; a retry that fails again
+    // re-stamps the record and restarts the window, and a retry that answers
+    // clears it outright. The window is therefore always "24h since the newest
+    // thing we learned about this route", not "24h since the row was drawn".
     // ---------------------------------------------------------------------
 
     /** Failure codes that mean "this account has no usable balance left". */
@@ -648,13 +658,18 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
      * Wall-clock time one durable event was recorded at. The Client feed keeps
      * the Host's `time` (`Date.now()` at append), which is what lets marks
      * gathered from DIFFERENT Sessions be ordered against each other — a Session
-     * feed has no cross-Session sequence number.
+     * feed has no cross-Session sequence number — and it is the same clock the
+     * strike lifetime is measured against.
+     *
+     * An event with no stamp is an observation made NOW, not one made at the
+     * epoch: folding it as `0` would file a fact we just learned as 56 years old
+     * and a strike could never be drawn for it.
      * @param {unknown} event - one durable Session event.
-     * @returns {number} the event time, or 0 when the feed carried none.
+     * @returns {number} the event time, or the current time when the feed carried none.
      */
     function eventTimeOf(event) {
       const time = event?.time
-      return typeof time === 'number' && Number.isFinite(time) ? time : 0
+      return typeof time === 'number' && Number.isFinite(time) ? time : Date.now()
     }
 
     /**
@@ -1221,10 +1236,47 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
     // the Host's `time`, and the newest observation of a route wins. That is
     // what lets a replayed window (or a stored entry) never override a newer
     // fact from another Session.
+    //
+    // The same stamp is what makes a strike go STALE: it is the time the verdict
+    // was made, so a mark nobody refreshed stops being drawn after STRIKE_TTL
+    // while the record stays behind as the watermark. See markIsLive.
     // ---------------------------------------------------------------------
     const MARKS_KEY = 'dshmf:insufficient'
-    /** Marks older than this are dropped on read, so a stale strike cannot live forever. */
+    /**
+     * How long a RECORD is kept. Records older than this are dropped on read,
+     * so a stale verdict cannot live forever — and so a cleared route's
+     * watermark (which shields it from a replayed older failure) has an end.
+     */
     const MARKS_TTL = 7 * 24 * 60 * 60 * 1000
+    /**
+     * How long a MARK is DRAWN. This is the one the user sees: if nothing new has
+     * been observed for a route for a day, the user never retried it, and the
+     * panel stops claiming the model is unusable — an exhausted balance gets
+     * topped up and a quota resets daily, so a strike that outlives a whole day
+     * of silence is stale information, not a warning. The record itself survives
+     * (up to {@link MARKS_TTL}) as the watermark that keeps a replayed older
+     * failure from re-stamping it.
+     */
+    const STRIKE_TTL = 24 * 60 * 60 * 1000
+
+    /**
+     * Whether one record still justifies drawing a strike at `now`.
+     *
+     * `at` is the time of the LAST observation for the route, so the answer to
+     * "has the user tried this model again?" is already in it: a retry that
+     * failed on balance restamps `at` and restarts the window, a retry that
+     * answered flips `marked`, and a route nobody touched just ages out.
+     * @param {{ marked: boolean, at: number } | undefined} entry - one record.
+     * @param {number} now - the current wall-clock time.
+     * @param {number} [strikeTtl] - how long a mark is drawn; defaults to {@link STRIKE_TTL}.
+     * @returns {boolean} true only for a mark that is set AND still fresh.
+     */
+    function markIsLive(entry, now, strikeTtl) {
+      if (entry === undefined || entry.marked !== true) return false
+      const life = typeof strikeTtl === 'number' && Number.isFinite(strikeTtl) ? strikeTtl : STRIKE_TTL
+      // A stamp from the future (a clock that ran ahead) is fresh, never expired.
+      return now - entry.at < life
+    }
 
     /**
      * Parse a persisted mark record into the in-memory shape, dropping anything
@@ -1297,10 +1349,17 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       }
     }
 
-    /** Whether two visible mark maps hold the same entries. */
+    /**
+     * Whether two visible mark maps hold the same entries.
+     *
+     * Iterating a Map yields `[key, value]` PAIRS, so this walks `keys()` — a
+     * `for (const key of map)` here compares a pair against `has()` and always
+     * answers "different", which hands the seats a brand-new snapshot object on
+     * every recompute and puts `useSyncExternalStore` into a render loop.
+     */
     function sameMarks(left, right) {
       if (left.size !== right.size) return false
-      for (const key of left) {
+      for (const key of left.keys()) {
         if (!right.has(key)) return false
       }
       return true
@@ -1315,16 +1374,32 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
      * everywhere, including in a Session whose own feed was never opened in this
      * page load (its marks come from storage).
      *
+     * The store is also the thing that ages strikes out. A mark retiring itself
+     * is a state change no event announces, so the store watches the clock on its
+     * own behalf — on every fold, on every seat mounting, and on a timer set for
+     * the soonest deadline — instead of waiting for a fold that may never come.
+     *
      * @param {object} deps - resolution hooks.
      * @param {() => object | undefined} deps.sessionsOf - read the `sessions` service, per call.
      * @param {() => Map<string, {marked: boolean, at: number}>} deps.readStored - initial/persisted state.
      * @param {(entries: Map<string, {marked: boolean, at: number}>) => void} deps.writeStored - persistence sink.
-     * @returns {object} the store: `subscribe`, `getSnapshot`, `dispose`, `sync`.
+     * @param {() => number} [deps.now] - the clock; defaults to `Date.now`.
+     * @param {number} [deps.strikeTtl] - strike lifetime; defaults to {@link STRIKE_TTL}.
+     * @returns {object} the store: `subscribe`, `getSnapshot`, `dispose`, `sync`, `watch`, `refresh`.
      */
     function createMarkStore(deps) {
+      /**
+       * The clock strikes age against. Injectable so a test does not have to sit
+       * through a day; every read of the state takes it fresh, because a page
+       * lives long enough for the wall clock to matter.
+       */
+      const nowFn = typeof deps.now === 'function' ? deps.now : () => Date.now()
+      const strikeTtl = typeof deps.strikeTtl === 'number' && Number.isFinite(deps.strikeTtl)
+        ? deps.strikeTtl
+        : STRIKE_TTL
       /** Internal truth: route key → last decision and when it was made. */
       const entries = new Map(deps.readStored())
-      /** Visible subset the rows read: route key → true. */
+      /** Visible subset the rows read: route key → true, the LIVE marks only. */
       let visible = new Map()
       let snapshot = { marks: visible }
       const listeners = new Set()
@@ -1338,12 +1413,19 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       let attachedSessions
       let stopList
       let disposed = false
+      /** Timer for the soonest strike that is still being drawn. */
+      let expiryTimer = null
 
-      /** Rebuild the visible map; report whether the rendered set changed. */
+      const publish = () => {
+        for (const listener of listeners) listener()
+      }
+
+      /** Rebuild the visible map against the clock; report whether it changed. */
       const recompute = () => {
+        const now = nowFn()
         const next = new Map()
         for (const [key, entry] of entries) {
-          if (entry.marked) next.set(key, true)
+          if (markIsLive(entry, now, strikeTtl)) next.set(key, true)
         }
         if (sameMarks(visible, next)) return false
         visible = next
@@ -1351,11 +1433,55 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         return true
       }
 
-      recompute()
-
-      const publish = () => {
-        for (const listener of listeners) listener()
+      /**
+       * Arm the clock for the soonest live strike.
+       *
+       * A strike retiring is the one transition no event reports: the user
+       * simply never came back to this model. A page left open across the
+       * deadline therefore has to wake itself, or a stale line-through would sit
+       * on the row until some unrelated fold happened to recompute it.
+       */
+      const scheduleExpiry = () => {
+        if (expiryTimer !== null) {
+          clearTimeout(expiryTimer)
+          expiryTimer = null
+        }
+        if (disposed || typeof setTimeout !== 'function') return
+        const now = nowFn()
+        let earliest = Number.POSITIVE_INFINITY
+        for (const entry of entries.values()) {
+          if (!markIsLive(entry, now, strikeTtl)) continue
+          const deadline = entry.at + strikeTtl
+          if (deadline < earliest) earliest = deadline
+        }
+        if (!Number.isFinite(earliest)) return
+        const handle = setTimeout(() => {
+          expiryTimer = null
+          refresh()
+        }, Math.max(0, earliest - now))
+        // A day-long timer must never be the reason a process stays alive (a
+        // Node host, a test run): `unref` lets it fire while anything else is
+        // running without holding the loop. A browser handle is a number and has
+        // no `unref`, and there the page keeps its own clock.
+        if (typeof handle?.unref === 'function') handle.unref()
+        expiryTimer = handle
       }
+
+      /**
+       * Re-read the clock and tell the seats if anything aged out.
+       * @returns {boolean} whether the rendered set changed.
+       */
+      const refresh = () => {
+        if (disposed) return false
+        const changed = recompute()
+        // Re-arm first: a strike that just aged out may leave a later one live.
+        scheduleExpiry()
+        if (changed) publish()
+        return changed
+      }
+
+      recompute()
+      scheduleExpiry()
 
       /** Fold one batch of durable entries for one Session. */
       const absorb = (sessionId, windowEntries) => {
@@ -1403,7 +1529,9 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
           return
         }
         if (result.stored) deps.writeStored(entries)
-        if (result.changed && recompute()) publish()
+        // The clock — not the raw record — decides what the rows draw, and a new
+        // record moves the soonest deadline, so re-read both after any fold.
+        if (result.stored || result.changed) refresh()
       }
 
       /**
@@ -1487,6 +1615,10 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       return {
         /** The seat's `useSyncExternalStore` pair. */
         subscribe: listener => {
+          // A seat mounting IS the model list being displayed, so this is where a
+          // strike that aged out while nobody was looking gets retired — before
+          // React reads the snapshot it is about to render from.
+          refresh()
           listeners.add(listener)
           sync()
           return () => { listeners.delete(listener) }
@@ -1504,11 +1636,22 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
           pinned.add(sessionId)
           sync()
           attachSession(sessionId)
+          refresh()
         },
+        /**
+         * Re-read the clock: retire any mark older than the strike lifetime and
+         * notify the seats that drew it. Call it whenever the list is displayed,
+         * because that is the moment the answer must be current.
+         */
+        refresh,
         /** Release every feed subscription. The marks themselves stay persisted. */
         dispose: () => {
           if (disposed) return
           disposed = true
+          if (expiryTimer !== null) {
+            clearTimeout(expiryTimer)
+            expiryTimer = null
+          }
           for (const stop of stops.values()) stop()
           stops.clear()
           routes.clear()
@@ -1628,6 +1771,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       subscribe: () => () => {},
       getSnapshot: () => EMPTY_INSUFFICIENT_SNAPSHOT,
       watch: () => {},
+      refresh: () => {},
     }
 
     /**
@@ -2513,6 +2657,10 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
             }
             setSelectionFocus(false)
             triggerRef.current?.focus()
+            // Opening the panel IS showing the models: ask the store to re-read
+            // the clock first, so a strike that went stale while the panel was
+            // closed is gone from the rows this click draws (DEC-024).
+            if (typeof markFace.refresh === 'function') markFace.refresh()
             setOpen(true)
           },
         },
@@ -2831,7 +2979,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       // Pure layout and grouping derivations plus the component itself,
       // exposed for `node --test` so grouping, filtering and the column
       // algorithm are pinned without a browser. The shell never reads this key.
-      __test: { marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore },
+      __test: { marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore },
       __component: ModelFlatMap,
       __seat: Seat,
       apply(ctx) {
