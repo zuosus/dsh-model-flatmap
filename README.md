@@ -92,10 +92,12 @@ levels, and the agent-teamwork switch on one surface:
   aside*: it disposes its own `conversation.input.model` registration, so the
   host's entry underneath wins the slot and renders itself. Nothing is
   imported, copied, or re-mounted, which means an upgraded DSH shows its own
-  newest picker and this mode can never drift out of date. The way back is a row
-  at the bottom of that picker's own menu — it reuses the `conversation.input.
-  model.options` child slot the shipped `ModelSelect` declares, so it belongs to
-  the panel it acts on and renders nothing at all while the flat panel is shown.
+  newest picker and this mode can never drift out of date. The way back is a
+  separated action band at the bottom of that picker's own menu — it reuses the
+  `conversation.input.model.options` child slot the shipped `ModelSelect`
+  declares, so it belongs to the panel it acts on and renders nothing at all
+  while the flat panel is shown. It is drawn as an outlined button, not as one
+  more menu row: the rows above it pick a value, this one performs an action.
   The choice is remembered across reloads. If the host ships no picker to hand
   over to, the button stays disabled and the panel stays — the composer never
   ends up without a model control.

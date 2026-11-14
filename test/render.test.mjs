@@ -3270,13 +3270,20 @@ test('the native picker\'s own menu carries the way back, and nothing in flat mo
     await flushMicrotasks()
     const nativeTree = runtime.render(bundle.__nativeMenuRow, props)
     assert.ok(nativeTree !== null, 'native mode shows the way back')
-    assert.equal(hasClass(nativeTree, 'dshmf-modeRow'), true)
-    assert.equal(nativeTree.props.role, 'menuitem', 'it is a row of the host menu, not a stray button')
-    assert.equal(nativeTree.props.title, 'native.back')
+    // The band is the separator strip; the button inside it is what the user
+    // presses. Asserting both keeps the "action, not a menu row" shape pinned.
+    assert.equal(hasClass(nativeTree, 'dshmf-modeAction'), true,
+      'the action sits in its own band below the value rows')
+    const actionButton = findAll(nativeTree, node => hasClass(node, 'dshmf-modeBtnRow'))[0]
+    assert.ok(actionButton !== undefined, 'the band carries a real button')
+    assert.equal(actionButton.type, 'button')
+    assert.equal(actionButton.props.title, 'native.back')
+    assert.equal(actionButton.props.role, undefined,
+      'it is not a menu row: this control performs an action, it does not pick a value')
     // Which mode is live does not depend on the seat being mounted.
     assert.equal(liveOf('conversation.input.model').length, 1)
 
-    nativeTree.props.onClick()
+    actionButton.props.onClick()
     await flushMicrotasks()
     assert.equal(dismissed, 1, 'the host menu is closed before the entry it belongs to goes away')
     assert.equal(runtime.render(bundle.__nativeMenuRow, props), null,

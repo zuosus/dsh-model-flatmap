@@ -5,6 +5,22 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## LES-024 — 2026-11-14 — 插槽给的锚点是 display:contents，意味着外观完全归你
+
+`conversation.input.model.options` 这类 list 子插槽，渲染时会在内容外面套一个
+`[data-slot]` 锚点，样式是 `display: contents`——它不生成盒子、不参与布局，也不带任何
+宿主外观。结论有两面：
+
+- **限制比想象的少**：想让条目长成什么样都行，不必也不应该去模仿相邻行的 class
+  （那些 class 是 CSS Modules 的 hash，本来就抄不到）。想在视觉上从兄弟行里跳出来，直接画。
+- **对齐要自己算**：既然没有盒子替你承担内缩，就得读宿主容器的 padding 与行内缩（这里是
+  菜单 pad 4px、行内再 inset 8px），否则按钮会比上面的行窄几个像素——`padding: 0` +
+  宿主已有的容器内缩才是对齐的做法。
+
+另一个反复踩到的坑：**样式表是模板字符串**。在 CSS 注释里写反引号（比如给槽名加
+markdown 反引号）会直接截断模板字符串，报的是 `SyntaxError: Unexpected identifier`，
+指向的却是注释里那个词，很容易误判成代码问题。写注释时绕开反引号，或者干脆不加。
+
 ## LES-023 — 2026-11-14 — 「我的控件该住在哪」先看宿主插槽的声明者是谁
 
 DEC-027 把返程控件放进了 `conversation.input.right`，理由是「它在原生模式下仍然活着」。

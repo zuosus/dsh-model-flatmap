@@ -357,22 +357,42 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
 .dshmf-modeBtn:disabled { color: var(--dsw-alias-label-dimmed); cursor: default; }
 .dshmf-modeBtn:focus-visible { outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: -2px; }
 
-/* The row that brings the panel back from native mode. It is a row of the HOST
-   picker's own root menu (the conversation.input.model.options child slot), so
-   it borrows that menu's row recipe — 34px, radius-md, 8px inset, 13/20 label
-   at the leading edge — instead of the panel's chrome: it reads as one more row
-   of the shipped picker, because that is exactly what it is. */
-.dshmf-modeRow {
-  box-sizing: border-box; display: flex; align-items: center; gap: 6px;
-  width: auto; min-width: 100%; min-height: 34px; padding: 0 8px;
-  border: none; border-radius: var(--dsw-radius-md); outline: none;
-  background: transparent; color: var(--dsw-alias-label-primary);
-  font-family: inherit; font-size: 13px; line-height: 20px; font-weight: 400;
-  white-space: nowrap; cursor: pointer; text-align: left;
+/* The bottom action that brings the panel back from native mode. It occupies
+   the HOST picker's own root-menu slot (conversation.input.model.options), which
+   renders its occupants after the Model / Effort rows. The slot hands us a bare
+   display: contents anchor, so the box below is entirely ours to draw: it is
+   deliberately NOT a menu-row clone. A row in this menu means "one of a set of
+   values, pick one" — this control does something else, so it separates itself
+   with a rule above and presents as a compact, out-lined push button.
+   The band spans the FULL row width (the menu already pads 4px, and a row's
+   hover fill spans that same width), so it carries no horizontal padding of its
+   own: the button's edges line up with the rows above it instead of sitting a
+   few pixels inside them. */
+.dshmf-modeAction {
+  box-sizing: border-box; display: flex; align-items: center;
+  width: auto; min-width: 100%; margin-top: 2px; padding: 7px 0 1px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
 }
-.dshmf-modeRowLabel { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.dshmf-modeRow:focus-visible { background: var(--dsw-alias-interactive-bg-hover); }
-@media (hover: hover) { .dshmf-modeRow:hover { background: var(--dsw-alias-interactive-bg-hover); } }
+.dshmf-modeBtnRow {
+  box-sizing: border-box; display: flex; align-items: center; justify-content: center;
+  gap: 6px; width: 100%; height: 30px; padding: 0 10px;
+  border: 1px solid var(--dsw-alias-border-l3); border-radius: var(--dsw-radius-sm);
+  outline: none; background: transparent; color: var(--dsw-alias-label-primary);
+  font-family: inherit; font-size: 12px; line-height: 18px; font-weight: 500;
+  white-space: nowrap; cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.dshmf-modeBtnRowIcon { flex: 0 0 auto; color: var(--dsw-alias-label-secondary); }
+.dshmf-modeBtnRowLabel { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.dshmf-modeBtnRow:focus-visible {
+  box-shadow: 0 0 0 2px var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+}
+@media (hover: hover) {
+  .dshmf-modeBtnRow:hover {
+    background: var(--dsw-alias-interactive-bg-hover);
+    border-color: var(--dsw-alias-border-l4);
+  }
+}
 
 /* Reasoning levels: a caption and a multi-segmentation control on one line;
    the track wraps below the caption only when the row cannot fit. The
@@ -534,6 +554,9 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
     const PATH_INFO = 'M7 6.4v4.1M7 3.7v.8'
     const PATH_SPARK = 'M7 1.6 8.3 5.7 12.4 7 8.3 8.3 7 12.4 5.7 8.3 1.6 7 5.7 5.7 7 1.6Z'
     const PATH_MODELS = 'M7 2.1 11.9 4.7 7 7.3 2.1 4.7 7 2.1Zm-4.9 5.1L7 9.8l4.9-2.6M2.1 10.3 7 12.9l4.9-2.6'
+    /* Four tiles: the flat panel this control returns to, so the icon names the
+       DESTINATION rather than repeating the model glyph above it. */
+    const PATH_GRID = 'M2.4 2.4h3.6v3.6H2.4zM8 2.4h3.6v3.6H8zM2.4 8h3.6v3.6H2.4zM8 8h3.6v3.6H8z'
 
     function svg(path, size, extra) {
       return h('svg', {
@@ -3324,6 +3347,11 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
      * It renders NOTHING unless native mode is in effect, so the shipped menu
      * looks exactly as shipped while the flat panel is the one on screen.
      *
+     * Visually it is NOT a menu row. Every row above it answers "which value?";
+     * this one performs an action, so it sits below a separator rule and is
+     * drawn as an outlined push button. The slot gives us only a
+     * `display: contents` anchor, so the whole box is ours to style.
+     *
      * It reads the same page-wide store as the panel's footer button, so a
      * switch made here is the switch the panel sees when it comes back.
      * @param props - the slot's standard props plus the injected mode face.
@@ -3342,22 +3370,27 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       const canGoFlat = typeof nativeAvailable !== 'function' || nativeAvailable() === true
       if (!canGoFlat) return null
       const translate = typeof t === 'function' ? t : key => key
-      return h('button', {
-        type: 'button',
-        role: 'menuitem',
-        className: 'dshmf-modeRow',
-        'aria-label': translate('native.back'),
-        title: translate('native.back'),
-        onClick: () => {
-          // Let the host close its own menu before switching: the switch
-          // disposes the entry that owns this menu, and closing on the host's
-          // own terms (its state, its listener cleanup, its focus handoff)
-          // beats having a portaled menu unmount underneath the click.
-          if (typeof dismiss === 'function') dismiss()
-          if (typeof setDisplayMode === 'function') setDisplayMode('flat')
-          else modeFace.set('flat')
+      // A band whose top rule separates an ACTION from the value rows above it,
+      // then a full-width outlined button inside. Keeping the anchor full-width
+      // is what makes the rule span the menu; the button is what reads as
+      // something to press rather than something to choose.
+      return h('div', { className: 'dshmf-modeAction' },
+        h('button', {
+          type: 'button',
+          className: 'dshmf-modeBtnRow',
+          title: translate('native.back'),
+          onClick: () => {
+            // Let the host close its own menu before switching: the switch
+            // disposes the entry that owns this menu, and closing on the host's
+            // own terms (its state, its listener cleanup, its focus handoff)
+            // beats having a portaled menu unmount underneath the click.
+            if (typeof dismiss === 'function') dismiss()
+            if (typeof setDisplayMode === 'function') setDisplayMode('flat')
+            else modeFace.set('flat')
+          },
         },
-      }, h('span', { className: 'dshmf-modeRowLabel' }, translate('native.back')))
+          svg(PATH_GRID, 13, { className: 'dshmf-modeBtnRowIcon' }),
+          h('span', { className: 'dshmf-modeBtnRowLabel' }, translate('native.back'))))
     }
 
     // ---------------------------------------------------------------------

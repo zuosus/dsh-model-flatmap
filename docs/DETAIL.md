@@ -226,15 +226,24 @@ therefore lands on the flat panel instead of an empty composer.
 the button cannot switch back. The return trip instead rides the HOST picker's
 own panel: `conversation.input.model.options` is the list child slot the shipped
 `ModelSelect` declares and renders directly after its Model / Effort rows, so our
-row appears at the bottom of the native menu itself. It belongs to the shipped
-entry, not to ours, so it outlives the disposal; and it renders `null` in flat
-mode, so the shipped menu looks exactly as shipped while the panel is on screen.
-Clicking it dismisses the host menu first (the entry that owns the menu is about
-to be disposed) and then flips the mode back.
+control appears at the bottom of the native menu itself. It belongs to the
+shipped entry, not to ours, so it outlives the disposal; and it renders `null` in
+flat mode, so the shipped menu looks exactly as shipped while the panel is on
+screen. Clicking it dismisses the host menu first (the entry that owns the menu
+is about to be disposed) and then flips the mode back.
+
+**It does not look like a menu row.** Every row above it answers "which value?";
+this one performs an action. So it is drawn as a separated bottom band — a 1px
+`--dsw-alias-border-l2` rule above, then a full-width 30 px outlined button
+(`--dsw-alias-border-l3`, `--dsw-radius-sm`, 12/18 medium label, 14 px icon) with
+a hover fill and a focus ring. The slot gives occupants only a `display: contents`
+anchor, so that whole box is ours; nothing about the host menu's own rows has to
+be imitated. The distinction is pinned by a test that asserts the button carries
+no `role="menuitem"`.
 
 Nothing here is a copy of the host control: the row is one entry in a slot the
-installed package publicly declares, drawn with that menu's own row recipe. The
-former placement — a chip in `conversation.input.right`, beside the native
+installed package publicly declares. The former placement — a chip in
+`conversation.input.right`, beside the native
 trigger — was dropped because it read as a toolbar control belonging to nothing
 in particular, and because it forced the mode control to sit outside the panel
 it acts on.

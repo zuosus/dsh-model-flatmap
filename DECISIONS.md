@@ -5,6 +5,41 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-029 — 2026-11-14 — 菜单底部的入口画成按钮，而不是再复制一行菜单项
+
+**Context.** 用户看到 DEC-028 的实现后指出：`回到平铺模型面板` 看起来像表格行，不像按钮，
+问能不能改视觉。这是纯粹的观感问题——功能、位置、注册方式都不动。
+
+**Findings.** 该插槽（`conversation.input.model.options`）交给占用者的只有一个
+`display: contents` 的锚点（`scoped-slots.tsx:1313` 的 `ANCHOR_STYLE`），锚点本身不参与
+布局。也就是说**盒子完全是我们画的**，没有任何宿主样式作用在我们的元素上，改成什么形态都不
+受限制。可用的主题令牌都在 `ui-theme/src/styles/design-platform.css`：
+`--dsw-alias-border-l2/l3/l4`、`--dsw-alias-interactive-bg-hover`、
+`--dsw-alias-label-primary/secondary`，圆角 `--dsw-radius-sm`（8px）。深色主题由同一批
+别名令牌切换，无需自己判断主题。
+
+**Decision.** 改成「底部动作带 + 带描边的整宽按钮」：
+
+- 外层 `.dshmf-modeAction` 是一条**横跨整行的带**，`border-top: 1px solid
+  var(--dsw-alias-border-l2)` 与上方的值行分开；不设水平内边距，让按钮边缘与上方行对齐
+  （菜单自身已 pad 4px，行本身的 hover 填充也正好铺满那个宽度）。
+- 按钮 `.dshmf-modeBtnRow`：整宽、高 30、`--dsw-alias-border-l3` 描边、
+  `--dsw-radius-sm`、12/18 中等字重、居中、hover 换成
+  `--dsw-alias-interactive-bg-hover` 并把描边提到 `l4`，focus 用宿主焦点环令牌。
+- 图标换成四宫格（`PATH_GRID`），指向**目的地**——平铺面板，而不是重复上方已经用过的模型
+  图形；尺寸 13。
+- **去掉 `role="menuitem"`**：这一条不是「在一组值里选一个」，是执行一个动作。语义上就是
+  普通 `<button>`，测试里用「不许带 menuitem」把这条钉住。
+
+**Rejected.**（1）继续模仿菜单行、只加个边框：看起来仍是行。（2）用
+`--dsw-alias-button-primary-fill` 做主按钮：那是整个界面的主操作语义，一个模式开关不该抢占。
+（3）改成图标按钮（只有图标没有文字）：这条动作的字面意思需要说清楚，纯图标会让「回哪去」
+更含糊。
+
+**Consequences.** 视觉层级现在是「值行 —— 分隔线 —— 动作」，与用户对「这里是按钮」的预期
+一致。分隔线与按钮都用别名令牌，深浅主题自动跟随；已用宿主的真实行样式搭静态预览截图核对
+过两种主题。
+
 ## DEC-028 — 2026-11-14 — 切回平铺的入口长在原生选择器自己的菜单底部
 
 **Context.** 用户指出 DEC-027 的返程控件位置不对：`原生` chip 挂在
