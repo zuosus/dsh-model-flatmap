@@ -5,6 +5,43 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-025 — ⛔️ 2026-11-14 — 划线不显示的两个漏检：prepend 与 eventSource 换代
+
+取代: 无（DEC-014 / DEC-015 / DEC-017 / DEC-024 的判定规则、全局归属与 24 小时有效期全部
+继续有效）。本条只修正「观察」这一层：事实已经判定正确，但有两类事件根本没能进入折叠。
+
+**Context.** 用户报告：Trae 的 deepseek 与 ModelScope 的 deepseek 刚刚用光额度，面板上却
+都没有出现删除线。取证方式是读宿主自己的持久化状态：`Local Storage/leveldb` 里的
+`dshmf:insufficient` 记录显示，最后一次被折叠的观察是 `trae/deepseek-v4.1-flash` 在
+03:39:33Z 的一次 **completed**，而真正失败的两次 `turn/end` 发生在 04:20:32Z（Trae，
+`QUOTA`）与 04:22:40Z（modelscope-token-plan，`RATE_LIMIT` + `insufficient balance`）。判定
+逻辑本身没问题——把这两条事件直接喂给 `isInsufficientBalance` 都会划线，整窗口重折也能得到
+正确结果。问题在于它们从未被折叠。定位到两个独立的漏检：
+
+1. **`prepend` 被当成「不可能改变标记」。** `applyWindow` 原来只处理 `replace` 与 `append`，
+   注释写的理由是「prepend 只是把更早的历史翻进来，改变不了尾部推导出的标记」。这个理由
+   对「尾部推导」成立，对本功能不成立：标记恰恰来自历史里的 `turn/end`。客户端打开会话时
+   只取最新一页，失败的那一回合一旦落在窗口之外（长会话里很常见——实测有失败之后仍排着
+   6508 条事件的会话），它就只能通过 `prepend` 进来，于是永久漏检。
+2. **订阅按 sessionId 而不是 eventSource 记账。** `attachSession` 原来以 `stops.has(id)`
+   判重。客户端是按需物化 Session scope、无人 retain 就回收的：切到别的会话再切回来，同一个
+   id 会拿到**全新的 Session 对象与全新的 `eventSource`**。于是 store 一直挂在已退休的 feed 上
+   ——新 feed 上的失败永不折叠（不划线），而旧 feed 若再有动静还会往状态里灌过期事实。
+
+**Decision.** `prepend` 与 `replace` 走同一条重折路径：清掉该会话的 route、按窗口顺序
+（由旧到新）整体重走。跨会话的单调水位（每条 route 记住最后一次判定的时间）保证这次重折
+不会用旧事实盖掉新结论。订阅改为记 `{ source, stop }`，`attachSession` 先比对
+`attached.source === source`，换代时退订旧的、丢掉旧的 route 映射再重连新的。
+`settle-assistant` 仍然跳过——它只把 live attempt 换成 durable 的 Assistant 消息，不可能携带
+`turn/end` 或 `request/header`。
+
+**Consequences.** 两条回归用例先在原始代码上失败、修好后通过（`a failure paged in as
+OLDER history still strikes its model`、`a re-materialised Session feed is followed, not the
+retired one`）。副作用是翻页时会多折一整个窗口：`prepend` 本来就是一次网络往返，重折是
+O(窗口)，与 Dec-014 的全局水位叠加后不会产生额外的可见重绘（`sameMarks` 保证快照身份稳定）。
+
+
+
 ## DEC-024 — ⛔️ 2026-11-14 — 删除线自带 24 小时有效期：一天没再试就不画了
 
 取代: DEC-014 中「直到该模型下一次返回非额度不足再去掉」这条清除条件，以及 DEC-017 里

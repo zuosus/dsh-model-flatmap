@@ -2158,6 +2158,44 @@ function sessionsWithManyFeeds(ids, seed = {}) {
       })
       for (const listener of listeners.get(id) ?? []) listener()
     },
+    /** Page in older history, exactly like the Client's `loadOlder`. */
+    prepend(id, events) {
+      const entries = events.map(event => ({ type: 'event', event }))
+      const window = windows.get(id)
+      windows.set(id, {
+        entries: [...entries, ...window.entries],
+        hasMore: true,
+        revision: window.revision + 1,
+        change: { kind: 'prepend', entries },
+      })
+      for (const listener of listeners.get(id) ?? []) listener()
+    },
+    /**
+     * Retire this Session's scope and materialise it again, which is what the
+     * Client does when nothing retains it any more (switch away and back). The
+     * id stays the same; the `eventSource` object is brand new.
+     */
+    rematerialize(id, entries = []) {
+      listeners.get(id)?.clear()
+      windows.set(id, {
+        entries: [...entries],
+        hasMore: false,
+        revision: 1,
+        change: { kind: 'replace', entries: [...entries] },
+      })
+      const set = new Set()
+      listeners.set(id, set)
+      feeds.set(id, {
+        subscribe(listener) {
+          set.add(listener)
+          return () => { set.delete(listener) }
+        },
+        getSnapshot: () => windows.get(id),
+      })
+      for (const listener of listListeners) listener()
+    },
+    /** How many live subscribers one Session's current feed has. */
+    listenerCount: id => listeners.get(id)?.size ?? 0,
   }
 }
 
@@ -2183,6 +2221,60 @@ function mountSeat(feed, sessionId, options = {}) {
   tree = runtime.render(bundle.__component, props)
   return { tree, props, ctx, seat }
 }
+
+test('a failure paged in as OLDER history still strikes its model', () => {
+  // The Client opens a Session on its newest page and pages older history in
+  // only when the user scrolls up. A long Session therefore starts with the
+  // failing turn already outside its window, and the failure that ran the
+  // account dry arrives through `prepend` — the exact path that used to be
+  // treated as "cannot change a mark". Skipping it made the row stay clean for
+  // a model that had just returned 402, which is the reported bug.
+  const feed = sessionsWithManyFeeds(['session-a'])
+  const mounted = mountSeat(feed, 'session-a')
+
+  // Newest page: a later turn on a DIFFERENT route, so nothing is struck yet.
+  feed.append('session-a', { type: 'request/header', time: ago(3000), data: { header: { config: { provider: 'third-party', model: 'kimi-k2' } }, reason: 'initial' } })
+  feed.append('session-a', { type: 'turn/end', time: ago(2999), data: { turn: 2, reason: { kind: 'completed' } } })
+  let tree = runtime.render(bundle.__component, mounted.props)
+  const rowOf = source => name => gridRows(source).find(row => textOf(row).includes(name))
+  assert.equal(rowOf(tree)('Grok 4').props[ROW_INSUFFICIENT], undefined, 'the failing turn is not loaded yet')
+
+  // Scrolling up pages in the older turn that actually hit the empty balance.
+  feed.prepend('session-a', [
+    { type: 'request/header', time: ago(9000), data: { header: { config: { provider: 'third-party', model: 'grok-4' } }, reason: 'initial' } },
+    { type: 'turn/end', time: ago(8999), data: { turn: 1, reason: { kind: 'error', error: { code: 'QUOTA', message: 'insufficient balance' } } } },
+  ])
+
+  tree = runtime.render(bundle.__component, mounted.props)
+  assert.equal(rowOf(tree)('Grok 4').props[ROW_INSUFFICIENT], 'true',
+    'the failure that paged in with older history strikes its model')
+  assert.equal(rowOf(tree)('Kimi K2').props[ROW_INSUFFICIENT], undefined, 'the route that answered stays clean')
+})
+
+test('a re-materialised Session feed is followed, not the retired one', () => {
+  // Switching to another conversation and back retires this Session's scope and
+  // builds a NEW Session object with a NEW eventSource under the SAME id. The
+  // store used to key its subscription by id, so it kept listening to the dead
+  // feed: live failures were never folded (no strike) while the dead feed could
+  // still inject stale facts.
+  const feed = sessionsWithManyFeeds(['session-a'])
+  const mounted = mountSeat(feed, 'session-a')
+  const rowOf = source => name => gridRows(source).find(row => textOf(row).includes(name))
+  assert.equal(feed.listenerCount('session-a'), 1, 'the store follows the first feed')
+
+  feed.rematerialize('session-a', [
+    { type: 'event', event: { type: 'request/header', time: ago(9000), data: { header: { config: { provider: 'third-party', model: 'grok-4' } }, reason: 'initial' } } },
+  ])
+  assert.equal(feed.listenerCount('session-a'), 1, 'the store re-attaches to the new feed')
+  let tree = runtime.render(bundle.__component, mounted.props)
+  assert.equal(rowOf(tree)('Grok 4').props[ROW_INSUFFICIENT], undefined, 'nothing is struck before a failure')
+
+  // A live failure now lands on the CURRENT feed and must be folded.
+  feed.append('session-a', { type: 'turn/end', time: ago(8999), data: { turn: 1, reason: { kind: 'error', error: { code: 'QUOTA', message: 'insufficient balance' } } } })
+  tree = runtime.render(bundle.__component, mounted.props)
+  assert.equal(rowOf(tree)('Grok 4').props[ROW_INSUFFICIENT], 'true',
+    'a failure on the re-materialised feed is folded')
+})
 
 test('a balance failure in ONE session strikes the model in ANOTHER session', () => {
   // The whole point: the marks are global. Session A's failing call must strike

@@ -1405,7 +1405,12 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       const listeners = new Set()
       /** Per-Session route of the latest request header (a route is Session-local). */
       const routes = new Map()
-      /** Per-Session stop handle for its event feed. */
+      /**
+       * Per-Session event feed subscription: `{ source, stop }`. The source is
+       * kept beside its unsubscribe so a re-materialised Session (same id, new
+       * `eventSource`) is detected and re-attached instead of silently staying
+       * bound to the retired feed.
+       */
       const stops = new Map()
       /** Sessions attached on behalf of a mounted seat; never pruned by a list sync. */
       const pinned = new Set()
@@ -1515,17 +1520,28 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       const applyWindow = (sessionId, window, full) => {
         const change = window?.change
         let result
-        if (full || change?.kind === 'replace') {
-          // The window is that Session's whole truth, so its route restarts and
+        if (full || change?.kind === 'replace' || change?.kind === 'prepend') {
+          // `replace` is that Session's whole truth, so its route restarts and
           // its entries are re-walked. Global watermarks keep a newer fact from
           // another Session from being overwritten by this replay.
+          //
+          // `prepend` (scrolling up) must be re-walked for the SAME reason, and
+          // this is not an optimisation to skip: older history is exactly where
+          // a failure lives once the turn that hit it has scrolled out of the
+          // first page. Folding only the appended tail left the store blind to
+          // every failure that happened before the window's oldest entry, which
+          // is the common case on a long Session — the strike then never
+          // appeared for the model that actually ran out. The route map is
+          // Session-local and positional, so the prepended page is folded with
+          // the whole window (oldest entry first) to attribute each failure to
+          // the header that really preceded it.
           routes.delete(sessionId)
           result = absorb(sessionId, entriesOf(window))
         } else if (change?.kind === 'append') {
           result = absorb(sessionId, change.entries)
         } else {
-          // `prepend` pages in OLDER history and `settle-assistant` only swaps a
-          // live attempt for its durable form; neither can change a mark.
+          // `settle-assistant` only swaps a live attempt for its durable form —
+          // an Assistant message — so it cannot carry a turn/end or a header.
           return
         }
         if (result.stored) deps.writeStored(entries)
@@ -1535,12 +1551,23 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       }
 
       /**
-       * Attach to one Session's durable feed. Idempotent, and a no-op when the
-       * Session has no retained binding (an unopened Session has no feed; its
-       * marks can only come from storage).
+       * Attach to one Session's durable feed. Idempotent for one feed, and a
+       * no-op when the Session has no retained binding (an unopened Session has
+       * no feed; its marks can only come from storage).
+       *
+       * "Already attached" has to mean "attached to THIS feed", not "attached to
+       * this Session id". The Client materialises a Session scope on demand and
+       * retires it when nothing retains it any more — switching to another
+       * conversation and coming back, or opening a second one, drops the old
+       * scope and builds a NEW Session object with a NEW `eventSource`. Keying
+       * the subscription by id alone left the store listening to the retired
+       * feed forever: the live failure was never folded (no strike appeared)
+       * while the dead feed could still inject stale facts. So the subscription
+       * is remembered together with the source it came from and replaced when
+       * the identity changes.
        */
       const attachSession = sessionId => {
-        if (disposed || stops.has(sessionId)) return
+        if (disposed) return
         const sessions = deps.sessionsOf()
         let binding
         try {
@@ -1551,6 +1578,19 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         const source = binding?.eventSource
         if (source === undefined || typeof source.subscribe !== 'function'
           || typeof source.getSnapshot !== 'function') return
+        const attached = stops.get(sessionId)
+        if (attached !== undefined && attached.source === source) return
+        // A different feed for the same id: drop the dead subscription and
+        // forget the route map, which was derived from the retired window.
+        if (attached !== undefined) {
+          try {
+            attached.stop()
+          } catch {
+            /* a refused unsubscribe must not keep the new feed out */
+          }
+          stops.delete(sessionId)
+          routes.delete(sessionId)
+        }
         try {
           applyWindow(sessionId, source.getSnapshot(), true)
         } catch {
@@ -1565,7 +1605,10 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         }
         try {
           const stop = source.subscribe(listener)
-          stops.set(sessionId, typeof stop === 'function' ? stop : () => {})
+          stops.set(sessionId, {
+            source,
+            stop: typeof stop === 'function' ? stop : () => {},
+          })
         } catch {
           /* subscription refused: leave this Session unattached */
         }
@@ -1578,7 +1621,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         if (sessions === undefined) return
         // A client reload replaces the service; re-attach from the new one.
         if (sessions !== attachedSessions) {
-          for (const stop of stops.values()) stop()
+          for (const attached of stops.values()) attached.stop()
           stops.clear()
           routes.clear()
           if (typeof stopList === 'function') stopList()
@@ -1605,7 +1648,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         for (const id of [...stops.keys()]) {
           if (pinned.has(id)) continue
           if (!ids.includes(id)) {
-            stops.get(id)?.()
+            stops.get(id)?.stop()
             stops.delete(id)
             routes.delete(id)
           }
@@ -1652,7 +1695,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
             clearTimeout(expiryTimer)
             expiryTimer = null
           }
-          for (const stop of stops.values()) stop()
+          for (const attached of stops.values()) attached.stop()
           stops.clear()
           routes.clear()
           pinned.clear()
