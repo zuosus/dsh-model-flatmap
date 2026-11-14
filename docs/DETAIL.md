@@ -197,7 +197,7 @@ and the agent teamwork switch are all visible at once.
 
 ## Native mode
 
-The footer's trailing `原生` / `Original` button hands the composer's model seat
+The footer's trailing `默认样式` / `Default style` button hands the composer's model seat
 back to whatever the Host ships in `conversation.input.model`, and back again.
 
 **How the switch works.** The plugin does NOT render the host's control — it

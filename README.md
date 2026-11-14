@@ -86,7 +86,7 @@ levels, and the agent-teamwork switch on one surface:
   by a later call or by age.
 - **Theme-aware.** Styled with host theme tokens only; looks correct in both
   light and dark themes.
-- **Native mode.** The panel's bottom-right `Original` button hands the
+- **Native mode.** The panel's bottom-right `Default style` button hands the
   composer's model seat back to the **host's own** picker — the real shipped
   `ModelSelect`, not a reproduction of it. The plugin does this by *stepping
   aside*: it disposes its own `conversation.input.model` registration, so the

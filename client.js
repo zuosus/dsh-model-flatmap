@@ -1963,10 +1963,10 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         'failure.group': '{name} 加载失败：{message}',
         'error.action': '模型操作失败：{message}',
         'error.sessionInUse': '当前会话已被占用，可能是其他正在运行的 DSH 导致的，请退出其他正在运行的 DSH 后重试。',
-        'native.label': '原生',
-        'native.enter': '切换到宿主原生的模型选择器',
+        'native.label': '默认样式',
+        'native.enter': '切换到默认样式',
         'native.back': '回到平铺模型面板',
-        'native.unavailable': '宿主原生模型选择器当前不可用',
+        'native.unavailable': '默认样式当前不可用',
       },
       en: {
         'provider.account': 'DeepSeek Account',
@@ -1997,10 +1997,10 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         'failure.group': '{name} failed to load: {message}',
         'error.action': 'Model operation failed: {message}',
         'error.sessionInUse': 'This session is already in use, possibly by another running DSH instance. Quit other running DSH instances and try again.',
-        'native.label': 'Original',
-        'native.enter': 'Switch to the host\'s own model picker',
+        'native.label': 'Default style',
+        'native.enter': 'Switch to the default style',
         'native.back': 'Back to the flat model panel',
-        'native.unavailable': 'The host\'s own model picker is unavailable right now',
+        'native.unavailable': 'The default style is unavailable right now',
       },
     }
 

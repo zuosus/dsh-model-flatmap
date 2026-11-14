@@ -3132,7 +3132,7 @@ test('the mode store notifies asynchronously and only on a real change', async (
   }
 })
 
-test('the panel footer renders a 原生 / Original mode button, enabled by default', () => {
+test('the panel footer renders a 默认样式 / Default style mode button, enabled by default', () => {
   installModeStorage()
   try {
     runtime.reset()
@@ -3377,8 +3377,8 @@ test('every native-mode key is translated in both languages', () => {
     assert.notEqual(dicts.zh[key], '', `zh ${key} is not empty`)
     assert.notEqual(dicts.en[key], '', `en ${key} is not empty`)
   }
-  assert.equal(dicts.zh['native.label'], '原生')
-  assert.equal(dicts.en['native.label'], 'Original')
+  assert.equal(dicts.zh['native.label'], '默认样式')
+  assert.equal(dicts.en['native.label'], 'Default style')
 })
 
 test('a stored native mode that could not take effect reports the flat state it actually shows', () => {
