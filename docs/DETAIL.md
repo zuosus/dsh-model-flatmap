@@ -416,6 +416,13 @@ the measured overflow, and the duration is that distance divided by 50 px/s
   `conversation.input.model.options` slot is not drawn anywhere in the panel.
   The shipped registration keeps both declarations alive, so other plugins'
   contributions stay valid either way.
+- The Host half sends one anonymous heartbeat per local day (DEC-031). It is
+  the only network request this plugin ever makes on its own, and it is
+  deliberately not switchable: the bundle ships no settings page, so a toggle
+  nobody can reach would only make a default look like a user choice. What
+  bounds it is the payload's shape — installation id, plugin id, version,
+  platform, architecture, event kind, nothing else — and its rate. Opting out
+  means disabling the bundle, which stops the heartbeat with everything else.
 - The trigger's label cell renders ANOTHER PLUGIN'S component. It is written
   against the documented `ModelLabelOwner` props, but nothing guarantees every
   future contributor stays compatible; `LabelBoundary` degrades a crash to the
