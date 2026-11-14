@@ -5,6 +5,102 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-031 — 2026-11-14 — DAU 统计：宿主半边每日匿名心跳，复用 dsh.zuos.us/api/e
+
+**Context.** 用户要求「增加 DAU 统计功能」，并指向 `../dsh-decision-engine/` 的
+`DECISIONS.md` / `api.day.app` 关键字。那边的做法（DEC-020 及其修订）是：插件端匿名心跳
+→ Cloudflare Worker（`POST /api/e`）→ D1 → 每天 Bark 推送。用户明确要求本插件沿用同一套
+后端，不要另建一份。
+
+**Findings.**
+
+- 采集端在 `dsh-decision-engine/site/make-bundle.mjs`：`MAX_BODY=2048`、
+  `PLUGIN_RE=/^[a-z0-9][a-z0-9._-]{0,47}$/`、`UUIDV4` 校验、`v!==1` 拒绝、
+  `k` 只接受 `install`/`heartbeat`。**`p` 字段（插件标识）是第一等维度**，五张明细表的
+  主键都含 `plugin`。因此本插件只需上报 `p=dsh-model-flatmap`，**Worker 一行都不用改**，
+  第二天的日报就会自动多出一条（`scheduled()` 用 `SELECT DISTINCT plugin` 读清单）。
+- 推送在 Worker 的 `scheduled()` 里做，`cron 42 10 * * *`（= 18:42 Asia/Shanghai），
+  Bark 走 `GET https://api.day.app/<key>/<title>/<body>`。这套东西全部在 decision-engine
+  仓库里，本插件不需要碰。
+- 实测端点（本机、2026-11-14）：
+  `POST https://dsh.zuos.us/api/e` 成功返回 `202 {"ok":true,"day":"…","plugin":"…"}`，
+  **单次往返 4.6–6.9 秒**（该站点的 TTFB 本身就按秒计）。直接拿 `fetch` 测了 6 次，
+  其中 2 次在 6.8–10.0 秒处 `fetch failed`——这条链路的尾延迟就是这么大。
+- `AbortController` 的超时是**整条交换**的预算（headers 之后才 resolve），不是只卡 TTFB，
+  所以短预算无法靠别处补偿。
+
+**Decision.**
+
+1. **只做每日心跳**（用户在两选一里点的这一项）：装机、DAU、活跃版本由心跳供给。
+   「当日决策数」这类业务计数不做——本插件没有可数的业务事件，硬凑一个等于往统计里
+   填噪声。
+2. **宿主半边发，客户端不发**。原因是两边口径不同：`client.js` 只在浏览器里跑，
+   一个从不重载的标签页永远不上报；`index.js` 每次启动跑一次，正好是「这台机器今天
+   有没有在用」的正确采样点。心跳因此写在 `index.js` 的 `apply()` 里，`void` 掉。
+3. **新建 `telemetry.js`，不 import 兄弟插件的实现**。仓库的既有约束是零运行时依赖
+   （连宿主的 peer 包都是复刻行为而不是引入），跨仓库 import 更会让两个包的版本绑死。
+   复用的是**协议**（`v`/`p`/`id`/`k`/`ver`/`os`/`arch`）与**日界算法**（固定 UTC+8），
+   不是代码。
+4. **没有 `level` 开关，也没有配置文件**。用户明确要求「默认 daily，不允许 off，
+   因为本插件没有设置页面」。这比兄弟插件更硬：那边至少还有一个 `config.yml`。
+   判断是——**一个没人能点到的开关不构成同意，只构成伪装的默认值**；真正约束这次
+   上报的是它的形状（七个字段、无自由文本、无会话内容）与频率（每台机器每天至多一次）。
+   想彻底关掉，就停用 bundle，心跳随 UI 一起停。
+5. **状态写在 `~/.dsh/dsh-model-flatmap/analytics.json`，0600**。家目录解析复刻宿主的
+   三条规则：显式配置 > `$DSH_HOME` > `~/.dsh`；空白值当作没设；`~` 展开；结果
+   `resolve` 成绝对路径（相对路径会让状态文件随进程工作目录漂移）。
+   文件名**不叫** `telemetry.json`：兄弟插件用那个名字存本地决策流水账，两个只差一个
+   字母、口径完全不同的文件放在一起，迟早被清缓存的人删错。
+6. **「一天」固定按 UTC+8 算**：中国自 1991 年无夏令时，`(ms + 8h)` 取日历日就是当地
+   日期，不需要 Intl / 时区数据库（Electron 里还取决于 ICU 打包方式）。Worker 用同一
+   算法，两端对日一致。
+7. **请求预算 10 秒**，不是 5 秒。这是本次唯一的「与兄弟插件不同」的参数，依据是上面
+   的实测：5 秒会掐掉大约一半本来能送达的心跳，而失败在统计里与「用户离线」无法区分
+   ——**一个会把成功伪装成缺席的预算，比一个略长的等待更糟**。
+8. **先落状态再发送，且落盘失败就不发**。前者保证「进程在请求中途被杀」不会变成每天
+   反复重报；后者是一条实测换来的边界：状态写不下去（只读 profile）时若照发，每次启动
+   都会报一次，直接违反「每天至多一次」并抬高 DAU。丢一次心跳比刷高一次 DAU 便宜。
+9. **失败计数到 30 次就永久降级**，与兄弟插件同阈值：一个一个月都连不上的端点，今天
+   也不会连上，而每次启动都发一个注定失败的请求纯属噪声。
+10. **进程活着跨过午夜还要再报一次**（`RECHECK_MS = 6h` 的 `unref` 定时器）。
+    「启动时报一次」在桌面端的常态用法下会少算一天：昨晚 21:00 打开、一直没关的窗口，
+    今天仍然开机在用，但它只报过昨天那一条——**这种少算在报表里与「用户不再用了」
+    长得一模一样**。重新检查的代价接近零：`lastAttemptDay` 在本地文件里就能回答
+    「今天报过了吗」，所以一天里只有跨零点后的第一次检查会真正出网。定时器 `unref`
+    掉，绝不成为进程不退出的理由；disposer 挂在 `ctx.effect` 上，停用插件时一起清掉。
+
+**Rejected.**（1）在 `client.js` 里计数并通过一条宿主路由落盘再随心跳上报：用户已否，
+且它把一条纯 `void` 的旁路变成客户端→宿主的额外往返。（2）`import` 兄弟插件的
+`lib/telemetry.js`：跨仓库依赖会让两个包的发布互相绑死，还违背零依赖约束。
+（3）给个 `telemetryLevel: off` 配置项：没有设置页，用户改不到，等于没开。
+（4）复用 `cordis.patch.yml` 的 config 段做「隐式开关」：那是一个只有翻源码才知道的
+开关，比没有更糟。（5）把 `d`（决策数）硬凑成「面板打开次数」：客户端才知道的数，
+而客户端不上报，最后只能填 0 或猜。
+
+**Consequences.**
+
+- Worker、D1、迁移、Bark 全部零改动；上线后第二天 18:42 的推送里就会出现一条
+  `dsh-model-flatmap 近24小时`。**但推送正文里的「决策 / 人均」两行对这条统计线会恒为
+  0**，因为本插件不上报 `d`。这是第 1 条决定的直接代价，已知并接受；若要它有意义，
+  就得回到被否掉的方案（1）。
+- `index.js` 从「运行时不提供任何能力」变成「只做一次心跳」。README / DETAIL 里那句
+  「contributes nothing at runtime」因此改成准确表述——**文档说的是它做过什么，不是
+  它原则上不做什么**。
+- 任何一台机器删掉 `analytics.json` 都会被算成一次新的安装。这是「匿名、无账号」的
+  必然代价，兄弟插件同样如此。
+
+**测试**：`test/telemetry.test.mjs` 18 项——UTC+8 日界（含跨 UTC 零点）、UUIDv4 校验、
+状态往返与损坏自愈、`decideKind` 真值表、上报体字段白名单（含 `prompt|key|token|path|
+cwd|url|user|ip|session|email|model` 禁令）、插件 id / 端点兜底、新装→次日心跳、
+同日不重发、无合法 `p` 不发且不建状态文件、失败不抛错且当天不重试、30 次后降级、
+状态目录不可写时不发、`fetch` 缺失不崩、请求形态（POST / JSON / 带 abort signal）、
+家目录三条规则、`apply()` 同步返回且不 await、重检定时器（存在、`unref`、同日不重发、
+disposer 会 `clearInterval`）。全量 176 项通过。
+
+**改动文件**：`telemetry.js`（新增）、`index.js`、`test/telemetry.test.mjs`（新增）、
+`README.md`、`README.zh.md`、`docs/DETAIL.md`。
+
+
 ## DEC-030 — 2026-11-14 — trigger 的模型名不自己画：渲染 label 槽的胜出组件
 
 **Context.** 用户报告：composer 的 model picker trigger 显示的内容在原生时和使用本插件时

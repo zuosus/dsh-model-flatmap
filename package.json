@@ -1,6 +1,6 @@
 {
   "name": "dsh-model-flatmap",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Flat, two-level-free model picker for the DSH composer: every model and reasoning level on one surface.",
   "type": "module",
   "exports": {
@@ -12,6 +12,7 @@
   },
   "files": [
     "index.js",
+    "telemetry.js",
     "client.js",
     "cordis.patch.yml",
     "locale/*.json",

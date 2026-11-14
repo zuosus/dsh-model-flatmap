@@ -20,6 +20,25 @@ model directory, the teamwork setting, and the host's locale. The host half
 which registers with a negative priority so it shadows the shipped `ModelSelect`
 while active. Disabling the plugin restores the native control with no residue.
 
+The host half has one job of its own: an **anonymous daily heartbeat**
+(`telemetry.js`). It sends at most one request per machine per local day to
+`https://dsh.zuos.us/api/e` — installation id, plugin id, plugin version,
+platform, architecture, event kind and the protocol version — and nothing else:
+no prompt, no session content, no model name, no path, no username, no IP. A
+process that stays open across midnight re-checks every six hours, so a window
+left running all night still counts for the new day rather than only for the day
+it was launched.
+
+The installation id is a random UUIDv4 created on first run and unrelated to any
+account; deleting `~/.dsh/dsh-model-flatmap/analytics.json` gives the machine a
+new one. The heartbeat is `void`-ed and every failure is swallowed, so the picker
+never waits for it and never fails because of it. It exists because npm download
+counts cannot answer "how many machines actually run this, and how many ran it
+today" (installs, CI and mirrors all count), and a Client-side counter cannot
+either (a tab nobody reloads reports nothing). There is no toggle: the bundle
+ships no settings page, so a switch nobody can reach would only dress a default
+up as a user choice; disabling the bundle stops the heartbeat with the UI.
+
 ## Screenshot
 
 The panel in action — a flat grid of models, the current model's reasoning
@@ -130,7 +149,8 @@ is touched when the bundle is off.
 
 | Path                 | Purpose                                                  |
 | -------------------- | -------------------------------------------------------- |
-| `index.js`           | Host half — bundle entry, contributes nothing at runtime. |
+| `index.js`           | Host half — bundle entry; starts the anonymous daily heartbeat. |
+| `telemetry.js`       | The heartbeat itself: pure day/decision functions, plus an injectable reporter. |
 | `client.js`          | Browser half — the entire flat picker UI.                |
 | `cordis.patch.yml`   | Cordis patch applied by the `dsh` bundle loader.         |
 | `locale/en.json`     | English copy and metadata.                               |
@@ -149,6 +169,10 @@ node --test test/
 
 Tests read `client.js` directly and drive the real component through a minimal
 hook runtime to catch crashes, missing sections, and wrong column counts.
+`test/telemetry.test.mjs` covers the heartbeat instead: the day boundary, the
+once-a-day gate, the payload's field whitelist, degradation after repeated
+failures, and the promise that a dead endpoint costs nothing. No test touches
+the network — `fetchImpl` and the clock are injected.
 
 ## License
 
