@@ -5,6 +5,63 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-030 — 2026-11-14 — trigger 的模型名不自己画：渲染 label 槽的胜出组件
+
+**Context.** 用户报告：composer 的 model picker trigger 显示的内容在原生时和使用本插件时
+不一致，原生的更丰富——原生会显示 tag（如 `夜间折扣`），甚至还能显示表示是否忙碌的小人图标。
+用户明确选择「渲染 label 槽的胜出组件，求完全一致」，而不是只补 catalog 的 `model.badge`。
+
+**Findings.** 读本机安装的 `dsh-client-ui-model-selection`（0.2.2-rc.3）与两个连接器插件：
+
+- 出厂 `ModelSelect` 的 trigger **不画字符串**：它调用
+  `renderSlot('conversation.input.model.label', {provider, model, placement:'trigger', selected},
+  { fallback: name + <Tag> })`。所以「原生更丰富」来自这个槽的**胜出组件**。
+- 该槽是 `single`、session 级、`inline: true`，由**出厂 `ModelSelect` 条目**声明
+  （`children: {'conversation.input.model.label': …, 'conversation.input.model.options': …}`）。
+  本插件用负优先级遮蔽这个座位，但**从不 dispose 它**，所以声明一直活着——这正是
+  `readLabelEntry` 能读到胜出者的原因。
+- 本机胜出者链：workbuddy `-105` > trae `-102` > 出厂 1017 `0`。workbuddy 的
+  `WorkBuddyModelLabelInner` 自己画倍率、促销 chip、`busyIcon(level)`（一/二/三个人排队，
+  idle 时是火箭）和「新」标记。**小人图标不在 catalog 里**——workbuddy 明确把 load level
+  留在自己的组件内（「a stale 🚦 is worse than no 🚦」），所以只有渲染组件才拿得到。
+- `SlotRegistry` 公开 `entriesOfSlot(key)`（每格胜出者，outlet 用的同一个访问器）、
+  `subscribe(key, fn)` 与 `getVersion(key)`（文档化的 uSES 配对）。
+- 用真实 `SlotCore` 跑过模拟：遮蔽条目注册后，label 槽的声明仍在、胜出者仍是 workbuddy；
+  连本插件 dispose（原生模式让位）之后也仍在。
+
+**Decision.** trigger 不再自己拼名字，而是**渲染 label 槽的胜出组件**：
+
+1. 用 `slots.entriesOfSlot('conversation.input.model.label')[0]` 读胜出条目（要
+   `component` 是函数）。
+2. 自己合成它需要的座位：`t` 由 `entry.locale` 经 `locale.bind(ns)` 绑定；业务面由
+   `entry.inject(sessionId)` 得到（session 级条目按渲染器契约收 sessionId）；owner props
+   是出厂那份 `{provider, model, placement:'trigger', selected:true}`。
+3. 外面套 `LabelBoundary`（**不复用 `SeatBoundary`**）：占用者是第三方组件，在没有渲染器
+   自带 per-entry 边界的情况下运行，它崩掉只能损失装饰，绝不能损失座位。fallback 是
+   `undefined`，于是调用方退回到 catalog 名字。
+4. 没有占用者时走 `triggerFallbackLabel()`：**复刻**出厂 fallback（名字 + `model.badge`
+   的 `Tag`，trigger 上 badge 在前）。这一条即使有占用者也必须留着——占用者若不为别家
+   provider 复刻 `model.badge`，或干脆没有占用者，促销标记才不会丢。
+5. 用 `slots.subscribe` + `getVersion` 订阅该槽，连接器插件在 boot 之后才注册也能立刻上屏，
+   不需要刷新页面。
+
+**Rejected.**（1）只补 `model.badge`：拿不到小人图标，用户已明确否掉。（2）在 trigger 上
+**声明**这个子槽再 `renderSlot`：`SlotCore.register` 对已声明的子槽直接抛
+`already declared (by an entry in "conversation.input.model")`——cbca481 就是这么被
+revert 的（见 a4c9c6a）。（3）import 出厂 `ModelSelect`：包不导出组件。
+
+**Consequences.** 这条推翻 DEC-027 里「不搬运宿主组件」的口径的**一小部分**：座位仍然
+靠让位（DEC-027 不变），但 trigger 的 label 现在确实渲染另一个插件的组件。代价与边界：
+
+- 占用者是第三方代码，它的 props 契约来自 `ModelLabelOwner`（文档化），但**不保证**它在
+  所有宿主版本上都兼容。`LabelBoundary` + 退回 catalog 名字是这条路的兜底，也是它和
+  「让位」在健壮性上的真实差距。
+- 占用者若自己读 DOM/发请求（workbuddy 就会 fetch usage），trigger 上会多一次它的请求；
+  这是它本来的行为，不是这里引入的。
+- 原生模式（DEC-027）下本插件的座位被 dispose，宿主自己渲染 trigger，走的仍是同一个槽，
+  所以两种模式的 trigger 现在**同源**——这正是用户要的一致。
+
+
 ## DEC-029 — 2026-11-14 — 菜单底部的入口画成按钮，而不是再复制一行菜单项
 
 **Context.** 用户看到 DEC-028 的实现后指出：`回到平铺模型面板` 看起来像表格行，不像按钮，
@@ -214,7 +271,6 @@ layout」）。用真实 React 18 + jsdom 对振荡布局做的验证：原始�
 OLDER history still strikes its model`、`a re-materialised Session feed is followed, not the
 retired one`）。副作用是翻页时会多折一整个窗口：`prepend` 本来就是一次网络往返，重折是
 O(窗口)，与 Dec-014 的全局水位叠加后不会产生额外的可见重绘（`sameMarks` 保证快照身份稳定）。
-
 
 
 ## DEC-024 — ⛔️ 2026-11-14 — 删除线自带 24 小时有效期：一天没再试就不画了

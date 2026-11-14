@@ -195,6 +195,56 @@ and the agent teamwork switch are all visible at once.
   the shared footer line described under *Reasoning levels*, immediately right
   of the reasoning group when both fit on one line.
 
+## The trigger
+
+The trigger is the same chip the shipped picker draws (13/20 regular, 28 px,
+rounded-sm), and it shows the same *content* — which is more than a model name.
+
+**The name is a slot, not a string.** The shipped `ModelSelect` does not paint
+`model.name` on its trigger: it renders `conversation.input.model.label` with
+`placement: 'trigger'` and lets the winning contributor decorate the name. That
+is where a connection plugin puts things the catalog does not carry: a promotion
+chip (`夜间折扣`), a rate, a "new on this machine" marker, and — in the case of
+`dsh-connect-workbuddy` — a load mark: one, two or three queued people, or a
+rocket when nothing is waiting. A bare name therefore shows strictly less than
+the native trigger, which is what this plugin used to do.
+
+**This plugin renders that slot's winner.** It cannot *declare* the child slot
+(the shipped entry already did, and a second declaration throws
+`already declared`) — but declaring is not needed to read it. The declaration
+outlives the shadowing entry, so `slots.entriesOfSlot('conversation.input.model.label')`
+still names the winning entry, and its `component` can be rendered with the
+seats the renderer would have supplied:
+
+- `t` — bound from the entry's own `locale` namespace through `locale.bind(ns)`;
+- the business face — `entry.inject(sessionId)`, the renderer's own contract for
+  a session-scoped entry;
+- the owner props — `{ provider, model, placement: 'trigger', selected: true }`,
+  exactly the share the shipped picker passes.
+
+**The occupant is third-party code, so it is contained.** It runs without the
+renderer's per-entry error boundary, so a separate `LabelBoundary` wraps it. A
+crash costs the decoration and never the seat: the boundary answers `undefined`
+and the trigger falls through to the catalog name. The failure is logged once.
+
+**No occupant still gets the catalog badge.** When the cell is empty — or the
+occupant is absent, crashed, or on a Host without `entriesOfSlot` — the trigger
+draws the shipped fallback: the model's own `model.badge` as a chip before the
+name. This is reproduced rather than imported (the host's `Tag` lives in a
+primitives package this plugin does not depend on), and it matters even with an
+occupant installed: an occupant that does not reproduce a sibling's `model.badge`
+would otherwise lose the promotion marker.
+
+**Registrations that land late still appear.** The trigger subscribes to the
+slot through `slots.subscribe(key, fn)` / `slots.getVersion(key)`, so a
+connection plugin that registers a moment after boot gets its chip on the
+trigger without a page reload. A Host without those accessors keeps the first
+read and never notifies.
+
+Because native mode (below) hands the seat to the Host, which renders the same
+slot, the trigger is now *one* implementation in both modes — the consistency
+this feature exists for.
+
 ## Native mode
 
 The footer's trailing `默认样式` / `Default style` button hands the composer's model seat
@@ -360,10 +410,16 @@ the measured overflow, and the duration is that distance divided by 50 px/s
 ## Limitations
 
 - The panel replaces the composer seat only; the `/model` popup is untouched.
-- The panel does not host the `conversation.input.model.label` and
-  `conversation.input.model.options` child slots. The shipped registration keeps
-  those declarations alive, so other plugins' contributions stay valid; their
-  content simply is not drawn inside this panel.
+- The panel's GRID does not host the `conversation.input.model.label` child
+  slot: rows draw the catalog name plus `model.badge`. Only the TRIGGER renders
+  that slot's winner, because that is what the native trigger does. The
+  `conversation.input.model.options` slot is not drawn anywhere in the panel.
+  The shipped registration keeps both declarations alive, so other plugins'
+  contributions stay valid either way.
+- The trigger's label cell renders ANOTHER PLUGIN'S component. It is written
+  against the documented `ModelLabelOwner` props, but nothing guarantees every
+  future contributor stays compatible; `LabelBoundary` degrades a crash to the
+  catalog name, which is the same fallback the host uses for an empty cell.
 - Addressed subagent sessions hide the seat, matching the shipped selector.
 - The badge comes from the catalog entry, so a provider that publishes no badge
   shows none.
