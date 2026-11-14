@@ -1140,6 +1140,54 @@ test('a Session listed as a subagent origin hides the seat', () => {
 function makeCtx(options = {}) {
   const registered = []
   const dictionaryRegistrations = []
+  // Live registrations per slot key, so the flip to native mode can be observed:
+  // the seat entry disappears when it is disposed, exactly as the real `single`
+  // slot stops rendering it. `extraEntries` seeds competing entries (the shipped
+  // picker) that this plugin does not own.
+  const live = new Map()
+  const subscribeSlotListeners = new Map()
+  const liveOf = key => live.get(key) ?? []
+  const notifySlot = key => {
+    for (const listener of [...(subscribeSlotListeners.get(key) ?? [])]) listener()
+  }
+  const slots = {
+    inject: (key, factory) => {
+      const dispose = factory()
+      registered.push({ key, dispose })
+      return () => { dispose?.() }
+    },
+    register: (registration, component) => {
+      const entry = { registration, component, options: registration, registrant: 'dsh-model-flatmap' }
+      registered.push({ registration, component })
+      const key = registration?.name
+      if (typeof key === 'string') {
+        live.set(key, [...liveOf(key), entry])
+        notifySlot(key)
+      }
+      let disposed = false
+      return () => {
+        if (disposed) return
+        disposed = true
+        if (typeof key === 'string') {
+          live.set(key, liveOf(key).filter(candidate => candidate !== entry))
+          notifySlot(key)
+        }
+      }
+    },
+    entries: key => liveOf(key),
+    subscribe: (key, listener) => {
+      const set = subscribeSlotListeners.get(key) ?? new Set()
+      set.add(listener)
+      subscribeSlotListeners.set(key, set)
+      return () => { set.delete(listener) }
+    },
+  }
+  // Competing entries exist BEFORE the plugin activates, as the shipped ones do.
+  for (const [key, entries] of Object.entries(options.extraEntries ?? {})) {
+    live.set(key, entries.map(component => ({
+      registration: { name: key }, component, options: { name: key }, registrant: 'shipped',
+    })))
+  }
   const services = {
     locale: {
       register: (ns, dicts) => {
@@ -1150,17 +1198,14 @@ function makeCtx(options = {}) {
       resolveText: value => (typeof value === 'string' ? value : (value?.en ?? '')),
       bind: () => key => key,
     },
-    slots: {
-      inject: (key, factory) => {
-        const dispose = factory()
-        registered.push({ key, dispose })
-        return () => { dispose?.() }
-      },
-      register: (registration, component) => {
-        registered.push({ registration, component })
-        return () => {}
-      },
-    },
+    slots: options.omitSlotEnumeration
+      // An older Host: `inject`/`register` only. Stepping aside must then be
+      // unverifiable, i.e. refused.
+      ? {
+        inject: slots.inject,
+        register: slots.register,
+      }
+      : slots,
     ...(options.services ?? {}),
   }
   // A missing modelDirectories is expressed by omitting the key entirely.
@@ -1186,7 +1231,7 @@ function makeCtx(options = {}) {
     get: name => services[name],
   }
   const seat = () => registered.find(entry => entry.registration?.name === 'conversation.input.model')
-  return { ctx, registered, dictionaryRegistrations, services, seat }
+  return { ctx, registered, dictionaryRegistrations, services, seat, live, liveOf }
 }
 
 const EMPTY_STATE_FIXTURE = {
@@ -1659,12 +1704,21 @@ test('the footer is a wrapping flex line with a 30px gap between the groups', ()
   assert.match(prop('column-gap'), /30px/, 'at least 30px is guaranteed between the two groups')
 })
 
-test('the footer renders neither group when both are absent, and one when only one exists', () => {
-  // No reasoning metadata and no agentTeams projection: no footer at all.
+test('the footer always renders, carrying the mode button even with no other group', () => {
+  // No reasoning metadata and no agentTeams projection. The footer used to be
+  // omitted entirely here; it now always renders because the display-mode
+  // button lives in it — but it must carry ONLY that button, never an empty
+  // reasoning or teamwork group.
   const noTeam = catalogState({ current: { provider: 'third-party', model: 'glm-4.6' } })
   const a = openPanel(noTeam, { inject: { useProjection: () => undefined, teamAvailable: () => false } })
-  assert.equal(findAll(a.tree, node => hasClass(node, 'dshmf-footer')).length, 0,
-    'no groups means no empty footer')
+  const af = findAll(a.tree, node => hasClass(node, 'dshmf-footer'))
+  assert.equal(af.length, 1, 'the footer is there for the mode button')
+  assert.equal(findAll(af[0], node => hasClass(node, 'dshmf-reason')).length, 0,
+    'no reasoning metadata means no reasoning group')
+  assert.equal(findAll(af[0], node => hasClass(node, 'dshmf-team')).length, 0,
+    'no agentTeam projection means no teamwork group')
+  assert.equal(findAll(af[0], node => hasClass(node, 'dshmf-modeBtn')).length, 1,
+    'the mode button is the footer\'s permanent member')
 
   // Reasoning present, teamwork absent: footer still wraps the reasoning group.
   const b = openPanel(catalogState(), { inject: { useProjection: () => undefined, teamAvailable: () => false } })
@@ -3001,4 +3055,388 @@ test('a sub-pixel drift is not mistaken for a new layout', () => {
   assert.equal(__test.metricChanged(26, 27), false, 'one pixel is jitter, not layout')
   assert.equal(__test.metricChanged(26, 28), true, 'two pixels is a real change')
   assert.equal(__test.metricChanged(20, 0), true, 'a section disappearing is a real change')
+})
+
+// ---------------------------------------------------------------------------
+// Display mode: hand the composer's model seat back to the Host's own picker.
+//
+// The switch is a DISPOSAL, not a re-mount: a `single` slot keeps every
+// registration and renders the highest-priority live one, so dropping this
+// plugin's entry elects the shipped picker underneath. These tests pin the
+// disposal, the refusal when nothing could inherit the cell, and the chip that
+// brings the panel back.
+// ---------------------------------------------------------------------------
+/** Install a `localStorage` shim and return its backing map. */
+function installModeStorage(initial = {}) {
+  const map = new Map(Object.entries(initial))
+  globalThis.localStorage = {
+    getItem: key => (map.has(key) ? map.get(key) : null),
+    setItem: (key, value) => { map.set(key, String(value)) },
+    removeItem: key => { map.delete(key) },
+  }
+  return map
+}
+
+/** Let the store's microtask notification run. */
+const flushMicrotasks = () => new Promise(resolve => setTimeout(resolve, 0))
+
+test('the display mode defaults to flat and survives a reload', () => {
+  const map = installModeStorage()
+  try {
+    const { readDisplayMode, writeDisplayMode, DISPLAY_MODE_KEY } = bundle.__test
+    assert.equal(DISPLAY_MODE_KEY, 'dshmf:mode')
+    assert.equal(readDisplayMode(), 'flat', 'nothing stored means the panel is shown')
+    writeDisplayMode('native')
+    assert.equal(map.get('dshmf:mode'), 'native', 'the choice is persisted, not just remembered')
+    assert.equal(readDisplayMode(), 'native', 'a fresh read restores it')
+    writeDisplayMode('nonsense')
+    assert.equal(readDisplayMode(), 'flat', 'an unknown value falls back, never blanks the composer')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('a missing localStorage still yields flat instead of throwing', () => {
+  delete globalThis.localStorage
+  assert.equal(bundle.__test.readDisplayMode(), 'flat')
+  bundle.__test.writeDisplayMode('native')
+  assert.equal(bundle.__test.readDisplayMode(), 'flat', 'a failed write is silent')
+})
+
+test('the mode store notifies asynchronously and only on a real change', async () => {
+  installModeStorage()
+  try {
+    const store = bundle.__test.createDisplayModeStore({})
+    let calls = 0
+    const off = store.subscribe(() => { calls += 1 })
+    store.set('native')
+    // The click that flips the mode disposes the entry that owns the button, so
+    // the notification must NOT land inside the event dispatch.
+    assert.equal(calls, 0, 'notified in a microtask, not synchronously')
+    await flushMicrotasks()
+    assert.equal(calls, 1)
+    store.set('native')
+    await flushMicrotasks()
+    assert.equal(calls, 1, 'setting the same value again is not a change')
+    store.set('flat')
+    await flushMicrotasks()
+    assert.equal(calls, 2)
+    off()
+    store.set('native')
+    await flushMicrotasks()
+    assert.equal(calls, 2, 'an unsubscribed listener is not called')
+    store.dispose()
+    assert.equal(store.getSnapshot(), 'native', 'dispose drops listeners, not the value')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('the panel footer renders a 原生 / Original mode button, enabled by default', () => {
+  installModeStorage()
+  try {
+    runtime.reset()
+    const { ctx, seat } = makeCtx({ extraEntries: { 'conversation.input.model': [() => null] } })
+    bundle.apply(ctx)
+    const face = seat().registration.inject('session-1')
+    assert.equal(face.nativeAvailable(), true, 'the shipped entry is there to inherit the cell')
+    const tree = runtime.render(bundle.__component, {
+      ...face,
+      locked: false,
+      t: key => key,
+    })
+    findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+    const open = runtime.render(bundle.__component, { ...face, locked: false, t: key => key })
+    const buttons = findAll(open, node => hasClass(node, 'dshmf-modeBtn'))
+    assert.equal(buttons.length, 1, 'the mode button lives in the footer')
+    assert.equal(buttons[0].props['aria-pressed'], false, 'flat mode is the default')
+    assert.equal(buttons[0].props.disabled, false)
+    assert.ok(findAll(findAll(open, node => hasClass(node, 'dshmf-footer'))[0],
+      node => hasClass(node, 'dshmf-modeBtn')).length === 1,
+    'it is inside the footer, not floating beside it')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('the mode button is disabled when no other entry could inherit the seat', () => {
+  installModeStorage()
+  try {
+    runtime.reset()
+    const { ctx, seat } = makeCtx()
+    bundle.apply(ctx)
+    const face = seat().registration.inject('session-1')
+    assert.equal(face.nativeAvailable(), false, 'nothing is registered underneath us')
+    const tree = runtime.render(bundle.__component, { ...face, locked: false, t: key => key })
+    findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+    const open = runtime.render(bundle.__component, { ...face, locked: false, t: key => key })
+    const button = findAll(open, node => hasClass(node, 'dshmf-modeBtn'))[0]
+    assert.equal(button.props.disabled, true,
+      'stepping aside with nothing behind us would empty the composer')
+    assert.equal(button.props.title, 'native.unavailable', 'and it says why')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('switching to native mode disposes the seat, and switching back re-registers it', async () => {
+  const map = installModeStorage()
+  try {
+    runtime.reset()
+    const { ctx, seat, liveOf } = makeCtx({
+      extraEntries: { 'conversation.input.model': [() => null] },
+    })
+    bundle.apply(ctx)
+    const seatKey = 'conversation.input.model'
+    assert.equal(liveOf(seatKey).length, 2, 'our entry plus the shipped one')
+
+    bundle.__component // touch, so the module is materialized in this runtime
+    const face = seat().registration.inject('session-1')
+    face.setDisplayMode('native')
+    await flushMicrotasks()
+
+    assert.equal(map.get('dshmf:mode'), 'native', 'the choice is persisted')
+    assert.equal(liveOf(seatKey).length, 1,
+      'our entry is gone — the shipped picker is now the elected winner')
+    assert.equal(liveOf(seatKey)[0].registrant, 'shipped',
+      'and the entry left standing is the Host\'s, not a copy of it')
+
+    face.setDisplayMode('flat')
+    await flushMicrotasks()
+    assert.equal(liveOf(seatKey).length, 2, 'coming back re-registers our panel')
+    assert.equal(seat().registration.priority, -1, 'still at a negative shadowing priority')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('native mode is refused when the Host cannot prove an inheritor', async () => {
+  installModeStorage({ 'dshmf:mode': 'native' })
+  try {
+    runtime.reset()
+    // An older Host: no enumeration of competing entries.
+    const { ctx, liveOf } = makeCtx({ omitSlotEnumeration: true })
+    bundle.apply(ctx)
+    await flushMicrotasks()
+    // A persisted `native` from a previous install must not blank the composer.
+    assert.equal(liveOf('conversation.input.model').length, 1,
+      'the panel stays mounted when stepping aside cannot be verified')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('a persisted native mode activates straight into the shipped picker', async () => {
+  installModeStorage({ 'dshmf:mode': 'native' })
+  try {
+    runtime.reset()
+    const { ctx, liveOf } = makeCtx({
+      extraEntries: { 'conversation.input.model': [() => null] },
+    })
+    bundle.apply(ctx)
+    await flushMicrotasks()
+    const entries = liveOf('conversation.input.model')
+    assert.equal(entries.length, 1, 'the plugin never registers, so the Host wins from boot')
+    assert.equal(entries[0].registrant, 'shipped')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('the composer-row chip is the way back, and renders nothing in flat mode', async () => {
+  installModeStorage()
+  try {
+    runtime.reset()
+    const { ctx, live, liveOf } = makeCtx({
+      extraEntries: { 'conversation.input.model': [() => null] },
+    })
+    bundle.apply(ctx)
+    const chip = liveOf('conversation.input.right')[0]
+    assert.ok(chip, 'the chip owns its own slot entry, so it survives the seat disposal')
+    const chipFace = chip.registration.inject()
+
+    const flatTree = runtime.render(bundle.__nativeChip, { ...chipFace, t: key => key })
+    assert.equal(flatTree, null, 'in flat mode the chip draws nothing at all')
+
+    bundle.__component
+    // Flip through the chip's own face: that is exactly what a user in native
+    // mode would click.
+    chipFace.setDisplayMode('native')
+    await flushMicrotasks()
+    const nativeTree = runtime.render(bundle.__nativeChip, { ...chipFace, t: key => key })
+    assert.ok(nativeTree !== null, 'native mode shows the way back')
+    assert.equal(hasClass(nativeTree, 'dshmf-modeChip'), true)
+    assert.equal(nativeTree.props['aria-pressed'], true)
+    assert.equal(nativeTree.props.title, 'native.back')
+    // Which mode is live does not depend on the seat being mounted.
+    assert.equal(liveOf('conversation.input.model').length, 1)
+
+    nativeTree.props.onClick()
+    await flushMicrotasks()
+    assert.equal(runtime.render(bundle.__nativeChip, { ...chipFace, t: key => key }), null,
+      'clicking it returns to flat, which hides the chip again')
+    assert.equal(liveOf('conversation.input.model').length, 2, 'and the panel is back')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('unloading the plugin releases both the seat and the chip', async () => {
+  installModeStorage()
+  try {
+    runtime.reset()
+    const { ctx, registered, liveOf } = makeCtx({
+      extraEntries: { 'conversation.input.model': [() => null] },
+    })
+    bundle.apply(ctx)
+    const seatInject = registered.find(entry => entry.key === 'conversation.input.model')
+    const chipInject = registered.find(entry => entry.key === 'conversation.input.right')
+    assert.ok(seatInject, 'the seat waits on its declaration')
+    assert.ok(chipInject, 'the chip waits on its declaration')
+    seatInject.dispose()
+    chipInject.dispose()
+    assert.equal(liveOf('conversation.input.model').length, 1, 'no residue: only the Host is left')
+    assert.equal(liveOf('conversation.input.right').length, 0, 'the chip is gone too')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('a degraded face still answers the mode hooks without ever stepping aside', () => {
+  runtime.reset()
+  // The face a failed `buildFace` throws back, which the component must still be
+  // able to render: a stable flat snapshot, a no-op setter, and a refusal to
+  // step aside.
+  const face = {
+    displayMode: bundle.__test.FLAT_DISPLAY_MODE,
+    setDisplayMode: () => {},
+    nativeAvailable: () => false,
+  }
+  assert.equal(face.nativeAvailable(), false, 'a broken face must not hand the cell away')
+  assert.equal(face.displayMode.getSnapshot(), 'flat')
+  assert.equal(typeof face.setDisplayMode, 'function')
+
+  const props = {
+    ...face,
+    locked: false,
+    t: key => key,
+    available: true,
+    resolveDirectory: () => ({ addressed: false }),
+    load: () => {},
+    select: () => Promise.resolve(undefined),
+    resolveText: value => value,
+    teamAvailable: () => false,
+    setTeamMode: () => Promise.resolve(undefined),
+    insufficient: { subscribe: () => () => {}, getSnapshot: () => ({ marks: new Map() }) },
+  }
+  const closed = runtime.render(bundle.__component, props)
+  findAll(closed, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  const open = runtime.render(bundle.__component, props)
+  const button = findAll(open, node => hasClass(node, 'dshmf-modeBtn'))[0]
+  assert.ok(button, 'the footer still draws the mode button')
+  assert.equal(button.props.disabled, true, 'and it refuses to step aside')
+})
+
+test('every native-mode key is translated in both languages', () => {
+  runtime.reset()
+  const { ctx, dictionaryRegistrations } = makeCtx()
+  bundle.apply(ctx)
+  const dicts = dictionaryRegistrations[0].dicts
+  for (const key of ['native.label', 'native.enter', 'native.back', 'native.unavailable']) {
+    assert.equal(typeof dicts.zh[key], 'string', `zh ${key}`)
+    assert.equal(typeof dicts.en[key], 'string', `en ${key}`)
+    assert.notEqual(dicts.zh[key], '', `zh ${key} is not empty`)
+    assert.notEqual(dicts.en[key], '', `en ${key} is not empty`)
+  }
+  assert.equal(dicts.zh['native.label'], '原生')
+  assert.equal(dicts.en['native.label'], 'Original')
+})
+
+test('a stored native mode that could not take effect reports the flat state it actually shows', () => {
+  // `native` persisted, but no entry could inherit the cell, so the controller
+  // kept the panel mounted. The button must then read as FLAT — pressing state
+  // is a claim about what is on screen, not about what is in storage.
+  installModeStorage({ 'dshmf:mode': 'native' })
+  try {
+    runtime.reset()
+    const { ctx, seat } = makeCtx()
+    bundle.apply(ctx)
+    const face = seat().registration.inject('session-1')
+    assert.equal(face.displayMode.getSnapshot(), 'native', 'storage still says native')
+    assert.equal(face.nativeAvailable(), false, 'but there is nothing to hand the cell to')
+    const tree = runtime.render(bundle.__component, { ...face, locked: false, t: key => key })
+    findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+    const open = runtime.render(bundle.__component, { ...face, locked: false, t: key => key })
+    const button = findAll(open, node => hasClass(node, 'dshmf-modeBtn'))[0]
+    assert.equal(button.props['aria-pressed'], false,
+      'the panel is visible, so the button must not claim native mode')
+    assert.equal(button.props.disabled, true)
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('the mode button toggles: a pressed button offers the way back', () => {
+  // Flat mode: the click hands the seat over.
+  installModeStorage()
+  try {
+    runtime.reset()
+    const { ctx, seat } = makeCtx({ extraEntries: { 'conversation.input.model': [() => null] } })
+    bundle.apply(ctx)
+    const face = seat().registration.inject('session-1')
+    const props = { ...face, locked: false, t: key => key }
+    findAll(runtime.render(bundle.__component, props), node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+    const flat = findAll(runtime.render(bundle.__component, props), node => hasClass(node, 'dshmf-modeBtn'))[0]
+    assert.equal(flat.props.title, 'native.enter', 'flat offers to go native')
+    flat.props.onClick()
+  } finally {
+    delete globalThis.localStorage
+  }
+
+  // Native mode, forced onto the component: the same button must now offer flat,
+  // not re-assert native (which would leave a pressed button that does nothing).
+  runtime.reset()
+  const nativeStore = {
+    getSnapshot: () => 'native',
+    subscribe: () => () => {},
+    set: () => {},
+  }
+  const props = {
+    displayMode: nativeStore,
+    setDisplayMode: () => {},
+    nativeAvailable: () => false,
+    locked: false,
+    t: key => key,
+    available: true,
+    resolveDirectory: () => ({ addressed: false }),
+    load: () => {},
+    select: () => Promise.resolve(undefined),
+    resolveText: value => value,
+    teamAvailable: () => false,
+    setTeamMode: () => Promise.resolve(undefined),
+    insufficient: { subscribe: () => () => {}, getSnapshot: () => ({ marks: new Map() }) },
+  }
+  findAll(runtime.render(bundle.__component, props), node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  const open = runtime.render(bundle.__component, props)
+  const button = findAll(open, node => hasClass(node, 'dshmf-modeBtn'))[0]
+  // `nativeAvailable` is false here, so the stored native mode is not in effect
+  // and the button reports flat — the consistency rule from the earlier test.
+  assert.equal(button.props['aria-pressed'], false)
+})
+
+test('the measure key names the footer CONTENT, since the footer is always drawn', () => {
+  // The mode button made the footer permanent, so a key that asks "is the footer
+  // there?" would be constant and a footer that gains or loses the reasoning
+  // group or the teamwork row would never be re-measured. The key must follow
+  // the dynamic members instead (DEC-026 dependency discipline, DEC-027 footer).
+  const measure = source.slice(
+    source.indexOf('// What decides which fixed sections EXIST'),
+    source.indexOf('// ---- measurement: probe metrics'),
+  )
+  assert.match(measure, /const footerKey = `\$\{effortChoices\.length > 0 \? 'reason' : 'none'\}/,
+    'the key names the reasoning group by presence, not by a count that is hidden when absent')
+  assert.match(measure, /\$\{teamRowShown \? 'team' : 'none'\}/,
+    'and the teamwork row by presence')
+  assert.doesNotMatch(measure, /teamRowShown = !\(/,
+    'the old "footer may be absent" negation is gone with the always-on footer')
 })

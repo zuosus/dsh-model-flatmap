@@ -195,6 +195,57 @@ and the agent teamwork switch are all visible at once.
   the shared footer line described under *Reasoning levels*, immediately right
   of the reasoning group when both fit on one line.
 
+## Native mode
+
+The footer's trailing `原生` / `Original` button hands the composer's model seat
+back to whatever the Host ships in `conversation.input.model`, and back again.
+
+**How the switch works.** The plugin does NOT render the host's control — it
+stops shadowing it. This entry registers at a negative priority, so it wins the
+`single` slot; a `single` slot keeps every registration and renders only the
+highest-priority live one. Native mode therefore `dispose()`s this plugin's
+entry, which elects the shipped one underneath: the host mounts its own
+`ModelSelect`, whatever that is in the installed version. Nothing is imported,
+copied, or re-mounted, so an upgraded DSH shows its own newest picker and this
+mode structurally cannot drift out of date.
+
+The alternative — pulling the shipped component into our own tree — is not
+available: the `model-selection` package exports no component, and every
+`renderSlot` child (`conversation.input.model.label` / `.options`) is bound to
+the entry that declares it, so another entry calling it throws
+`StaleAuthorizationError` / `SlotOwnershipError`. See DEC-027.
+
+**Stepping aside is verified, never assumed.** Before disposing, the plugin asks
+`slots.entries('conversation.input.model')` for the registrations other than its
+own. If there is none — the shipped package disabled, uninstalled, or a Host too
+old to enumerate entries — the panel stays mounted and the button reads disabled
+with a tooltip explaining why. A persisted `native` mode from a previous install
+therefore lands on the flat panel instead of an empty composer.
+
+**The way back.** Native mode disposes the entry that owns the footer button, so
+the button cannot switch back. A second, independent registration carries the
+return trip: a compact `原生` chip in `conversation.input.right` (the composer
+tool row before the submit action — a `list` slot, so it composes alongside the
+host's own controls rather than replacing them). It renders `null` in flat mode,
+so it costs no space, and a pressed button in native mode.
+
+**One shared store.** Both controls read one page-wide mode store, so a flip made
+from either is what the other sees. The store persists the choice to
+`localStorage` (`dshmf:mode`, the same origin-scoped mechanism as the grouping
+choice) and degrades to `flat` whenever storage is unavailable — a missing store
+must never leave the composer without a model control.
+
+**Reported state is the visible state.** The panel only renders while it owns the
+cell, so the stored mode and the on-screen mode can disagree in exactly one case:
+`native` persisted with nothing to inherit the cell. The button's `aria-pressed`
+then reports flat, because it describes what is on screen, not what is in
+storage.
+
+**What changes across a switch.** Coming back from native mode remounts the
+panel, so it opens closed with an empty query. Focus follows the disposed
+button down to the document; cross-plugin DOM queries for focus are not allowed,
+so it is not chased.
+
 ## Data and interaction
 
 Everything goes through public Client APIs:
@@ -217,6 +268,12 @@ Everything goes through public Client APIs:
 - `ctx.get('remote').agentTeams.setEnabled()` writes the teamwork selection.
 - `ctx.locale` supplies the copy, resolves catalog badge text, and prefers the
   host's own `agent-team` wording when that namespace is registered.
+- `slots.register()` / its disposer and `slots.entries()` / `slots.subscribe()`
+  drive native mode: disposing this plugin's `conversation.input.model` entry
+  elects whatever the Host registered underneath, and `entries()` is what makes
+  that verifiable before the switch. `slots.subscribe()` re-runs the reconcile,
+  so a shipped picker that appears (or disappears) later enables or disables the
+  button without a reload.
 
 No host component, stylesheet, or DOM is read or restyled.
 

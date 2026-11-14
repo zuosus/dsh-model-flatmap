@@ -86,6 +86,17 @@ levels, and the agent-teamwork switch on one surface:
   by a later call or by age.
 - **Theme-aware.** Styled with host theme tokens only; looks correct in both
   light and dark themes.
+- **Native mode.** The panel's bottom-right `Original` button hands the
+  composer's model seat back to the **host's own** picker — the real shipped
+  `ModelSelect`, not a reproduction of it. The plugin does this by *stepping
+  aside*: it disposes its own `conversation.input.model` registration, so the
+  host's entry underneath wins the slot and renders itself. Nothing is
+  imported, copied, or re-mounted, which means an upgraded DSH shows its own
+  newest picker and this mode can never drift out of date. A compact `Original`
+  chip in the composer row brings the panel back, and the choice is remembered
+  across reloads. If the host ships no picker to hand over to, the button stays
+  disabled and the panel stays — the composer never ends up without a model
+  control.
 
 See [`docs/DETAIL.md`](./docs/DETAIL.md) for the full behaviour spec and
 [`DECISIONS.md`](./DECISIONS.md) for the decision log behind the design.

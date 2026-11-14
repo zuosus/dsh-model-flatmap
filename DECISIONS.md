@@ -5,6 +5,58 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-027 — 2026-11-14 — 原生模式：把座位**让出去**，而不是把宿主控件搬进来
+
+**Context.** 用户要求在面板右下角加一个 `原生` / `Original` 按钮：按下后本插件显示宿主
+原生的 model picker，再按一次回到平铺面板。用户的追加要求很明确——「不要试图自己去拷贝或者
+模仿一个原生 model picker 控件：应该总是在 DSH 中找到该控件然后加载它，这样可以保证即使
+DSH 不断升级，这个新功能也能显示最新的原生 model picker」。用户还猜测能否「两套 UI 都渲染、
+按条件隐藏一套」，并问能否「返回一个软链接指向出厂组件」。
+
+**Findings.** 读本机安装（`app.asar/dsh/node_modules/@deepseek-ai/`）：
+
+- `dsh-client-ui-renderer/src/client/registry.ts`：`single` 槽**保留全部**注册
+  （`entries(key)`），只把「被遮蔽的 cell 的胜出者」交给 outlet 渲染
+  （`entriesOfSlot(key)`）。我们只因为用负优先级（−1…−5）注册才占住了这个 cell，出厂的
+  `ModelSelect` 条目一直注册在我们下面。
+- `dsh-client-ui-slots` 的 `StoredEntry` 暴露 `component`、`inject`、`registrant`、
+  `locale`——也就是说「软链接」在数据结构上确实存在。
+- 但 `dsh-client-ui-model-selection/lib/client.js` 只导出 `apply` / `inject` /
+  `ModelDirectory` / `ModelDirectoryResolver`：**组件本身没有导出**。
+- `registry.ts` 的 `boundRenderSlot(host, entry)` 把 `renderSlot` 子槽绑定在**所属条目**上，
+  别的条目调用会抛 `StaleAuthorizationError`（注册已释放）或 `SlotOwnershipError`
+  （未声明的子槽）。而出厂 `ModelSelect` 依赖
+  `renderSlot('conversation.input.model.label' / '.options')`、
+  绑定到 `model` 命名空间的 `t`、以及注入的 directory face。
+
+**Decision.** 让位（step aside），不搬运。原生模式 DISPOSE 掉本插件
+`conversation.input.model` 的注册，于是槽自己选出下方那条出厂条目，宿主渲染它自己的组件。
+因此这里没有副本、没有 import 内部包、没有 re-mount：DSH 升级后出现的自然是它最新的 picker，
+这个功能**结构上不可能过期**。
+
+配套的三条约束：
+
+1. **可验证才让位。** `slots.entries()` 拿到除自己以外的活条目，为空（或宿主旧到没有这个方法）
+   就拒绝让位——否则 composer 会变成一个没有任何模型控件的空位。此时按钮置灰并给出原因。
+2. **持久化的 `native` 不代表屏幕上就是原生。** 面板只在**它占着 cell 时**才渲染，所以二者
+   只会在「存了 native 但没有可继承者、控制器拒绝让位」时不一致。按钮的 `aria-pressed` 报告
+   **实际生效**的模式，而不是存储值。
+3. **模式控件必须活得比它控制的座位久。** 原生模式会 dispose 掉承载按钮的条目，所以「回来的
+   路」放在 `conversation.input.right`（list 槽，输入框行内、提交按钮之前），平铺模式下渲染
+   `null`。
+
+**Rejected.**（1）import `ModelSelect` 直接渲染：包不导出组件，且内部 props 契约不受支持，
+升级即碎。（2）渲染 `entries()` 里另一条目存的 `component`：能拿到对象，但它的 `renderSlot`
+会拒绝非所属条目，等于拿到一个必然抛错的空壳；要让它跑起来就得自建条目、自绑 `t`、自造
+directory face——那已经是在复刻出厂控件了。（3）切模式时把面板和原生控件都挂在树上用
+`display:none` 切换：仍需自己渲染原生控件，回到（1）（2）；而且隐藏的槽条目仍占着 cell，
+`single` 槽里「胜出者」的语义会被扭曲。
+
+**Consequences.** 切换是一次 `dispose()` + 一次 `register()`，所以从原生模式回来时面板是全新
+挂载（关闭态、上次搜索词丢弃）——可接受。切换时焦点会随被 dispose 的按钮落到 document；跨插件
+查 DOM 取焦点是被禁止的，故不做。模式存进 `localStorage`（`dshmf:mode`，与分组选择同源同
+生命周期），写失败静默降级为 `flat`。让位前会把被选中条目的 `registrant` 打一次 info 日志，
+方便用户排查「到底交给了谁」。
 ## DEC-026 — 2026-11-14 — 面板测量不得自激：两个无依赖数组的 layout effect
 
 **Context.** 用户报告：composer 的 model picker trigger 突然显示

@@ -334,6 +334,43 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
 body[data-ds-dark-theme] .dshmf-footer,
 html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
 
+/* Display-mode button: the footer's trailing member, pinned to the panel's
+   bottom-right by an auto left margin. Drawn with the panel's own segment
+   recipe (toned track, 2px inset, radius-xs) so it reads as the same design
+   system as the header grouping control and the reasoning levels, and so the
+   pressed state is unmistakable in both themes. The auto margin also survives
+   the wrap case: alone on its line it still sits right. */
+.dshmf-modeBtn {
+  flex: 0 0 auto; margin-left: auto;
+  height: 22px; padding: 0 8px; border: 0; border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+  font-family: inherit; font-size: 11px; line-height: 16px; font-weight: 400;
+  white-space: nowrap; cursor: pointer;
+  transition: color 120ms ease, background 120ms ease;
+}
+@media (hover: hover) { .dshmf-modeBtn:hover:not(:disabled):not([aria-pressed="true"]) { color: var(--dsw-alias-label-primary); } }
+.dshmf-modeBtn[aria-pressed="true"] {
+  background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary);
+  box-shadow: var(--dsw-elevation-soft); font-weight: 500;
+}
+.dshmf-modeBtn:disabled { color: var(--dsw-alias-label-dimmed); cursor: default; }
+.dshmf-modeBtn:focus-visible { outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: -2px; }
+
+/* The composer-row chip that brings the panel back from native mode. It sits in
+   the toolbar row beside the Host's own model control, so it borrows the
+   composer's trigger chrome (13/20, 28px, radius-sm) instead of the panel's — it
+   reads as a toolbar control, not as a piece of the panel. */
+.dshmf-modeChip {
+  display: inline-flex; align-items: center; height: 28px; padding: 0 8px;
+  border: none; border-radius: var(--dsw-radius-sm); outline: none;
+  background: transparent; color: var(--dsw-alias-label-secondary);
+  font-family: inherit; font-size: 13px; line-height: 20px; font-weight: 400;
+  white-space: nowrap; cursor: pointer;
+}
+@media (hover: hover) { .dshmf-modeChip:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); } }
+.dshmf-modeChip:focus-visible { box-shadow: 0 0 0 2px var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); }
+
 /* Reasoning levels: a caption and a multi-segmentation control on one line;
    the track wraps below the caption only when the row cannot fit. The
    segment visual mirrors the header's grouping control, so the panel has
@@ -1272,6 +1309,120 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
     }
 
     // ---------------------------------------------------------------------
+    // Display mode — `flat` (this panel) or `native` (the Host's own picker).
+    //
+    // The panel can hand the composer's model seat back to whatever the Host
+    // ships in `conversation.input.model`. It does that by DISPOSING its own
+    // slot entry. A `single` slot keeps EVERY registration and renders only the
+    // highest-priority live one, so the shipped entry underneath is elected and
+    // the real, current Host component appears. Nothing is copied, imported or
+    // re-mounted — which is the whole point: an upgraded DSH shows its own
+    // newest picker, so this mode cannot drift out of date (DEC-027).
+    //
+    // The choice persists exactly like the grouping choice (origin-scoped
+    // `localStorage`), and every access degrades to `flat` — a missing store
+    // must never be able to leave the composer without a model control.
+    // ---------------------------------------------------------------------
+    const DISPLAY_MODE_KEY = 'dshmf:mode'
+    const DISPLAY_MODE_DEFAULT = 'flat'
+    /**
+     * Read the persisted display mode, or the default when nothing valid was
+     * stored (or storage is unavailable).
+     * @returns `'flat'` or `'native'`.
+     */
+    function readDisplayMode() {
+      try {
+        if (typeof localStorage === 'undefined') return DISPLAY_MODE_DEFAULT
+        const value = localStorage.getItem(DISPLAY_MODE_KEY)
+        return value === 'flat' || value === 'native' ? value : DISPLAY_MODE_DEFAULT
+      } catch {
+        return DISPLAY_MODE_DEFAULT
+      }
+    }
+    /**
+     * Persist one display mode. A write failure is swallowed: the in-memory
+     * value still drives the current tab.
+     * @param {'flat'|'native'} value - the mode to persist.
+     */
+    function writeDisplayMode(value) {
+      try {
+        if (typeof localStorage === 'undefined') return
+        localStorage.setItem(DISPLAY_MODE_KEY, value)
+      } catch {
+        /* storage unavailable — keep the in-memory choice only */
+      }
+    }
+    /** Schedule a callback outside the current event dispatch. */
+    const scheduleMicrotask = typeof queueMicrotask === 'function'
+      ? queueMicrotask
+      : callback => { Promise.resolve().then(callback) }
+
+    /**
+     * The ONE display-mode store per plugin generation: a uSES-safe snapshot
+     * (`getSnapshot` keeps referential identity until the value changes) shared
+     * by the panel's mode button and the composer-row chip.
+     *
+     * `set` notifies `queueMicrotask`-late on purpose. The click that switches
+     * the mode DISPOSES the slot entry that owns the button, so notifying
+     * synchronously would mutate the slot registry in the middle of React's
+     * event dispatch — the entry would vanish while its own handler is still on
+     * the stack.
+     * @param deps - storage accessors, injected for testability.
+     * @returns the store plus an idempotent `set`.
+     */
+    function createDisplayModeStore(deps) {
+      const normalize = value => (value === 'native' ? 'native' : DISPLAY_MODE_DEFAULT)
+      let value = normalize(typeof deps.readStored === 'function' ? deps.readStored() : DISPLAY_MODE_DEFAULT)
+      const listeners = new Set()
+      let scheduled = false
+      const flush = () => {
+        scheduled = false
+        for (const listener of [...listeners]) {
+          try {
+            listener()
+          } catch {
+            /* one bad subscriber must not starve the others */
+          }
+        }
+      }
+      return {
+        getSnapshot: () => value,
+        subscribe: listener => {
+          listeners.add(listener)
+          return () => { listeners.delete(listener) }
+        },
+        set: next => {
+          const normalized = normalize(next)
+          if (normalized === value) return
+          value = normalized
+          try {
+            if (typeof deps.writeStored === 'function') deps.writeStored(value)
+          } catch {
+            /* storage unavailable — the in-memory value still applies */
+          }
+          if (scheduled) return
+          scheduled = true
+          scheduleMicrotask(flush)
+        },
+        /** Drop every subscriber (activation teardown). */
+        dispose: () => {
+          listeners.clear()
+          scheduled = false
+        },
+      }
+    }
+    /**
+     * Frozen stand-in for a screen that has no store (a degraded activation, or
+     * a test double). One shared instance keeps `getSnapshot` stable, so a uSES
+     * consumer never re-renders in a loop.
+     */
+    const FLAT_DISPLAY_MODE = {
+      getSnapshot: () => DISPLAY_MODE_DEFAULT,
+      subscribe: () => () => {},
+      set: () => {},
+    }
+
+    // ---------------------------------------------------------------------
     // Insufficient-balance marks are GLOBAL, not Session-scoped.
     //
     // Whether a model has any quota left is a fact about the model route (and
@@ -1786,6 +1937,10 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         'failure.group': '{name} 加载失败：{message}',
         'error.action': '模型操作失败：{message}',
         'error.sessionInUse': '当前会话已被占用，可能是其他正在运行的 DSH 导致的，请退出其他正在运行的 DSH 后重试。',
+        'native.label': '原生',
+        'native.enter': '切换到宿主原生的模型选择器',
+        'native.back': '回到平铺模型面板',
+        'native.unavailable': '宿主原生模型选择器当前不可用',
       },
       en: {
         'provider.account': 'DeepSeek Account',
@@ -1816,6 +1971,10 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         'failure.group': '{name} failed to load: {message}',
         'error.action': 'Model operation failed: {message}',
         'error.sessionInUse': 'This session is already in use, possibly by another running DSH instance. Quit other running DSH instances and try again.',
+        'native.label': 'Original',
+        'native.enter': 'Switch to the host\'s own model picker',
+        'native.back': 'Back to the flat model panel',
+        'native.unavailable': 'The host\'s own model picker is unavailable right now',
       },
     }
 
@@ -2001,7 +2160,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         locked, sessionId, t,
         available, directory, load, select, resolveText, resolveDirectory,
         teamAvailable, setTeamMode, useProjection, useSession, useSessions,
-        insufficient,
+        insufficient, displayMode, setDisplayMode, nativeAvailable,
       } = props
 
       // The store may arrive after the first render (the Session binds later),
@@ -2022,6 +2181,29 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       const subscribeMarks = useCallback(listener => markFace.subscribe(listener), [markFace])
       const getMarks = useCallback(() => markFace.getSnapshot(), [markFace])
       const marks = useSyncExternalStore(subscribeMarks, getMarks, getMarks)
+
+      // The display mode is shared page state, not panel state: the composer-row
+      // chip that brings the panel back reads the SAME store while this seat is
+      // disposed. The fallback keeps the hook shape stable when the face was
+      // degraded.
+      const modeFace = displayMode ?? FLAT_DISPLAY_MODE
+      const subscribeMode = useCallback(listener => modeFace.subscribe(listener), [modeFace])
+      const getMode = useCallback(() => modeFace.getSnapshot(), [modeFace])
+      const mode = useSyncExternalStore(subscribeMode, getMode, getMode)
+      // Resolved per render: the shipped entry may register after this face was
+      // built, and the button has to enable itself without a reload.
+      const canGoNative = typeof nativeAvailable === 'function' && nativeAvailable() === true
+      // The panel only ever renders while it OWNS the cell, so the stored mode
+      // and the visible mode can disagree in exactly one case: `native` was
+      // persisted but there is nothing to inherit the cell, so the controller
+      // refused to step aside and this panel is still on screen. Reporting the
+      // stored value then would paint the button pressed while the panel shows —
+      // so report the mode that is actually in effect (DEC-027).
+      const modeIsNative = mode === 'native' && canGoNative
+      const switchMode = next => {
+        if (typeof setDisplayMode === 'function') setDisplayMode(next)
+        else modeFace.set(next)
+      }
 
       // Keep the store attached to this Session's feed while the seat is mounted.
       // It is shared, so unmounting must NOT dispose it — the marks belong to the
@@ -2309,10 +2491,16 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       // What decides which fixed sections EXIST — the measurement effect's
       // dependency set (DEC-026). The derived members are reduced to stable
       // keys so a new array/object identity per render cannot re-arm it.
-      const teamRowShown = !(effortChoices.length === 0
-        && (teamMode === undefined || !teamAvailable()))
+      //
+      // The footer itself is ALWAYS rendered now (it carries the display-mode
+      // button), so what can move its height is which of its dynamic members
+      // are present — the reasoning group and the teamwork row — not whether
+      // the footer exists. Naming the key after those members keeps a footer
+      // that merely gains or loses one of them a real measurement, while a
+      // footer whose content is unchanged stays quiet.
+      const teamRowShown = teamMode !== undefined && teamAvailable()
       const sectionCount = sections.length
-      const footerKey = `${effortChoices.length}:${teamRowShown ? 'team' : 'none'}`
+      const footerKey = `${effortChoices.length > 0 ? 'reason' : 'none'}:${teamRowShown ? 'team' : 'none'}`
       const errorKey = state.error === null ? '' : state.error
       const confirmOpen = confirming
       const teamErrorKey = teamFailure === null ? '' : teamFailure
@@ -2889,15 +3077,14 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
               state.failures.length === 0 ? null : state.failures.map(renderFailure),
             ),
 
-            // ---- fixed: reasoning levels of the current model, rendered as
-            // one labelled group of mutually exclusive choices
-            // ---- fixed, bottom: the agent teamwork switch. `teamAvailable`
-            // is evaluated per render because the remote scope may bind late.
-            // Both live in ONE footer flex container: they share a line when
-            // they fit with the 30px gap, otherwise each takes its own line.
-            (effortChoices.length === 0 && (teamMode === undefined || !teamAvailable()))
-              ? null
-              : h('div', { className: 'dshmf-footer', ref: footerRef },
+            // ---- fixed, bottom: the adaptive footer.
+            // It ALWAYS renders now: the reasoning group, the teamwork row and
+            // the display-mode button live in ONE flex container, and the mode
+            // button is the one member that is always present (the other two
+            // come and go with the model and the remote scope). They share a
+            // line when they fit with the 30px gap, otherwise each takes its own
+            // line; the mode button is pushed to the trailing edge.
+            h('div', { className: 'dshmf-footer', ref: footerRef },
                 effortChoices.length === 0 ? null : h('div', {
                   className: 'dshmf-reason',
                   ref: reasonRef,
@@ -2952,6 +3139,30 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
                       onClick: () => { changeTeamMode(!teamMode.enabled) },
                     }, h('span', { className: 'dshmf-thumb' })),
                   ),
+
+                // ---- display mode: hand the seat back to the Host's own
+                // picker, or take it back. One button, `aria-pressed` carrying
+                // the state. It is the footer's trailing member, so an auto left
+                // margin pins it to the panel's bottom-right and the wrap rule
+                // keeps every other member left-aligned.
+                // Disabled while the Host ships no picker to hand over to — a
+                // seat nobody would take must never empty the composer.
+                // Clicking TOGGLES: a pressed button means native mode is in
+                // effect, so it must offer the way back rather than re-assert
+                // the mode that is already on.
+                h('button', {
+                  type: 'button',
+                  className: 'dshmf-modeBtn',
+                  'aria-pressed': modeIsNative,
+                  'aria-label': modeIsNative
+                    ? t('native.back')
+                    : (canGoNative ? t('native.enter') : t('native.unavailable')),
+                  title: modeIsNative
+                    ? t('native.back')
+                    : (canGoNative ? t('native.enter') : t('native.unavailable')),
+                  disabled: !canGoNative,
+                  onClick: () => { switchMode(modeIsNative ? 'flat' : 'native') },
+                }, t('native.label')),
               ),
 
             // ---- fixed: teamwork disable confirmation
@@ -3094,6 +3305,47 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         h(ModelFlatMap, props))
     }
 
+    /**
+     * The way back out of native mode.
+     *
+     * Native mode DISPOSES this plugin's `conversation.input.model` entry, so
+     * the footer button that switched it disappears with the panel. This chip
+     * rides its own slot — `conversation.input.right`, a `list` seat ("compact
+     * controls before the composer submit action") that survives both modes —
+     * and renders NOTHING while the panel is showing. It is the mode control's
+     * only home that outlives the seat it controls.
+     *
+     * It reads the same page-wide store, so a switch made here is the switch the
+     * panel sees when it comes back.
+     * @param props - the slot's standard props plus the injected mode face.
+     */
+    function NativeChip(props) {
+      const {
+        t, displayMode, setDisplayMode, nativeAvailable,
+      } = props
+      const modeFace = displayMode ?? FLAT_DISPLAY_MODE
+      const subscribeMode = useCallback(listener => modeFace.subscribe(listener), [modeFace])
+      const getMode = useCallback(() => modeFace.getSnapshot(), [modeFace])
+      const mode = useSyncExternalStore(subscribeMode, getMode, getMode)
+      // Flat is the panel's own business: this chip exists for the other mode.
+      if (mode !== 'native') return null
+      const canGoFlat = typeof nativeAvailable !== 'function' || nativeAvailable() === true
+      if (!canGoFlat) return null
+      const translate = typeof t === 'function' ? t : key => key
+      const switchMode = next => {
+        if (typeof setDisplayMode === 'function') setDisplayMode(next)
+        else modeFace.set(next)
+      }
+      return h('button', {
+        type: 'button',
+        className: 'dshmf-modeChip',
+        'aria-pressed': true,
+        'aria-label': translate('native.back'),
+        title: translate('native.back'),
+        onClick: () => { switchMode('flat') },
+      }, translate('native.label'))
+    }
+
     // ---------------------------------------------------------------------
     // Plugin
     // ---------------------------------------------------------------------
@@ -3108,9 +3360,10 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       // Pure layout and grouping derivations plus the component itself,
       // exposed for `node --test` so grouping, filtering and the column
       // algorithm are pinned without a browser. The shell never reads this key.
-      __test: { marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore, quantizeMetric, metricChanged, METRIC_HYSTERESIS },
+      __test: { marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, readDisplayMode, writeDisplayMode, createDisplayModeStore, DISPLAY_MODE_KEY, DISPLAY_MODE_DEFAULT, FLAT_DISPLAY_MODE, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore, quantizeMetric, metricChanged, METRIC_HYSTERESIS },
       __component: ModelFlatMap,
       __seat: Seat,
+      __nativeChip: NativeChip,
       apply(ctx) {
         const read = name => {
           try {
@@ -3190,6 +3443,72 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         } catch (error) {
           console.error('dsh-model-flatmap: the balance mark store failed to start', error)
           markStore = undefined
+        }
+
+        // ---- the display-mode store (flat panel vs the Host's own picker)
+        //
+        // One store per activation, shared by the panel's footer button and the
+        // composer-row chip that outlives it. `readDisplayMode` already returned
+        // `flat` for a missing or unreadable store, so a persistence failure
+        // costs the memory of the choice, never the control.
+        let modeStore
+        try {
+          modeStore = createDisplayModeStore({
+            readStored: readDisplayMode,
+            writeStored: writeDisplayMode,
+          })
+          ctx.effect(() => () => { modeStore.dispose?.() }, 'dsh-model-flatmap: display mode')
+        } catch (error) {
+          console.error('dsh-model-flatmap: the display mode store failed to start', error)
+          modeStore = createDisplayModeStore({ readStored: () => DISPLAY_MODE_DEFAULT })
+        }
+
+        /**
+         * Every OTHER live registration in the model seat.
+         *
+         * A `single` slot keeps every registration and elects the highest
+         * priority; this plugin only owns the cell because it registers at a
+         * negative priority. Disposing our own entry therefore hands the cell to
+         * whatever is underneath — normally the shipped `ModelSelect` — with no
+         * copy, import or re-mount, so an upgraded DSH shows its own newest
+         * picker (DEC-027).
+         * @returns the competing entries, or `undefined` when the Host cannot
+         *   enumerate them (an older version): unverifiable means "do not step
+         *   aside", never a blank composer.
+         */
+        const otherEntries = () => {
+          try {
+            if (typeof slots.entries !== 'function') return undefined
+            const all = slots.entries('conversation.input.model')
+            if (!Array.isArray(all)) return undefined
+            return all.filter(entry => entry?.component !== Seat)
+          } catch {
+            return undefined
+          }
+        }
+        /**
+         * May the panel hand the seat over? Only when another live entry exists
+         * to inherit it. Deliberately does NOT require the shipped package name:
+         * a composed profile may legitimately elect another plugin's seat, and
+         * that is exactly what the user asked to see.
+         * @returns whether disposing this entry leaves a model control behind.
+         */
+        const canStepAside = () => {
+          const others = otherEntries()
+          return others !== undefined && others.length > 0
+        }
+        /** Report the inheriting entry once, so a support log names the target. */
+        let inheritReported = false
+        const reportInherit = () => {
+          if (inheritReported) return
+          inheritReported = true
+          try {
+            const others = otherEntries()
+            const names = (others ?? []).map(entry => entry?.registrant ?? entry?.options?.id ?? 'unknown')
+            console.info(`dsh-model-flatmap: the model seat is handed to ${names.join(', ') || 'no entry'}`)
+          } catch {
+            /* diagnostics only */
+          }
         }
 
         /**
@@ -3279,6 +3598,15 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
                 ? Promise.resolve(undefined)
                 : service.setEnabled(sessionId, enabled)
             },
+            // Display mode: the ONE page-wide store, read by both this seat's
+            // footer button and the composer-row chip that takes over while
+            // this seat is disposed.
+            displayMode: modeStore,
+            setDisplayMode: value => { modeStore.set(value) },
+            // Lazy for the same reason as `teamAvailable`: the shipped entry can
+            // register AFTER this face is built, and the button has to enable
+            // itself without a reload.
+            nativeAvailable: canStepAside,
           }
         }
 
@@ -3311,6 +3639,13 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
               // unstruck. It shares the module-level empty snapshot so the
               // identity stays stable across renders.
               insufficient: EMPTY_INSUFFICIENT,
+              // Same principle for the mode: a stable flat snapshot and a
+              // no-op setter keep the footer's hook shape intact. Stepping aside
+              // is refused outright — a face this broken must not hand the
+              // composer to anything.
+              displayMode: FLAT_DISPLAY_MODE,
+              setDisplayMode: () => {},
+              nativeAvailable: () => false,
             }
           }
         }
@@ -3337,10 +3672,104 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
           return () => {}
         }
 
+        // ---- the mode controller
+        //
+        // Flat mode keeps this plugin's entry registered (it shadows the
+        // shipped one at a negative priority). Native mode DISPOSES that entry,
+        // which elects the shipped picker underneath. Mount and unmount are
+        // therefore the two halves of one switch, and both are idempotent: the
+        // notify path re-enters `syncMode` through our own slot mutations.
+        let seatDispose
+        /** Guard against re-entry from our own registration changes. */
+        let syncing = false
+        const mountSeat = () => {
+          if (seatDispose !== undefined) return
+          seatDispose = registerSeat()
+        }
+        const unmountSeat = () => {
+          const dispose = seatDispose
+          if (dispose === undefined) return
+          seatDispose = undefined
+          try {
+            dispose()
+          } catch (error) {
+            console.error('dsh-model-flatmap: the model seat did not dispose cleanly', error)
+          }
+        }
+        /**
+         * Reconcile the registration with the store. Native mode only takes
+         * effect when another entry can inherit the cell — otherwise the panel
+         * stays, so a profile without the shipped picker never loses its model
+         * control.
+         */
+        const syncMode = () => {
+          if (syncing) return
+          syncing = true
+          try {
+            const wantsNative = modeStore.getSnapshot() === 'native'
+            if (wantsNative && canStepAside()) {
+              reportInherit()
+              unmountSeat()
+            } else {
+              mountSeat()
+            }
+          } finally {
+            syncing = false
+          }
+        }
+
         try {
-          slots.inject('conversation.input.model', registerSeat)
+          slots.inject('conversation.input.model', () => {
+            syncMode()
+            const offMode = modeStore.subscribe(syncMode)
+            // The shipped entry may register after ours, and a competing entry
+            // may unload: both change whether stepping aside is possible, so the
+            // button's availability rides the same reconcile.
+            const offSlot = typeof slots.subscribe === 'function'
+              ? slots.subscribe('conversation.input.model', syncMode)
+              : undefined
+            return () => {
+              if (typeof offMode === 'function') offMode()
+              if (typeof offSlot === 'function') offSlot()
+              unmountSeat()
+            }
+          })
         } catch (error) {
           console.error('dsh-model-flatmap: slots.inject failed for the model seat', error)
+        }
+
+        // ---- the chip that brings the panel back from native mode
+        //
+        // Native mode disposes the seat, and with it the footer button that
+        // switched. This companion entry lives in a `list` slot of the composer
+        // row, so it survives both modes; it renders nothing while the panel is
+        // showing (`NativeChip` returns null unless the mode is `native`).
+        try {
+          if (typeof slots.inject === 'function') {
+            slots.inject('conversation.input.right', () => {
+              if (typeof slots.register !== 'function') return () => {}
+              try {
+                return slots.register({
+                  name: 'conversation.input.right',
+                  id: 'dsh-model-flatmap.native',
+                  order: 50,
+                  locale: NS,
+                  inject: () => ({
+                    displayMode: modeStore,
+                    setDisplayMode: value => { modeStore.set(value) },
+                    nativeAvailable: canStepAside,
+                  }),
+                }, NativeChip)
+              } catch (error) {
+                console.error('dsh-model-flatmap: the native-mode chip was not registered', error)
+                return () => {}
+              }
+            })
+          }
+        } catch (error) {
+          // Losing the chip costs the way BACK, never the way in: the panel and
+          // its footer button still work, and a reload restores flat mode.
+          console.error('dsh-model-flatmap: slots.inject failed for the native-mode chip', error)
         }
       },
     }
