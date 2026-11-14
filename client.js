@@ -439,6 +439,56 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
     const ROW_GAP = 2
     const BALANCE_THRESHOLD = 24
 
+    /**
+     * The band a re-measurement must leave before it counts as a real layout
+     * change (DEC-026). Two physical pixels: smaller than anything the column
+     * plan acts on (its smallest unit is a 26px row), larger than the
+     * scrollbar / flex-wrap jitter that would otherwise re-plan the panel from
+     * its own output.
+     */
+    const METRIC_HYSTERESIS = 2
+
+    /**
+     * The height quantum a measurement is snapped to (DEC-026).
+     *
+     * `getBoundingClientRect().height` and `offsetHeight` are physical pixels:
+     * a web font swapping in, a scrollbar appearing, or a flex container
+     * re-rounding can move them by a fraction of a pixel between two frames
+     * that render the same visual layout. Because the measured value feeds back
+     * into the panel's own column plan, taking such noise literally makes the
+     * panel oscillate. Half a pixel is below anything the layout acts on
+     * (the smallest thing it decides is a 26px row), so snapping both the
+     * comparison and the stored value to it absorbs the noise while keeping
+     * every real change — a wrapped footer, a shown error strip.
+     * @param {number} value - a raw measured height in px.
+     * @returns {number} the height snapped to the nearest half pixel.
+     */
+    const quantizeMetric = value => {
+      const numeric = Number(value)
+      if (!Number.isFinite(numeric) || numeric <= 0) return 0
+      return Math.round(numeric * 2) / 2
+    }
+
+    /**
+     * Is a new measurement meaningfully different from the stored one (DEC-026)?
+     *
+     * Measurement feeds the panel's own column plan, and the plan feeds the
+     * panel's layout, so this comparison is the loop's control point: it must
+     * answer "no" for anything that is not a real change. A 2px band absorbs
+     * the one thing quantization cannot — the footer's CSS flex wrapping
+     * flipping back and forth across a scrollbar boundary, which moves the
+     * measured block by a couple of pixels in either direction but draws the
+     * same panel. Real transitions (a footer wrapping at all, an error strip
+     * appearing) move the value far outside the band.
+     * @param {number} previous - the stored measurement.
+     * @param {number} next - the freshly measured one.
+     * @returns {boolean} true when the difference is worth a re-plan.
+     */
+    const metricChanged = (previous, next) => {
+      if (previous === next) return false
+      return Math.abs(next - previous) >= METRIC_HYSTERESIS
+    }
+
     const PATH_CHEVRON = 'M3.2 5.6 7 9.4 10.8 5.6'
     const PATH_CLOSE = 'M4 4 10 10M10 4 4 10'
     const PATH_INFO = 'M7 6.4v4.1M7 3.7v.8'
@@ -2256,27 +2306,60 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       const effortChoices = reasoning === undefined ? [] : reasoning.efforts
       const busy = state.pending !== null
 
+      // What decides which fixed sections EXIST — the measurement effect's
+      // dependency set (DEC-026). The derived members are reduced to stable
+      // keys so a new array/object identity per render cannot re-arm it.
+      const teamRowShown = !(effortChoices.length === 0
+        && (teamMode === undefined || !teamAvailable()))
+      const sectionCount = sections.length
+      const footerKey = `${effortChoices.length}:${teamRowShown ? 'team' : 'none'}`
+      const errorKey = state.error === null ? '' : state.error
+      const confirmOpen = confirming
+      const teamErrorKey = teamFailure === null ? '' : teamFailure
+
       // ---- measurement: probe metrics + fixed-section heights
       // The reasoning group and the teamwork row now share ONE footer flex
       // container, so measure that container once instead of the two children
       // separately: when they sit on the same line the two heights overlap,
       // and summing them would over-subtract from the grid's budget.
+      //
+      // This effect MUST NOT run on every render (DEC-026). `metrics.fixed`
+      // feeds `availableHeight`, which decides the column plan, which changes
+      // the panel's own height, which changes the next measurement: an
+      // unconditional measure/setMetrics pass closes that into a feedback loop
+      // and React aborts it with "Maximum update depth exceeded" (error #185).
+      // A browser reaches it on its own — a web font swapping in, a scrollbar
+      // appearing, a sub-pixel height drift — which is why the crash looked
+      // spontaneous. Measuring is therefore tied to the inputs that can
+      // actually move a section (the panel opening, the section list, the
+      // locale, and the debounced replan), and the compared values are
+      // QUANTIZED so sub-pixel noise can never be mistaken for a new layout.
       useLayoutEffect(() => {
         if (!open) return
-        const rowH = probeRowRef.current?.getBoundingClientRect().height ?? 26
-        const headH = probeHeadRef.current?.getBoundingClientRect().height ?? 20
+        const rowH = quantizeMetric(probeRowRef.current?.getBoundingClientRect().height ?? 26)
+        const headH = quantizeMetric(probeHeadRef.current?.getBoundingClientRect().height ?? 20)
         const heights = [headRef, errorRef, footerRef, confirmRef, teamErrorRef]
-          .map(ref => ref.current?.offsetHeight ?? 0)
+          .map(ref => quantizeMetric(ref.current?.offsetHeight ?? 0))
           .filter(height => height > 0)
         const fixed = heights.reduce((sum, height) => sum + height, 0)
         const fixedCount = heights.length
-        setMetrics(previous => (previous.rowH === rowH && previous.headH === headH
-          && previous.fixed === fixed && previous.fixedCount === fixedCount
-          ? previous
-          : { ...previous, rowH, headH, fixed, fixedCount }))
-      })
+        setMetrics(previous => (metricChanged(previous.rowH, rowH)
+          || metricChanged(previous.headH, headH)
+          || metricChanged(previous.fixed, fixed)
+          || previous.fixedCount !== fixedCount
+          ? { ...previous, rowH, headH, fixed, fixedCount }
+          : previous))
+      }, [open, sectionCount, footerKey, errorKey, confirmOpen, teamErrorKey, replan])
 
       // ---- placement: above the trigger, kept inside the viewport
+      //
+      // Like the measurement above, this must NOT re-run on every render
+      // (DEC-026): `place()` writes `metrics.box`, and the panel's height —
+      // which `place()` reads — is derived from `metrics`. Left unconditional,
+      // a panel whose height rounds differently at the new position re-places
+      // itself forever, which is the same #185 abort the measure loop caused.
+      // It is therefore armed on the inputs that move the panel (opening, the
+      // plan, the viewport) and observes resize/scroll directly.
       useLayoutEffect(() => {
         if (!open) {
           setMetrics(previous => (previous.box === null ? previous : { ...previous, box: null }))
@@ -2308,7 +2391,10 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
           window.removeEventListener('resize', place)
           window.removeEventListener('scroll', place, true)
         }
-      })
+        // `plan` is derived from these metrics, so re-placing on the metrics is
+        // the same trigger one level up — and it avoids reading `plan` before
+        // it is computed.
+      }, [open, metrics.fixed, metrics.rowH, metrics.headH, metrics.fixedCount])
 
       // Re-plan once fonts settle and on panel resize (debounced).
       useEffect(() => {
@@ -3022,7 +3108,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       // Pure layout and grouping derivations plus the component itself,
       // exposed for `node --test` so grouping, filtering and the column
       // algorithm are pinned without a browser. The shell never reads this key.
-      __test: { marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore },
+      __test: { marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore, quantizeMetric, metricChanged, METRIC_HYSTERESIS },
       __component: ModelFlatMap,
       __seat: Seat,
       apply(ctx) {

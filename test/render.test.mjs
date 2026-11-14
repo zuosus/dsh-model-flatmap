@@ -2950,3 +2950,55 @@ test('the group-title marquee CSS clips the window and shares the row keyframes'
   assert.match(running, /\b1\b/, 'exactly one iteration')
   assert.match(running, /forwards/, 'the end state is held')
 })
+
+// ---------------------------------------------------------------------------
+// DEC-026: the measurement loops must not be self-feeding.
+//
+// `metrics.fixed` feeds `availableHeight`, which decides the column plan, which
+// moves the panel's own height — the value the next measurement reads. An
+// effect that re-runs on every render closes that into a feedback loop and
+// React aborts the whole seat with "Maximum update depth exceeded" (error
+// #185), which the seat boundary then paints as the trigger caption: exactly
+// the "select model: Minified React error #185" chip users reported.
+// ---------------------------------------------------------------------------
+
+test('the measure effect is armed by layout inputs, not by every render', () => {
+  const measure = source.slice(
+    source.indexOf('// ---- measurement: probe metrics + fixed-section heights'),
+    source.indexOf('// ---- placement: above the trigger'),
+  )
+  const deps = /}\s*,\s*\[([^\]]*)\]\)/.exec(measure)
+  assert.ok(deps !== null, 'the measure effect carries a dependency array')
+  assert.doesNotMatch(measure, /\n\s*\}\)\n\s*\n\s*\/\/ ---- placement/,
+    'it is not left unconditional (no bare `})`)')
+  for (const input of ['open', 'sectionCount', 'replan']) {
+    assert.ok(deps[1].includes(input), `the measure effect re-arms on ${input}`)
+  }
+})
+
+test('the placement effect is armed by layout inputs, not by every render', () => {
+  const placement = source.slice(
+    source.indexOf('// ---- placement: above the trigger'),
+    source.indexOf('// Re-plan once fonts settle'),
+  )
+  assert.ok(/}\s*,\s*\[[^\]]*\]\)/.test(placement),
+    'the placement effect carries a dependency array')
+  assert.ok(/\[open, metrics\.fixed/.test(placement),
+    'it re-places when the fixed sections or the row metrics move')
+})
+
+test('a sub-pixel drift is not mistaken for a new layout', () => {
+  const { __test } = bundle
+  // Quantization snaps to half a pixel, so rounding noise collapses to one value.
+  assert.equal(__test.quantizeMetric(26.1), 26)
+  assert.equal(__test.quantizeMetric(26.24), 26)
+  assert.equal(__test.quantizeMetric(26.3), 26.5)
+  assert.equal(__test.quantizeMetric(0), 0)
+  assert.equal(__test.quantizeMetric(undefined), 0)
+  // The comparison adds a two-pixel band on top, so a wrap flip that draws the
+  // same panel never re-plans it.
+  assert.equal(__test.metricChanged(26, 26), false)
+  assert.equal(__test.metricChanged(26, 27), false, 'one pixel is jitter, not layout')
+  assert.equal(__test.metricChanged(26, 28), true, 'two pixels is a real change')
+  assert.equal(__test.metricChanged(20, 0), true, 'a section disappearing is a real change')
+})

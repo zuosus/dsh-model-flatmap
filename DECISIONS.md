@@ -5,6 +5,53 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-026 — 2026-11-14 — 面板测量不得自激：两个无依赖数组的 layout effect
+
+**Context.** 用户报告：composer 的 model picker trigger 突然显示
+`请选择模型: Minified React error #185`。React #185 是 "Maximum update depth
+exceeded"，即渲染循环被 React 主动中止；`SeatBoundary` 捕获后把它画成
+trigger 上的一行字，所以看起来像「模型选择器坏了」，实际是整个座位在重渲染
+里打转。
+
+**Root cause.** 组件里有两条自激回路，症状相同、来源相同：
+
+1. `// ---- measurement` 的 `useLayoutEffect` **没有依赖数组**，每次渲染后都
+   测量 `rowH / headH / fixed` 并 `setMetrics`。而 `metrics.fixed` 直接参与
+   `availableHeight`，`availableHeight` 决定列数，列数决定面板自身高度，面板
+   高度又决定下一次测量——输入就是它自己的输出。
+2. `// ---- placement` 的 `useLayoutEffect` 同样**没有依赖数组**，每次渲染都
+   跑 `place()` 并写 `metrics.box`；`place()` 读的 `panel.offsetHeight` 又由
+   `metrics` 推导而来，位置变化导致高度取整不同，于是反复重定位。
+
+两条回路平时不发作：只有当测量值真的在两次渲染之间改变，才形成闭环。浏览器
+里触发它的事件本身很普通——web font 换入、滚动条出现或消失、
+flex 行在断点附近来回换行、亚像素取整。这就是「突然之间」的来源：不是版本
+升级，也不是某次操作，而是布局第一次抖动。
+
+**Decision.** 让测量与定位都**只在真正的布局输入变化时运行**，并且不让
+亚像素噪声冒充布局变化：
+
+- 两个 effect 都补上依赖数组。测量的依赖是
+  `[open, sectionCount, footerKey, errorKey, confirmOpen, teamErrorKey, replan]`
+  ——恰好是「哪些固定区块存在」这件事；派生的成员压成稳定字符串键，避免每次
+  渲染新建数组/对象把这层依赖重新点燃。定位的依赖是
+  `[open, metrics.fixed, metrics.rowH, metrics.headH, metrics.fixedCount]`
+  （`plan` 由这些指标推出，等价但可读，且不会读到尚未计算的 `plan`）。
+- 测量值先经 `quantizeMetric` 量化到 0.5px，再用 `metricChanged` 的
+  `METRIC_HYSTERESIS = 2px` 带宽比较。带宽小于列宽规划能感知的最小单位
+  （26px 的行），大于滚动条/换行抖动。真实变化（footer 换行、错误条出现）
+  远超带宽，照常生效。
+
+**Consequences.** 三条回归用例先在原始代码上失败、修好后通过（两个 effect
+「armed by layout inputs」、以及「a sub-pixel drift is not mistaken for a new
+layout」）。用真实 React 18 + jsdom 对振荡布局做的验证：原始代码抛
+`Maximum update depth exceeded`，修复后 `loop=false`；而一次性真实布局变化
+（模拟 web font 换入）在修复前后都正常，确认没有把正常重排一并砍掉。
+
+**Rejected.** 只加「最多重算 N 次」的计数器——那是把循环停下来而不是消除它，
+面板会停在一个按旧高度算出的错误列数上；也拒绝只做去抖延迟——测量本身是同步
+布局读取，延迟只会把振荡摊到多帧，仍然不收敛。
+
 ## DEC-025 — ⛔️ 2026-11-14 — 划线不显示的两个漏检：prepend 与 eventSource 换代
 
 取代: 无（DEC-014 / DEC-015 / DEC-017 / DEC-024 的判定规则、全局归属与 24 小时有效期全部
