@@ -2,6 +2,15 @@
   "name": "dsh-model-flatmap",
   "version": "1.2.0",
   "description": "Flat, two-level-free model picker for the DSH composer: every model and reasoning level on one surface.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zuosus/dsh-model-flatmap.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zuosus/dsh-model-flatmap/issues"
+  },
+  "homepage": "https://github.com/zuosus/dsh-model-flatmap#readme",
   "type": "module",
   "exports": {
     ".": "./index.js",
