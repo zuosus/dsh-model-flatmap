@@ -359,23 +359,28 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
 .dshmf-setProvider { border-bottom: 0.5px solid var(--dsw-alias-border-l2); }
 .dshmf-setList > .dshmf-setProvider:last-child { border-bottom: none; }
 .dshmf-setProviderRow { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0; }
+/* The whole text side of the row is the disclosure, so the button stretches
+   from the row's left edge to the switch instead of hugging the chevron. */
 .dshmf-setDisclosure {
-  display: flex; align-items: center; justify-content: center; flex: 0 0 auto;
-  width: 20px; height: 20px; padding: 0; border: none; border-radius: var(--dsw-radius-xs);
-  background: transparent; color: var(--dsw-alias-label-secondary); cursor: pointer;
+  display: flex; align-items: center; gap: 10px; flex: 1 1 auto; min-width: 0;
+  padding: 2px 0; border: none; border-radius: var(--dsw-radius-xs);
+  background: transparent; color: var(--dsw-alias-label-secondary);
+  cursor: pointer; text-align: left;
 }
 @media (hover: hover) { .dshmf-setDisclosure:hover { background: var(--dsw-alias-interactive-bg-hover); } }
 .dshmf-setDisclosure:focus-visible { outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: 1px; }
-.dshmf-setChevron { transition: transform .12s ease; }
+.dshmf-setChevron { flex: 0 0 auto; transition: transform .12s ease; }
 .dshmf-setChevronOpen { transform: rotate(180deg); }
 .dshmf-setProviderText { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
-.dshmf-setProviderName { font-size: 14px; line-height: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dshmf-setProviderMeta { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); }
+.dshmf-setProviderName { display: block; font-size: 14px; line-height: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dshmf-setProviderMeta { display: block; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); }
 /* A switched-off provider reads as dimmed, so a long list shows at a glance
    which rows are already out of the panel. */
 .dshmf-setProvider[data-hidden="true"] .dshmf-setProviderName,
 .dshmf-setProvider[data-hidden="true"] .dshmf-setProviderMeta { color: var(--dsw-alias-label-dimmed); }
-.dshmf-setModels { display: flex; flex-direction: column; padding: 0 0 8px 20px; }
+/* 23px = the chevron's 13px + the disclosure's 10px gap, so a model name sits
+   under the provider name it belongs to. */
+.dshmf-setModels { display: flex; flex-direction: column; padding: 0 0 8px 23px; }
 .dshmf-setModelRow { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 6px 0; }
 .dshmf-setModelName { font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dshmf-switch {
@@ -4420,18 +4425,22 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         const title = labelOf(group)
         return h('div', { className: 'dshmf-setProvider', key: group.id, 'data-hidden': !shown },
           h('div', { className: 'dshmf-setProviderRow' },
+            // The disclosure is the WHOLE text area, not the chevron alone:
+            // the name, the model count and the chevron are one button, so a
+            // click anywhere on that side of the row expands the provider.
             h('button', {
               type: 'button',
               className: 'dshmf-setDisclosure',
               'aria-expanded': isOpen,
               'aria-label': `${isOpen ? translate('collapse') : translate('expand')} ${title}`,
               onClick: () => toggleExpanded(group.id),
-            }, svg(PATH_CHEVRON, 13, { className: isOpen ? 'dshmf-setChevron dshmf-setChevronOpen' : 'dshmf-setChevron' })),
-            h('div', { className: 'dshmf-setProviderText' },
-              h('div', { className: 'dshmf-setProviderName' }, title),
-              h('div', { className: 'dshmf-setProviderMeta' },
-                fillText('models', { count: models.length }),
-                hiddenCount === 0 ? null : ` · ${fillText('hiddenCount', { count: hiddenCount })}`)),
+            },
+              svg(PATH_CHEVRON, 13, { className: isOpen ? 'dshmf-setChevron dshmf-setChevronOpen' : 'dshmf-setChevron' }),
+              h('span', { className: 'dshmf-setProviderText' },
+                h('span', { className: 'dshmf-setProviderName' }, title),
+                h('span', { className: 'dshmf-setProviderMeta' },
+                  fillText('models', { count: models.length }),
+                  hiddenCount === 0 ? null : ` · ${fillText('hiddenCount', { count: hiddenCount })}`))),
             h(Switch, {
               checked: shown,
               label: fillText('providerToggle', { name: title }),

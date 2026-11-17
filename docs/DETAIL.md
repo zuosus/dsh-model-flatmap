@@ -428,8 +428,10 @@ and belongs where the app's other preferences are.
 
 ### What it shows
 
-Every provider is one row: a disclosure button, the provider's name, how many
-models it has (and how many of those are hidden), and a switch. Expanding the
+Every provider is one row: a disclosure button carrying the chevron, the
+provider's name, and how many models it has (and how many of those are hidden),
+then a separate switch. The disclosure spans the whole text side of the row, so
+a click anywhere between the chevron and the switch expands it. Expanding the
 row lists that provider's models, each with its own switch. A provider that is
 switched off dims, and its model switches render disabled — they keep showing
 each model's **own** record, so it is visible what will come back when the
