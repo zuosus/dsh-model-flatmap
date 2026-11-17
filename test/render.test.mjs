@@ -4445,10 +4445,10 @@ test('the migrated record means exactly what the model switches show', () => {
 
 // ---------------------------------------------------------------------------
 // Settings → Model list: a provider row is a section header, a model row is an
-// item under it. They must be told apart by the TYPE ITSELF (family + weight +
-// tracking), not by 1px of size — the two used to read as twins.
+// item under it. They must be told apart by WEIGHT in the UI's own face — the
+// two used to read as twins at 14px/13px with one tone between them.
 // ---------------------------------------------------------------------------
-test('a provider row takes the brand face while a model row stays in the UI face', () => {
+test('a provider row is bold in the UI face while a model row stays regular', () => {
   const css = source.match(/const CSS = `([\s\S]*?)`/)[1]
   const ruleOf = selector => {
     const at = css.indexOf(selector)
@@ -4462,31 +4462,26 @@ test('a provider row takes the brand face while a model row stays in the UI face
   const provider = ruleOf('.dshmf-setProviderName {')
   const model = ruleOf('.dshmf-setModelName {')
 
-  // The provider name takes the host's brand family — a token, never a
-  // hard-coded font stack, so it follows the shell's own branding.
-  assert.match(prop(provider, 'font-family'), /var\(--dsw-font-family-brand\)/,
-    'the provider name uses the host brand font token')
-  assert.doesNotMatch(prop(provider, 'font-family'), /Montserrat|sans-serif|serif/i,
-    'the family comes from the token, not a hard-coded stack')
-  // Weight 500, not 600+: the shell only ships Montserrat at 300/400/500, so a
-  // heavier value would be browser-synthesised faux bold.
-  assert.equal(prop(provider, 'font-weight'), '500',
-    'provider weight stays on a real cut the shell ships (no faux bold)')
-  assert.match(prop(provider, 'letter-spacing'), /\.04em/,
-    'the provider name carries tracking so it reads as a heading')
+  // The provider name stays in the UI's OWN face. A brand typeface was tried
+  // here and read badly against the surrounding UI text, so the family must not
+  // drift to the brand token or to any hard-coded stack.
+  assert.match(prop(provider, 'font-family'), /inherit/,
+    'the provider name keeps the inherited UI face')
+  assert.doesNotMatch(prop(provider, 'font-family'), /brand|Montserrat|sans-serif|serif/i,
+    'no second typeface: not the brand token, not a hard-coded stack')
+  // Bold is the whole point of the row: 600, a real cut of the UI face.
+  assert.equal(prop(provider, 'font-weight'), '600', 'the provider name is genuinely bold')
+  assert.equal(prop(provider, 'letter-spacing'), undefined,
+    'no tracking — the family is untouched, so the spacing is too')
 
-  // The model name is explicitly the opposite: inherited UI face, regular
-  // weight, no tracking. Stated rather than left to inheritance, so the two
-  // rows cannot drift back into the same look.
+  // The model name is explicitly the opposite: regular weight in the same face.
   assert.match(prop(model, 'font-family'), /inherit/,
     'the model name stays in the inherited UI face')
   assert.equal(prop(model, 'font-weight'), '400', 'the model name stays regular')
-  assert.equal(prop(model, 'letter-spacing'), undefined, 'the model name carries no tracking')
 
-  // Hierarchy is carried twice over: different face AND different tone.
+  // Hierarchy is carried by weight AND tone, not by size alone.
   assert.match(prop(provider, 'color'), /label-primary/, 'the provider name is the primary label tone')
   assert.match(prop(model, 'color'), /label-secondary/, 'the model name is the quieter secondary tone')
-  // And the provider is never smaller than the model name it heads.
   assert.ok(Number.parseFloat(prop(provider, 'font-size'), 10) > Number.parseFloat(prop(model, 'font-size'), 10),
     'the provider name is larger than the model name')
 })

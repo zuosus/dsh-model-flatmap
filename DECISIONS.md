@@ -5,6 +5,29 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-039 — 2026-11-17 — 撤回品牌字体：provider 行回到 UI 字体，只保留加粗
+
+**Context.** DEC-038 给 provider 名换上 `--dsw-font-family-brand`（Montserrat）来和模型行
+区分。用户实际看到后的反馈是「the provider font looks terrible」，要求「Keep the bold font,
+use original font family」。
+
+**Findings.**
+
+- 品牌字体在这个位置读起来很差：Montserrat 是几何无衬线，和设置页其余全部 UI 文本
+  （系统 UI 字体）并排时，字形宽度和 x-height 都不一致，一行标题夹在系统字体里像贴上去的。
+- DEC-038 里「用字体族区分」这个判断本身没错，错在**换族**：换族会连带改变字宽、字高、
+  数字形态，代价远大于它带来的区分度。
+
+**Decision.** provider 名 `font-family: inherit`，`font-weight: 600`，去掉 `letter-spacing`。
+区分只由**字重 + 色调 + 字号**承担。600 是 UI 字体真实存在的字重（不像品牌字体只到 500），
+所以是真粗体，不是浏览器合成。
+
+**Rejected.** 保留品牌字体但降字重：问题在字形本身，不在粗细。
+
+**Consequences.** 这是对 DEC-038 的**撤回**，不是叠加：DEC-038 的字体族与字距一并作废。
+render 测试改为钉住 `font-family: inherit`、`font-weight: 600`、无字距，并显式断言
+**不得**出现 brand token / Montserrat / 硬编码字体栈，防止再漂回去。
+
 ## DEC-038 — 2026-11-17 — Provider 行改用品牌字体，靠字体本身而非字号区分
 
 **Context.** 设置页「模型列表」里，provider 行和它下面的模型行几乎读成同一个东西：

@@ -374,22 +374,20 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
 .dshmf-setProviderText { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
 /* A provider row is a SECTION HEADER, a model row is an ITEM under it, and the
    two used to be told apart by 1px of size and one label tone — close enough
-   that a long list read as one flat column of names. The split is now made by
-   the typeface itself: the provider name takes the host's brand face
-   (the host token --dsw-font-family-brand, Montserrat, which the shell already loads at
-   weights 300/400/500) at weight 500 with a little tracking, while a model
-   name stays in the inherited UI face at 400. Different family, different
-   weight, different tracking — visible at a glance, and it survives a theme
-   switch because nothing here is a hard-coded colour.
-   Weight stays at 500 on purpose: 600/700 would be synthesised by the browser
-   since the shell ships no bolder Montserrat cut, and a faux-bold brand face
-   looks smeared on a Retina screen. The provider keeps the primary label tone
-   while model names keep the secondary one, so the hierarchy is carried twice
-   over (face + tone) rather than by size alone. */
+   that a long list read as one flat column of names.
+   The split is made by WEIGHT, in the UI's own face. The provider name stays in
+   the inherited font family (the same face every other label in the shell uses)
+   and simply carries more weight than a model name; a model name is regular
+   400. No second typeface: the brand face (Montserrat) was tried here and read
+   badly against the UI face around it, so the family is deliberately left
+   alone and the hierarchy is carried by weight, tone and size instead.
+   Weight 600 rather than 500 because the inherited UI face ships real 600 and
+   700 cuts — unlike the brand face, which only had 300/400/500 — so a genuinely
+   bold heading costs nothing and is not browser-synthesised. */
 .dshmf-setProviderName {
   display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-family: var(--dsw-font-family-brand);
-  font-size: 14px; line-height: 20px; font-weight: 500; letter-spacing: .04em;
+  font-family: inherit;
+  font-size: 14px; line-height: 20px; font-weight: 600;
   color: var(--dsw-alias-label-primary);
 }
 .dshmf-setProviderMeta { display: block; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); }
@@ -402,9 +400,8 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
 .dshmf-setModels { display: flex; flex-direction: column; padding: 0 0 8px 23px; }
 .dshmf-setModelRow { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 6px 0; }
 /* The item face, stated explicitly rather than inherited: the provider name
-   above switches to the brand family, and a model name must NOT follow it into
-   that face — it stays in the UI face at regular weight, so the two rows never
-   collapse back into the same look. */
+   above is deliberately heavier, and a model name must stay regular so the two
+   rows never collapse back into the same look. */
 .dshmf-setModelName {
   font-family: inherit; font-size: 13px; line-height: 20px; font-weight: 400;
   color: var(--dsw-alias-label-secondary);
