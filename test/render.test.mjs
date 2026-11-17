@@ -5447,17 +5447,39 @@ test('a disabled row keeps its title in a readable tone instead of the dimmed on
     const hit = block.match(/color:\s*([^;]+);/)
     return hit === null ? undefined : hit[1].trim()
   }
-  const hiddenProviderName = ruleOf('.dshmf-setProvider[data-hidden="true"] .dshmf-setProviderName {')
-  const hiddenProviderMeta = ruleOf('.dshmf-setProvider[data-hidden="true"] .dshmf-setProviderMeta {')
+  // Every rule that NAMES a selector, grouped or not. A plain first-match
+  // lookup is blind twice over: to a second rule for the same selector further
+  // down the stylesheet (how the rename commit once put the dimmed tone back
+  // into the provider title, where it won the cascade), and to the off-state
+  // rules being stated as one selector group.
+  const everyRuleNaming = selector => {
+    const blocks = []
+    for (let at = css.indexOf(selector); at >= 0; at = css.indexOf(selector, at + selector.length)) {
+      blocks.push(css.slice(at, css.indexOf('}', at) + 1))
+    }
+    return blocks
+  }
+  const toneOfEveryRuleNaming = selector => {
+    const blocks = everyRuleNaming(selector)
+    assert.ok(blocks.length > 0, `${selector} has a rule`)
+    for (const block of blocks) {
+      assert.ok(colorOf(block) !== undefined, `${selector} states a color in every rule that names it`)
+    }
+    return blocks.map(colorOf)
+  }
+  const hiddenProviderTitleTones = toneOfEveryRuleNaming('.dshmf-setProvider[data-hidden="true"] .dshmf-setProviderName')
+  const hiddenProviderSubtitleTones = toneOfEveryRuleNaming('.dshmf-setProvider[data-hidden="true"] .dshmf-setProviderMeta')
+  const hiddenProviderOriginalTones = toneOfEveryRuleNaming('.dshmf-setProvider[data-hidden="true"] .dshmf-setProviderOriginal')
   const hiddenModelName = ruleOf('.dshmf-setModelRow[data-hidden="true"] .dshmf-setModelName {')
 
   // A title drops exactly ONE designed rung, never two, never zero:
   // primary → secondary for the provider heading, primary → tertiary for the
   // model name. One rung = obvious at a glance AND still readable; the dimmed
   // token must never reach a title.
-  assert.equal(colorOf(hiddenProviderName), 'var(--dsw-alias-label-secondary)',
-    'the hidden provider title drops one rung, to the readable secondary tone')
-  assert.doesNotMatch(colorOf(hiddenProviderName), /label-dimmed/, 'the provider title never falls to the dimmed tone')
+  for (const tone of hiddenProviderTitleTones) {
+    assert.equal(tone, 'var(--dsw-alias-label-secondary)',
+      'every hidden-provider-title rule keeps the readable secondary tone — no later rule may dim it')
+  }
   assert.equal(colorOf(hiddenModelName), 'var(--dsw-alias-label-tertiary)',
     'the hidden model title drops one rung, to the readable tertiary tone')
   assert.doesNotMatch(colorOf(hiddenModelName), /label-dimmed/, 'the model title never falls to the dimmed tone')
@@ -5467,27 +5489,17 @@ test('a disabled row keeps its title in a readable tone instead of the dimmed on
   assert.notEqual(colorOf(hiddenModelName), 'var(--dsw-alias-label-primary)',
     'an OFF model title differs from an ON one (primary)')
 
-  // The at-a-glance "this row is off" signal stays on the meta line and the
-  // switch, so the meta keeps the dimmed tone even though the title does not.
-  assert.match(colorOf(hiddenProviderMeta), /label-dimmed/, 'the meta line keeps the dimmed tone')
-
-  // `ruleOf` takes the FIRST match, so a second rule for the same selector —
-  // which is how the rename commit once put the dimmed tone back into the
-  // provider title, further down the stylesheet, where it won the cascade —
-  // stays invisible to the checks above. Every rule naming the hidden provider
-  // title must therefore agree with the readable tone, not just the first.
-  const everyRuleNaming = selector => {
-    const blocks = []
-    for (let at = css.indexOf(selector); at >= 0; at = css.indexOf(selector, at + selector.length)) {
-      blocks.push(css.slice(at, css.indexOf('}', at) + 1))
-    }
-    return blocks
+  // The subtitle line under the provider name — the model count, the "all off"
+  // words and a renamed row's original spelling — reads in the SAME tone as the
+  // hidden title, so the text side of an off row is one quiet block rather than
+  // a title that is readable above a line that is not.
+  for (const tone of hiddenProviderSubtitleTones) {
+    assert.equal(tone, 'var(--dsw-alias-label-secondary)',
+      'the hidden provider subtitle keeps the same tone as its title')
   }
-  const allHiddenProviderTitleRules = everyRuleNaming('.dshmf-setProvider[data-hidden="true"] .dshmf-setProviderName')
-  assert.ok(allHiddenProviderTitleRules.length > 0, 'the hidden provider title has a rule')
-  for (const block of allHiddenProviderTitleRules) {
-    assert.equal(colorOf(block), 'var(--dsw-alias-label-secondary)',
-      'every hidden-provider-title rule keeps the readable secondary tone — no later rule may dim it')
+  for (const tone of hiddenProviderOriginalTones) {
+    assert.equal(tone, 'var(--dsw-alias-label-secondary)',
+      'the original name rides the subtitle line at the same tone, not a second dimmer tone')
   }
 })
 

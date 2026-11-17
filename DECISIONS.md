@@ -4,6 +4,20 @@ Project-level decision log for the dsh-model-flatmap plugin. Append-only: new
 entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
+## DEC-052 — 2026-11-17 — 关闭态 provider 的 subtitle 与标题同色，整行正文统一 secondary
+
+**Context.** DEC-051 修好标题色之后，用户继续要求「subtitle 也修改为一样的颜色」。
+
+**Decision.** provider 在 `data-hidden` 下，标题、meta 行、以及被改名行的原名，三者由**同一条
+规则**统一为 `label-secondary`。dimmed 不再出现在该行的正文里，只留给 no-credit 提示行。
+
+**Rationale.** 一行里两种灰会读成渲染错误，而不是层级；「已关闭」的信号本来就有开关和
+meta 行自己的文字（「全部关闭」）承担，颜色不承担它。这取代 DEC-043「meta 行保留 dimmed」
+一条，DEC-042/043 其余结论（标题永不落 dimmed、显式声明规则）不变。
+
+**Consequences.** 测试从「meta 保留 dimmed」改为「**每一条**命中 meta / 原名的规则都必须等于
+标题的 secondary」，并按 DEC-051 的做法先注入一条 dimmed 覆盖确认断言会失败。
+
 ## DEC-051 — 2026-11-17 — 关闭态 provider 标题被打回 dimmed：删掉重复块，测试从「第一条规则」扩到「每一条规则」
 
 **Context.** 用户反馈设置页里「全部关闭的 provider row 的 title 颜色太淡」。DEC-042 与

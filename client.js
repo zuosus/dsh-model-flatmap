@@ -431,17 +431,17 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
    the row's identity, but the catalog's spelling must stay recoverable without
    opening an editor. */
 .dshmf-setProviderOriginal { color: var(--dsw-alias-label-tertiary); }
-/* A switched-off row must stay READABLE: the title drops at most ONE label
-   step (primary → secondary) instead of falling to the dimmed placeholder
-   tone, which sits below the readable threshold in BOTH themes — the
-   installed shell defines it as #e1e5ee on white (light) and #43454a on
+/* A switched-off row keeps its WHOLE text column readable: the title drops at
+   most ONE label step (primary → secondary) and the meta line stays on the
+   secondary tone it already carries, instead of falling to the dimmed
+   placeholder tone, which sits below the readable threshold in BOTH themes —
+   the installed shell defines it as #e1e5ee on white (light) and #43454a on
    near-black (dark). The user's requirement is "a slightly gray color", not
-   a gray-out. The off state is carried by the switch and the dimmed meta
-   line, not by an unreadable name. */
-.dshmf-setProvider[data-hidden="true"] .dshmf-setProviderName { color: var(--dsw-alias-label-secondary); }
-.dshmf-setProvider[data-hidden="true"] .dshmf-setProviderMeta { color: var(--dsw-alias-label-dimmed); }
-/* The original name rides the same dimming as the rest of the meta line. */
-.dshmf-setProvider[data-hidden="true"] .dshmf-setProviderOriginal { color: var(--dsw-alias-label-dimmed); }
+   a gray-out: title and subtitle read as one quiet block, and the off state is
+   carried by the switch and by the meta line's own words ("all off"). */
+.dshmf-setProvider[data-hidden="true"] .dshmf-setProviderName,
+.dshmf-setProvider[data-hidden="true"] .dshmf-setProviderMeta,
+.dshmf-setProvider[data-hidden="true"] .dshmf-setProviderOriginal { color: var(--dsw-alias-label-secondary); }
 /* Rename: a quiet pencil, not a permanent toolbar. It appears when the row is
    hovered or focused, and stays visible on a row that already carries a
    user-chosen name so "this one was renamed" is legible without a badge. The
@@ -587,9 +587,10 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
   color: var(--dsw-alias-state-warn-label);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-/* A switched-off row keeps the credit note in the dimmed tone: the same rung
-   the meta line takes when hidden (titles step to tertiary, meta dims), so the
-   note stays present but stops outshining the fact that the row is off. */
+/* A switched-off row keeps the credit note in the dimmed tone, one rung below
+   the row's own text (the title steps to tertiary, the provider's title and
+   meta line to secondary), so the note stays present but stops outshining the
+   fact that the row is off. */
 .dshmf-setProvider[data-hidden="true"] .dshmf-setNoCredit,
 .dshmf-setModelRow[data-hidden="true"] .dshmf-setNoCredit { color: var(--dsw-alias-label-dimmed); }
 /* The telemetry toggle is its own band at the BOTTOM of the section, divided
