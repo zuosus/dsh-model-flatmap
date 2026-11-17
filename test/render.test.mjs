@@ -5470,6 +5470,25 @@ test('a disabled row keeps its title in a readable tone instead of the dimmed on
   // The at-a-glance "this row is off" signal stays on the meta line and the
   // switch, so the meta keeps the dimmed tone even though the title does not.
   assert.match(colorOf(hiddenProviderMeta), /label-dimmed/, 'the meta line keeps the dimmed tone')
+
+  // `ruleOf` takes the FIRST match, so a second rule for the same selector —
+  // which is how the rename commit once put the dimmed tone back into the
+  // provider title, further down the stylesheet, where it won the cascade —
+  // stays invisible to the checks above. Every rule naming the hidden provider
+  // title must therefore agree with the readable tone, not just the first.
+  const everyRuleNaming = selector => {
+    const blocks = []
+    for (let at = css.indexOf(selector); at >= 0; at = css.indexOf(selector, at + selector.length)) {
+      blocks.push(css.slice(at, css.indexOf('}', at) + 1))
+    }
+    return blocks
+  }
+  const allHiddenProviderTitleRules = everyRuleNaming('.dshmf-setProvider[data-hidden="true"] .dshmf-setProviderName')
+  assert.ok(allHiddenProviderTitleRules.length > 0, 'the hidden provider title has a rule')
+  for (const block of allHiddenProviderTitleRules) {
+    assert.equal(colorOf(block), 'var(--dsw-alias-label-secondary)',
+      'every hidden-provider-title rule keeps the readable secondary tone — no later rule may dim it')
+  }
 })
 
 // ---------------------------------------------------------------------------

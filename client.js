@@ -442,19 +442,6 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
 .dshmf-setProvider[data-hidden="true"] .dshmf-setProviderMeta { color: var(--dsw-alias-label-dimmed); }
 /* The original name rides the same dimming as the rest of the meta line. */
 .dshmf-setProvider[data-hidden="true"] .dshmf-setProviderOriginal { color: var(--dsw-alias-label-dimmed); }
-.dshmf-setProviderMeta {
-  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary);
-}
-/* A renamed row keeps its original name on the quiet line: the chosen name is
-   the row's identity, but the catalog's spelling must stay recoverable without
-   opening an editor. */
-.dshmf-setProviderOriginal { color: var(--dsw-alias-label-tertiary); }
-/* A switched-off provider reads as dimmed, so a long list shows at a glance
-   which rows are already out of the panel. */
-.dshmf-setProvider[data-hidden="true"] .dshmf-setProviderName,
-.dshmf-setProvider[data-hidden="true"] .dshmf-setProviderMeta,
-.dshmf-setProvider[data-hidden="true"] .dshmf-setProviderOriginal { color: var(--dsw-alias-label-dimmed); }
 /* Rename: a quiet pencil, not a permanent toolbar. It appears when the row is
    hovered or focused, and stays visible on a row that already carries a
    user-chosen name so "this one was renamed" is legible without a badge. The

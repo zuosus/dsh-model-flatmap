@@ -4,6 +4,23 @@ Project-level decision log for the dsh-model-flatmap plugin. Append-only: new
 entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
+## DEC-051 — 2026-11-17 — 关闭态 provider 标题被打回 dimmed：删掉重复块，测试从「第一条规则」扩到「每一条规则」
+
+**Context.** 用户反馈设置页里「全部关闭的 provider row 的 title 颜色太淡」。DEC-042 与
+DEC-043 早已定案：provider 标题 primary → secondary（一档、仍可读），dimmed 只留给 meta 行。
+
+**Findings.** 定案的那条规则还在，但重命名提交（`c3e9136`）复制 CSS 时把
+`.dshmf-setProviderMeta`、`.dshmf-setProviderOriginal` 连同**旧的 dimmed 规则**整段又贴了
+一遍，位置在被覆盖规则之后。同特异性下后者胜出，所以标题实际一直落在 dimmed，DEC-042/043
+的结论被级联悄悄推翻。测试没拦住：既有断言用 `ruleOf` 取**第一条**匹配，重复的覆盖规则
+在它后面，检查不到。
+
+**Decision.** 删掉重复块，只留一条标题规则（secondary）与一条 meta 规则（dimmed）。测试新增
+断言：**所有**命中 hidden provider 标题的规则都必须是 secondary——先复现重复块确认它会
+失败，再收修复。
+
+**Consequences.** 视觉回到「略灰」；今后再从别处复制这段 CSS 造成级联覆盖，测试会直接失败。
+
 ## DEC-050 — 2026-11-17 — 设置页报告模型位冲突，并提供「强制修复」；但只承诺真能做到的事
 
 **Context.** DEC-049 修好了「交出席位不安全」，但用户看不见那次修复：冲突的表现仍然只是
