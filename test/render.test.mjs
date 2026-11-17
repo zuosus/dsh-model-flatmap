@@ -4632,3 +4632,40 @@ test('a provider row is bold in the UI face while a model row stays regular', ()
   assert.ok(Number.parseFloat(prop(provider, 'font-size'), 10) > Number.parseFloat(prop(model, 'font-size'), 10),
     'the provider name is larger than the model name')
 })
+
+// ---------------------------------------------------------------------------
+// Settings → Model list: a switched-OFF row must stay READABLE. The titles
+// used to fall to the dimmed placeholder tone, which the installed shell
+// defines as #e1e5ee on white (light) and #43454a on near-black (dark) —
+// below the readable threshold in both themes. The requirement is "a
+// slightly gray color", not a gray-out.
+// ---------------------------------------------------------------------------
+test('a disabled row keeps its title in a readable tone instead of the dimmed one', () => {
+  const css = source.match(/const CSS = `([\s\S]*?)`/)[1]
+  const ruleOf = selector => {
+    const at = css.indexOf(selector)
+    assert.ok(at >= 0, `${selector} exists`)
+    return css.slice(at, css.indexOf('}', at) + 1)
+  }
+  const colorOf = block => {
+    const hit = block.match(/color:\s*([^;]+);/)
+    return hit === null ? undefined : hit[1].trim()
+  }
+  const hiddenProviderName = ruleOf('.dshmf-setProvider[data-hidden="true"] .dshmf-setProviderName {')
+  const hiddenProviderMeta = ruleOf('.dshmf-setProvider[data-hidden="true"] .dshmf-setProviderMeta {')
+  const hiddenModelName = ruleOf('.dshmf-setModelRow[data-hidden="true"] .dshmf-setModelName {')
+
+  // The title drops at most ONE label step: the provider heading goes
+  // primary → secondary; the model name keeps the secondary tone its base
+  // rule already carries. The dimmed token must never reach a title.
+  assert.equal(colorOf(hiddenProviderName), 'var(--dsw-alias-label-secondary)',
+    'the hidden provider title stays at the readable secondary tone')
+  assert.doesNotMatch(colorOf(hiddenProviderName), /label-dimmed/, 'the provider title never falls to the dimmed tone')
+  assert.equal(colorOf(hiddenModelName), 'var(--dsw-alias-label-secondary)',
+    'the hidden model title keeps its readable tone')
+  assert.doesNotMatch(colorOf(hiddenModelName), /label-dimmed/, 'the model title never falls to the dimmed tone')
+
+  // The at-a-glance "this row is off" signal stays on the meta line and the
+  // switch, so the meta keeps the dimmed tone even though the title does not.
+  assert.match(colorOf(hiddenProviderMeta), /label-dimmed/, 'the meta line keeps the dimmed tone')
+})

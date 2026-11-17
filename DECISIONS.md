@@ -5,6 +5,32 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-042 — 2026-11-17 — 关闭态行的标题不再落 dimmed 色，只降一档到次级灰
+
+**编号更正.** 合入时与遥测开关的 DEC-041 撞号，本条目改为 DEC-042。
+
+**Context.** 设置页里关掉一个 provider 或模型后，行标题整体掉到
+`--dsw-alias-label-dimmed`。从已安装 shell 实测该 token：亮色下是 `#e1e5ee`（白底上
+接近不可读）、暗色下是 `#43454a`（近黑底上同样发闷），两个主题都低于可读阈值。
+用户反馈「hard to recognize the text」，要求标题在关闭态也保持可读，
+只给一个「略灰」的颜色。
+
+**Decision.** 标题最多降一档：provider 名 `label-primary → label-secondary`；模型名
+本就停在 `label-secondary`，关闭时保持不变——规则**显式保留**（写与基线相同的值，
+防止未来改基线色时重新漂回 dimmed），与仓库「stated rather than inherited」的
+既有惯例一致。「已关闭」的视觉信号改由开关状态与 meta 行（保留 dimmed）承担，
+标题不承担。render 测试钉住：两条关闭态标题规则必须是 `label-secondary`、
+永不出现 `label-dimmed`，meta 行保留 dimmed。
+
+**Rejected.**（1）继续用 dimmed：即用户投诉的不可读状态。（2）直接删掉关闭态规则、
+完全不区分：标题失去「略灰」这一档信号，且没有任何断言挡住未来重新引入 dimmed。
+（3）meta 行也放宽：超出本次范围；meta 是行内最不重要的一行，保留 dimmed
+维持整行「一眼可辨已关闭」的原有设计意图。
+
+**Consequences.** 只动设置页 CSS 的两条 `[data-hidden]` 颜色规则（原来一条合并选择器
+拆成 provider 名/meta 各一条，模型名一条改值）与对应注释；不改 DOM 结构、
+不改开关与可见性逻辑。测试 255 → 256（含遥测开关合入后的基线）。
+
 ## DEC-041 — 2026-11-17 — ⛔️ 匿名心跳可关闭：设置页底部的开关，默认开启（推翻 DEC-031 的「不做开关」）
 **编号更正.** 合入 `telemetry-toggle` 时与本分支的 DEC-037（设置导航图标）撞号，合并后改为 DEC-041；该分支内提交与 LESSONS 里仍称 DEC-037。
 
@@ -75,7 +101,6 @@ provider。（3）默认 OFF：那就成了 opt-in，会静默抹掉所有老机
   repo-url 的两条「只注册一条路由」改为「两条路由、按 path 查找」。
 - 已知取舍：宿主半边不存在（Desktop 自带文件服务）时镜像不落地，选择只存在浏览器本地；该机器
   的心跳照旧（等于 opt-out 默认），开关仍渲染且可用，只是这一台的关闭只在本地生效。
-
 
 ## DEC-040 — 2026-11-17 — 模型名改用等宽字体，provider 名留在 UI 字体
 

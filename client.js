@@ -391,9 +391,14 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
   color: var(--dsw-alias-label-primary);
 }
 .dshmf-setProviderMeta { display: block; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); }
-/* A switched-off provider reads as dimmed, so a long list shows at a glance
-   which rows are already out of the panel. */
-.dshmf-setProvider[data-hidden="true"] .dshmf-setProviderName,
+/* A switched-off row must stay READABLE: the title drops at most ONE label
+   step (primary → secondary) instead of falling to the dimmed placeholder
+   tone, which sits below the readable threshold in BOTH themes — the
+   installed shell defines it as #e1e5ee on white (light) and #43454a on
+   near-black (dark). The user's requirement is "a slightly gray color", not
+   a gray-out. The off state is carried by the switch and the dimmed meta
+   line, not by an unreadable name. */
+.dshmf-setProvider[data-hidden="true"] .dshmf-setProviderName { color: var(--dsw-alias-label-secondary); }
 .dshmf-setProvider[data-hidden="true"] .dshmf-setProviderMeta { color: var(--dsw-alias-label-dimmed); }
 /* 23px = the chevron's 13px + the disclosure's 10px gap, so a model name sits
    under the provider name it belongs to. */
@@ -416,7 +421,11 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
   color: var(--dsw-alias-label-secondary);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.dshmf-setModelRow[data-hidden="true"] .dshmf-setModelName { color: var(--dsw-alias-label-dimmed); }
+/* Stated, not inherited: a hidden model name keeps the SAME readable
+   secondary tone as a visible one (the base rule above), never the dimmed
+   placeholder tone — the title must not gray out, and an explicit rule keeps
+   it from drifting back if the base tone ever changes. */
+.dshmf-setModelRow[data-hidden="true"] .dshmf-setModelName { color: var(--dsw-alias-label-secondary); }
 /* The telemetry toggle is its own band at the BOTTOM of the section, divided
    from the model list above by the same hairline the list rows use. It governs
    the whole plugin's one network request, so it sits apart from the provider
