@@ -432,7 +432,9 @@ Every provider is one row: a disclosure button carrying the chevron, the
 provider's name, and how many of its models are on, then a separate switch. The
 disclosure spans the whole text side of the row, so a click anywhere between the
 chevron and the switch expands it. Expanding the row lists that provider's
-models, each with its own switch.
+models, each with its own switch. Provider switches stay on the brand blue;
+model switches take a hue shifted towards the success tint, so the master
+control and the per-model exceptions never blur.
 
 The provider switch is a **bulk action**, not an override. Switching it off
 writes every one of that provider's model keys; switching it on clears them.

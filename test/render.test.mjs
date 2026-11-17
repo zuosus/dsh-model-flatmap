@@ -4057,6 +4057,11 @@ test('the settings section lists every provider and model with a switch each', a
   const modelRows = findAll(tree, node => hasClass(node, 'dshmf-setModelRow'))
   assert.equal(modelRows.length, 2, 'the expanded provider draws its own models only')
   assert.equal(switchNodes(tree).length, 2 + 2, 'each model gains a switch')
+  // The parent and child controls are told apart by class: provider switches
+  // keep the brand fill, model switches take the hue-shifted tint.
+  const switchClasses = switchNodes(tree).map(node => node.props.className)
+  assert.equal(switchClasses.filter(name => name === undefined).length, 2, 'provider switches keep the brand fill')
+  assert.equal(switchClasses.filter(name => name === 'dshmf-switchModel').length, 2, 'model switches take the hue-shifted tint')
   // Collapsing it again removes them, so the disclosure is a real toggle.
   findAll(tree, node => hasClass(node, 'dshmf-setDisclosure'))[0].props.onClick()
   tree = runtime.render(bundle.__test.SettingsSection, props)

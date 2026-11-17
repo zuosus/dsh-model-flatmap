@@ -5,6 +5,24 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-036 — 2026-11-17 — 模型开关用偏青的品牌色，与 provider 开关区分
+
+**Context.** 设置页展开一个 provider 后，父级开关和它下面每个模型的开关颜色完全相同，
+一排模型看下去分不清哪一个是「管全部的」，哪些是「单个模型的例外」。DEC-035 之后
+provider 开关有三种状态（实色 = 全开、淡色 = 混合、灰色 = 全关），再给模型开关一个
+「更淡的品牌蓝」会和 mixed 态撞色。
+
+**Decision.** provider 开关的全部状态都留在品牌蓝上；模型开关改用
+`color-mix(in srgb, var(--dsw-alias-brand-primary) 50%, var(--dsw-alias-state-success-primary))`，
+色相向青绿偏移一档。既能一眼和父级区分，又因为仍含有品牌色而读作同一套开关。
+
+**Rejected.** 直接给模型开关上成功绿：语义变成「状态正常」，而这里只是显示偏好；
+继续用更淡的品牌蓝：与 DEC-035 新增的 mixed 态（45% 品牌色 + 边框灰）几乎同色。
+
+**Consequences.** 只新增 `.dshmf-switchModel[aria-checked="true"]` 一条规则，并给
+`Switch` 加了可选的 `className` 入口；render 测试钉住「provider 开关不带额外 class、
+模型开关带 `dshmf-switchModel`」。
+
 ## DEC-035 — 2026-11-17 — Provider 开关改成批量写，不是覆盖；旧记录自动折叠成逐模型键
 
 **Context.** 用户反馈 DEC-034 的 provider 开关「没帮上忙」：关掉一个 provider 后，它下面的
@@ -49,7 +67,6 @@ entries go below the marker, newest first; old entries are never rewritten.
 - `Switch` 支持 `mixed`，输出 `aria-checked="mixed"` 与 `data-mixed`。
 - 文案：`hiddenCount` 由 `visibleCount` + `allOff` 取代。
 - 测试 233 → 242，含「provider 关掉后模型开关仍可点」这条回归断言。
-
 
 ## DEC-034 — 2026-11-17 — Provider/模型可见性：设置页放在 `settings.section`，记录「隐藏了什么」，键用 route
 

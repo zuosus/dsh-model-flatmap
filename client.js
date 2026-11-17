@@ -395,6 +395,11 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
    the thumb parks in the middle, which is the conventional mixed rendering. */
 .dshmf-switch[aria-checked="mixed"] { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, var(--dsw-alias-border-l3)); }
 .dshmf-switch[aria-checked="mixed"] .dshmf-switchThumb { transform: translate(8px); }
+/* A model switch sits UNDER its provider switch. All three provider states stay
+   on the brand blue (solid on, pale mixed, grey off), so the child shifts the
+   hue towards success instead of adding one more shade of blue: the master
+   control and the per-model exceptions never blur in a long expanded list. */
+.dshmf-switchModel[aria-checked="true"] { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 50%, var(--dsw-alias-state-success-primary)); }
 .dshmf-switch:disabled { cursor: default; opacity: .45; }
 .dshmf-switch:focus-visible { outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: 2px; }
 .dshmf-switchThumb {
@@ -4501,11 +4506,13 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
      * that package is a seed word of the module table, not an installed
      * package, so requiring it would make this bundle depend on an internal
      * host artifact that has no manifest and can change without notice. The
-     * markup and the six CSS rules below reproduce it exactly instead.
-     * @param props - `checked`, `onChange`, `label`, and an optional `disabled`.
+     * markup and the base CSS rules below reproduce it exactly instead; the
+     * model variant layers one tint rule on top.
+     * @param props - `checked`, `onChange`, `label`, plus optional `disabled`,
+     * `mixed`, and `className` (the model rows pass one for the distinct tint).
      */
     function Switch(props) {
-      const { checked, onChange, label, disabled, mixed } = props
+      const { checked, onChange, label, disabled, mixed, className } = props
       return h('button', {
         type: 'button',
         role: 'switch',
@@ -4515,7 +4522,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         'aria-checked': mixed === true ? 'mixed' : checked === true,
         'aria-label': label,
         disabled: disabled === true,
-        className: 'dshmf-switch',
+        className: className === undefined ? 'dshmf-switch' : `dshmf-switch ${className}`,
         'data-mixed': mixed === true,
         onClick: () => { if (disabled !== true) onChange(checked !== true) },
       }, h('span', { className: 'dshmf-switchThumb' }))
@@ -4634,6 +4641,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
                 h('span', { className: 'dshmf-setModelName', title: modelTitle }, modelTitle),
                 h(Switch, {
                   checked: own,
+                  className: 'dshmf-switchModel',
                   label: fillText('modelToggle', { name: modelTitle }),
                   onChange: next => setVisible(modelHiddenKey(group.id, model.id), next),
                 }))
