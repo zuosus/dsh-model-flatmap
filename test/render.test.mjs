@@ -4442,3 +4442,51 @@ test('the migrated record means exactly what the model switches show', () => {
   const after = bundle.__test.setGroupVisible(migrated, GROUP_FIXTURE, false)
   assert.equal(after.size, 3, 'still three hidden models')
 })
+
+// ---------------------------------------------------------------------------
+// Settings → Model list: a provider row is a section header, a model row is an
+// item under it. They must be told apart by the TYPE ITSELF (family + weight +
+// tracking), not by 1px of size — the two used to read as twins.
+// ---------------------------------------------------------------------------
+test('a provider row takes the brand face while a model row stays in the UI face', () => {
+  const css = source.match(/const CSS = `([\s\S]*?)`/)[1]
+  const ruleOf = selector => {
+    const at = css.indexOf(selector)
+    assert.ok(at >= 0, `${selector} exists`)
+    return css.slice(at, css.indexOf('}', at) + 1)
+  }
+  const prop = (block, name) => {
+    const hit = block.match(new RegExp(`${name}:\\s*([^;]+);`))
+    return hit === null ? undefined : hit[1].trim()
+  }
+  const provider = ruleOf('.dshmf-setProviderName {')
+  const model = ruleOf('.dshmf-setModelName {')
+
+  // The provider name takes the host's brand family — a token, never a
+  // hard-coded font stack, so it follows the shell's own branding.
+  assert.match(prop(provider, 'font-family'), /var\(--dsw-font-family-brand\)/,
+    'the provider name uses the host brand font token')
+  assert.doesNotMatch(prop(provider, 'font-family'), /Montserrat|sans-serif|serif/i,
+    'the family comes from the token, not a hard-coded stack')
+  // Weight 500, not 600+: the shell only ships Montserrat at 300/400/500, so a
+  // heavier value would be browser-synthesised faux bold.
+  assert.equal(prop(provider, 'font-weight'), '500',
+    'provider weight stays on a real cut the shell ships (no faux bold)')
+  assert.match(prop(provider, 'letter-spacing'), /\.04em/,
+    'the provider name carries tracking so it reads as a heading')
+
+  // The model name is explicitly the opposite: inherited UI face, regular
+  // weight, no tracking. Stated rather than left to inheritance, so the two
+  // rows cannot drift back into the same look.
+  assert.match(prop(model, 'font-family'), /inherit/,
+    'the model name stays in the inherited UI face')
+  assert.equal(prop(model, 'font-weight'), '400', 'the model name stays regular')
+  assert.equal(prop(model, 'letter-spacing'), undefined, 'the model name carries no tracking')
+
+  // Hierarchy is carried twice over: different face AND different tone.
+  assert.match(prop(provider, 'color'), /label-primary/, 'the provider name is the primary label tone')
+  assert.match(prop(model, 'color'), /label-secondary/, 'the model name is the quieter secondary tone')
+  // And the provider is never smaller than the model name it heads.
+  assert.ok(Number.parseFloat(prop(provider, 'font-size'), 10) > Number.parseFloat(prop(model, 'font-size'), 10),
+    'the provider name is larger than the model name')
+})

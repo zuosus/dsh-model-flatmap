@@ -5,6 +5,31 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-038 — 2026-11-17 — Provider 行改用品牌字体，靠字体本身而非字号区分
+
+**Context.** 设置页「模型列表」里，provider 行和它下面的模型行几乎读成同一个东西：
+14px 对 13px、主色对次色，差一档字号加一档色调，在一列长名单里根本不够。用户原话是
+「almost look the same」，要的是**一眼**能看出哪一行是分组、哪一行是条目。
+
+**Findings.**
+
+- 只加大字号或加粗都不可行：14px 已经贴近设置页正文，再大就压过 `setTitle`；而
+  `--dsw-font-family-brand` 指向 Montserrat，Host 只装了 300/400/500 三档，写 600/700
+  会被浏览器合成假粗体，Retina 上发糊。
+- Host 已经在用 `var(--dsw-font-family-brand)`（11 处），所以品牌字体是**已加载**的，
+  不是新增网络请求。
+
+**Decision.** provider 名改用 `var(--dsw-font-family-brand)`、`font-weight: 500`、
+`letter-spacing: .04em`，并显式写 `color: var(--dsw-alias-label-primary)`；模型名反向
+钉死 `font-family: inherit`、`font-weight: 400`、无字距、`label-secondary`。层级由
+**字体族 + 字重 + 字距 + 色调** 四重承担，字号只保留原来的 14/13 差。
+
+**Rejected.**（1）只把 provider 加粗到 600：假粗体。（2）只放大字号：压过设置页标题层级。
+（3）只改颜色：色调差在长名单里几乎不可见，正是当前的问题。
+
+**Consequences.** 两条规则各自显式声明字体族，模型行不再靠继承——否则 provider 换族后
+模型行会跟着漂移。render 测试钉住字体 token、字重 500、字距、以及模型行的反向声明。
+
 ## DEC-037 — 2026-11-17 — 设置导航用定向 DOM 替换呈现列表图标
 
 **Context.** 用户希望「模型列表」设置项使用列表图标。`settings.section` 注册契约只有
