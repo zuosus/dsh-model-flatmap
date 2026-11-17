@@ -405,7 +405,12 @@ Everything goes through public Client APIs:
   so a shipped picker that appears (or disappears) later enables or disables the
   button without a reload.
 
-No host component, stylesheet, or DOM is read or restyled.
+The plugin does not read or restyle host components or stylesheets. The one
+exception is the Settings navigation glyph: the host section contract exposes
+only `id`, `order`, and `label`, and unknown section ids receive the default
+gear. A narrowly scoped `MutationObserver` finds this section by its localized
+label and replaces only that glyph with a list icon; it disconnects when the
+plugin effect is disposed.
 
 ## Provider and model visibility
 

@@ -4215,6 +4215,83 @@ test('apply registers a Settings section with its own id, label and face', () =>
   assert.equal(typeof entry.component, 'function')
 })
 
+test('settings nav icon replaces the fallback gear with a list icon and survives redraws', () => {
+  const makeIcon = () => ({
+    nodeType: 1,
+    tagName: 'svg',
+    attributes: new Map(),
+    children: [],
+    parentNode: null,
+    setAttribute(name, value) { this.attributes.set(name, value) },
+    getAttribute(name) { return this.attributes.get(name) ?? null },
+    appendChild(child) { this.children.push(child); child.parentNode = this },
+  })
+  const makeButton = (textContent, icon) => {
+    const button = {
+      nodeType: 1,
+      tagName: 'button',
+      textContent,
+      icon,
+      matches: selector => selector === 'button',
+      closest: selector => selector === 'button' ? button : null,
+      querySelector: selector => selector === 'svg' ? button.icon : null,
+      querySelectorAll: () => [],
+      replaceChild(next, previous) {
+        assert.equal(previous, button.icon)
+        previous.parentNode = null
+        next.parentNode = button
+        button.icon = next
+      },
+    }
+    icon.parentNode = button
+    return button
+  }
+  const english = makeButton('Model list', makeIcon())
+  const chinese = makeButton('模型列表', makeIcon())
+  const other = makeButton('General', makeIcon())
+  const body = {
+    nodeType: 1,
+    tagName: 'body',
+    matches: () => false,
+    closest: () => null,
+    querySelectorAll: selector => selector === 'button' ? [english, chinese, other] : [],
+  }
+  const doc = {
+    body,
+    createElementNS(namespace, tagName) {
+      assert.equal(namespace, 'http://www.w3.org/2000/svg')
+      if (tagName === 'svg') return makeIcon()
+      return { attributes: new Map(), setAttribute(name, value) { this.attributes.set(name, value) } }
+    },
+  }
+  let observeCallback
+  let disconnected = false
+  class Observer {
+    constructor(callback) { observeCallback = callback }
+    observe(target, options) {
+      assert.equal(target, body)
+      assert.deepEqual(options, { childList: true, subtree: true })
+    }
+    disconnect() { disconnected = true }
+  }
+
+  const dispose = bundle.__test.installSettingsNavIcon(doc, Observer)
+  for (const button of [english, chinese]) {
+    assert.equal(button.icon.getAttribute('data-dshmf-settings-list'), '1')
+    assert.equal(button.icon.getAttribute('aria-hidden'), 'true')
+    assert.equal(button.icon.children.length, 1)
+  }
+  assert.equal(other.icon.getAttribute('data-dshmf-settings-list'), null, 'other settings entries are untouched')
+
+  const restoredGear = makeIcon()
+  english.replaceChild(restoredGear, english.icon)
+  observeCallback([{ target: english, addedNodes: [restoredGear] }])
+  assert.equal(english.icon.getAttribute('data-dshmf-settings-list'), '1', 'React redraws are corrected')
+
+  dispose()
+  assert.equal(disconnected, true, 'the observer is released with the plugin effect')
+})
+
 test('a broken locale service never costs the settings section', () => {
   runtime.reset()
   const { ctx, registered } = makeCtx({ localeThrows: true })

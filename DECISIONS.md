@@ -5,6 +5,28 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-037 — 2026-11-17 — 设置导航用定向 DOM 替换呈现列表图标
+
+**Context.** 用户希望「模型列表」设置项使用列表图标。`settings.section` 注册契约只有
+`id`、`order`、`label`，Host 按 section id 选择导航图标；`model-flatmap` 因无专属映射
+显示默认齿轮。
+
+**Findings.**
+
+- `icon` 注册字段不会被设置壳层读取；借用内置 `models` id 会替换原生 Models 设置页。
+- `dsh-remote-ssh` 已用 `MutationObserver` 按本地化导航标签替换默认 SVG；这一做法不依赖
+  构建期 CSS 类名。
+
+**Decision.** 只定位文本精确等于「模型列表」/“Model list”的导航按钮，将其 SVG 替换为
+带唯一标记、`aria-hidden` 的列表图标。首次扫描处理已挂载的设置面板，观察器处理按需挂载、
+React 重绘和语言切换；插件 effect dispose 时断开观察器。除此之外不读取或修改 Host DOM。
+
+**Rejected.**（1）传入未支持的 `icon` 字段：设置壳层不会投影它。（2）复用 `models` id：
+会替换原生设置页。（3）依赖构建期哈希 CSS 类名：Host 重构后会失效。
+
+**Consequences.** 这是唯一的 Host DOM 交互例外，局限于设置导航中的一个 SVG；渲染测试覆盖
+中英文标签、避免误改其他条目、以及 React 重绘后的图标恢复。
+
 ## DEC-036 — 2026-11-17 — 模型开关用偏青的品牌色，与 provider 开关区分
 
 **Context.** 设置页展开一个 provider 后，父级开关和它下面每个模型的开关颜色完全相同，

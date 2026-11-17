@@ -2656,6 +2656,63 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       },
     }
 
+    const SETTINGS_NAV_LABELS = new Set([settingsDict.zh.nav, settingsDict.en.nav])
+
+    function createSettingsListIcon(doc) {
+      const svg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg')
+      svg.setAttribute('viewBox', '0 0 16 16')
+      svg.setAttribute('width', '16')
+      svg.setAttribute('height', '16')
+      svg.setAttribute('fill', 'none')
+      svg.setAttribute('aria-hidden', 'true')
+      svg.setAttribute('focusable', 'false')
+      svg.setAttribute('data-dshmf-settings-list', '1')
+      const path = doc.createElementNS('http://www.w3.org/2000/svg', 'path')
+      path.setAttribute('d', 'M6 4h7M6 8h7M6 12h7M2.5 4h.01M2.5 8h.01M2.5 12h.01')
+      path.setAttribute('stroke', 'currentColor')
+      path.setAttribute('stroke-width', '1.4')
+      path.setAttribute('stroke-linecap', 'round')
+      svg.appendChild(path)
+      return svg
+    }
+
+    function installSettingsNavIcon(doc, Observer = globalThis.MutationObserver) {
+      if (doc?.body === undefined || doc.body === null) return () => {}
+
+      const replaceIcon = button => {
+        if (typeof button?.textContent !== 'string' || !SETTINGS_NAV_LABELS.has(button.textContent.trim())) return
+        const icon = button.querySelector?.('svg')
+        if (icon === null || icon === undefined || icon.getAttribute('data-dshmf-settings-list') === '1') return
+        if (icon.parentNode !== null && icon.parentNode !== undefined) {
+          icon.parentNode.replaceChild(createSettingsListIcon(doc), icon)
+        }
+      }
+
+      const inspect = root => {
+        if (root === null || root === undefined || root.nodeType !== 1) return
+        if (typeof root.matches === 'function' && root.matches('button')) replaceIcon(root)
+        if (typeof root.closest === 'function') replaceIcon(root.closest('button'))
+        if (typeof root.querySelectorAll === 'function') {
+          for (const button of root.querySelectorAll('button')) replaceIcon(button)
+        }
+      }
+
+      inspect(doc.body)
+      if (typeof Observer !== 'function') return () => {}
+
+      const observer = new Observer(records => {
+        for (const record of records) {
+          const target = record.target?.nodeType === 1 ? record.target : record.target?.parentElement
+          if (target !== null && target !== undefined && typeof target.closest === 'function') {
+            replaceIcon(target.closest('button'))
+          }
+          for (const node of record.addedNodes ?? []) inspect(node)
+        }
+      })
+      observer.observe(doc.body, { childList: true, subtree: true })
+      return () => observer.disconnect()
+    }
+
     const EMPTY_STATE = {
       current: null,
       retainedEffort: undefined,
@@ -4673,7 +4730,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       // Pure layout and grouping derivations plus the component itself,
       // exposed for `node --test` so grouping, filtering and the column
       // algorithm are pinned without a browser. The shell never reads this key.
-      __test: { marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, readDisplayMode, writeDisplayMode, createDisplayModeStore, DISPLAY_MODE_KEY, DISPLAY_MODE_DEFAULT, FLAT_DISPLAY_MODE, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore, quantizeMetric, metricChanged, METRIC_HYSTERESIS, LabelBoundary, readLabelEntry, labelSeat, labelSlotSource, LABEL_SLOT, providerLabel, fetchProjectLink, openInNewTab, PROJECT_LINK_PATH, PROJECT_LINK_FALLBACK, PROJECT_LINK_TIMEOUT_MS, HIDDEN_KEY, readHidden, writeHidden, providerHiddenKey, modelHiddenKey, modelIsVisible, visibleGroups, createHiddenStore, ALL_VISIBLE, hiddenKeysForGroup, groupVisibility, setGroupVisible, sameKeys, migrateLegacyHidden, createCatalogStore, EMPTY_CATALOG, SETTINGS_NS, settingsDict, SettingsSection, Switch },
+      __test: { marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, readDisplayMode, writeDisplayMode, createDisplayModeStore, DISPLAY_MODE_KEY, DISPLAY_MODE_DEFAULT, FLAT_DISPLAY_MODE, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore, quantizeMetric, metricChanged, METRIC_HYSTERESIS, LabelBoundary, readLabelEntry, labelSeat, labelSlotSource, LABEL_SLOT, providerLabel, fetchProjectLink, openInNewTab, PROJECT_LINK_PATH, PROJECT_LINK_FALLBACK, PROJECT_LINK_TIMEOUT_MS, HIDDEN_KEY, readHidden, writeHidden, providerHiddenKey, modelHiddenKey, modelIsVisible, visibleGroups, createHiddenStore, ALL_VISIBLE, hiddenKeysForGroup, groupVisibility, setGroupVisible, sameKeys, migrateLegacyHidden, createCatalogStore, EMPTY_CATALOG, SETTINGS_NS, settingsDict, installSettingsNavIcon, SettingsSection, Switch },
       __component: ModelFlatMap,
       __seat: Seat,
       __nativeMenuRow: NativeMenuRow,
@@ -5168,6 +5225,15 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
           }
         } catch (error) {
           console.error('dsh-model-flatmap: settings dictionaries were not registered', error)
+        }
+
+        try {
+          ctx.effect(() => {
+            if (typeof document === 'undefined') return
+            return installSettingsNavIcon(document)
+          }, 'dsh-model-flatmap: settings nav list icon')
+        } catch (error) {
+          console.error('dsh-model-flatmap: the settings nav icon was not installed', error)
         }
 
         try {
