@@ -2154,7 +2154,12 @@ test('the strike decoration is a line-through on the row text only', () => {
   // The name and the variant tag carry it; the badge and spinner must not.
   assert.match(rule, /\.dshmf-rowName/, 'the primary text is struck')
   assert.match(rule, /\.dshmf-rowProvider/, 'the variant tag is struck')
-  assert.doesNotMatch(rule, /\.dshmf-badge/, 'the badge chip is not struck')
+  // The strike reaches the row's own chips only by NOT listing them: it is set
+  // on the text elements, so a chip that is a SIBLING of the text is untouched.
+  // A hosted model-label cell (DEC-046) puts its chips INSIDE the struck track,
+  // where the line runs across them — accepted in DEC-047, because losing the
+  // strike on those rows would lose the signal and keep only the decoration.
+  assert.doesNotMatch(rule, /\.dshmf-badge/, 'the badge chip is not itself a strike target')
   assert.doesNotMatch(rule, /\.dshmf-rowTail/, 'the spinner is not struck')
 })
 
@@ -5412,6 +5417,16 @@ test('no label occupant leaves the row exactly as it was', () => {
 })
 
 test('a crashing row occupant costs the decoration, not the row', () => {
+  // Two halves, because the renderer here never INVOKES a child component: a
+  // tree walk cannot crash an occupant, so asserting "the rows are still there"
+  // would pass with the boundary deleted. First the containment itself (drive
+  // the boundary the way React would), then the wiring (the row wraps the
+  // occupant in that boundary, with a fallback that still names the model).
+  const Boundary = bundle.__test.LabelBoundary
+  const instance = new Boundary({ fallback: 'catalog name' })
+  instance.state = Boundary.getDerivedStateFromError(new Error('occupant exploded'))
+  assert.equal(instance.render(), 'catalog name', 'a crash answers the fallback, never throws')
+
   runtime.reset()
   const Exploding = () => { throw new Error('occupant exploded') }
   const { tree } = openGrid(catalogState(), {
@@ -5421,6 +5436,15 @@ test('a crashing row occupant costs the decoration, not the row', () => {
   assert.equal(rows.length, 6, 'every row is still drawn')
   const trigger = findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0]
   assert.ok(trigger !== undefined, 'and the trigger survives too')
+
+  // Every row's cell is wrapped, and the fallback is a real row label: the
+  // catalog name, plus the catalog badge — which is this plugin's to draw and
+  // must not be lost just because the occupant died.
+  const boundaries = rows.map(row => findAll(row, node => node.type === Boundary)[0])
+  assert.ok(boundaries.every(node => node !== undefined), 'each row wraps its occupant in the boundary')
+  const fallback = boundaries[0].props.fallback
+  assert.ok(fallback !== undefined, 'and the fallback is not empty')
+  assert.match(textOf(fallback), /DeepSeek/, 'the fallback names the model')
 })
 
 test('family grouping keeps its provider rows and does not host the cell', () => {
@@ -5469,4 +5493,75 @@ test('one label face is built per panel, not one per row', () => {
   assert.equal(builds, 1, 'and the face was built exactly once')
   const rows = findAll(tree, node => node.type === Occupant)
   assert.equal(rows[1].props.fromInject, 'face:session-1', 'every cell receives the same face')
+})
+
+// ---------------------------------------------------------------------------
+// Fix-ups the row owes a third-party cell (DEC-047)
+//
+// An occupant's output is opaque, and several of this plugin's own rules were
+// written when the row drew its own content. These pin the corrections.
+// ---------------------------------------------------------------------------
+test('the selected row restyles the hosted chips so they stay legible on the band', () => {
+  const css = source.match(/const CSS = `([\s\S]*?)`/)[1]
+  // The band is a deep blue with white text, and an occupant tints its chips
+  // for the NORMAL row background — a brand-coloured pill on deep blue is
+  // effectively invisible. The row has to reach into the opaque cell.
+  const at = css.indexOf('.dshmf-row[aria-pressed="true"] .dshmf-rowNameWindow [class*="badge"]')
+  assert.ok(at >= 0, 'the selected row restyles a hosted badge chip')
+  const rule = css.slice(at, css.indexOf('}', at) + 1)
+  assert.match(rule, /background:/, 'the chip surface is overridden')
+  assert.match(rule, /color:\s*inherit/, 'and its text takes the band colour')
+  // Layout must NOT be touched: the occupant owns its own spacing.
+  assert.doesNotMatch(rule, /padding|margin|font-size|line-height|max-width/,
+    'only surface and text are overridden, never layout')
+  // Both class spellings are covered, because class naming is not guaranteed.
+  for (const name of ['[class*="promo"]', '[class*="Badge"]', '[class*="Promo"]']) {
+    assert.ok(css.includes(name), `${name} is covered too`)
+  }
+})
+
+test('every row button carries the model name as its accessible name', () => {
+  // An occupant may render `null` — that is not a crash, so the boundary does
+  // not catch it, and the row would otherwise be a nameless button.
+  runtime.reset()
+  const Occupant = () => null
+  const { tree } = openGrid(catalogState(), {
+    inject: labelProps({ component: Occupant, locale: 'test-ns' }),
+  })
+  const rows = gridRows(tree)
+  assert.ok(rows.length > 0)
+  for (const row of rows) {
+    assert.equal(typeof row.props['aria-label'], 'string', 'the row is named explicitly')
+    assert.ok(row.props['aria-label'].length > 0, 'and the name is not empty')
+  }
+})
+
+test('a crashed occupant still leaves the catalog badge in the row', () => {
+  // Suppressing the plugin's own badge is justified only while the occupant is
+  // there to draw the badge itself. When it crashes, the badge is this
+  // plugin's to draw — README and DEC-046 both promise it survives.
+  const Boundary = bundle.__test.LabelBoundary
+  runtime.reset()
+  const Exploding = () => { throw new Error('occupant exploded') }
+  const { tree } = openGrid(catalogState({
+    current: { provider: 'third-party', model: 'grok-4', reasoningEffort: 'on' },
+  }), { inject: labelProps({ component: Exploding, locale: 'test-ns' }) })
+  const boundaries = findAll(tree, node => node.type === Boundary)
+  const grok = boundaries.find(node => /grok/i.test(textOf(node.props.fallback ?? '')))
+  assert.ok(grok !== undefined, 'the row has a fallback for the crashed cell')
+  assert.equal(findAll(grok.props.fallback, node => hasClass(node, 'dshmf-badge')).length, 1,
+    'and the fallback still draws the catalog badge')
+})
+
+test('the row fallback inherits its type instead of hard-coding it', () => {
+  // A hard-coded 400 here would silently un-bold the SELECTED row, whose row
+  // rule sets 600 — a crashed occupant must not change the row's weight.
+  const css = source.match(/const CSS = `([\s\S]*?)`/)[1]
+  const at = css.indexOf('.dshmf-rowLabelFallback {')
+  assert.ok(at >= 0, 'the fallback class exists')
+  const rule = css.slice(at, css.indexOf('}', at) + 1)
+  for (const prop of ['font-size', 'line-height', 'font-weight', 'color']) {
+    assert.doesNotMatch(rule, new RegExp(`${prop}:`), `${prop} is inherited from the row, not repeated`)
+  }
+  assert.match(rule, /white-space:\s*nowrap/, 'it still never wraps; the window clips it')
 })

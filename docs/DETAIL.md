@@ -254,7 +254,7 @@ this feature exists for.
 
 The shipped picker renders **every** row through the label cell winner, with
 `placement: 'option'`; the catalog badge is only its fallback when nobody
-answers. Since DEC-028 the trigger already had that cell, so the rows were the
+answers. Since DEC-030 the trigger already had that cell, so the rows were the
 half still drawing a hand-rolled name plus badge — and losing the rate, the load
 mark and the promotion chip entirely. Under *By provider* the grid now hosts the
 same winner on every selectable row, `placement: 'option'`, which is also what
@@ -276,8 +276,40 @@ so a crash costs the decoration and never the row.
 
 Under *By family* the rows do **not** host the cell: there the row's primary text
 is the *provider*, and a model's label cell decorating a provider name would be
-wrong. Family rows keep the quieter model tail of DEC-024, and the slot stays on
-the trigger.
+wrong. Family rows keep the quieter model tail of DEC-023, and the slot stays on
+the trigger. **The same model therefore looks different in the two groupings** —
+the promotion chip and the load mark appear under *By provider* and not under
+*By family*, and the rate is drawn at the occupant's own size in one and by the
+tail's smaller bold run in the other. That is a consequence of the row standing
+for a different noun in each mode, not an inconsistency to iron out.
+
+#### What the row has to fix up around a third-party cell (DEC-047)
+
+An occupant's output is opaque, and several of this plugin's own rules assumed
+the row drew its own content:
+
+- **Selected row.** The band is a deep blue with white text, and this plugin's
+  own chip has a translucent-white override for it. The occupant's chips are
+  tinted for the normal background, so the row overrides their surface and text
+  through an attribute-substring selector (`[class*="badge"]`,
+  `[class*="promo"]`) — a deliberate coupling to third-party class names, and the
+  only lever available. Layout is not touched.
+- **Clipping and the marquee.** The occupant's chips live *inside* the clipped
+  name window, so a narrow column can cut one and a marquee pass carries them
+  along. The shipped picker behaves the same way (its `.modelName` clips a
+  `.badgedName` containing the badge), so this is native behaviour; only this
+  plugin's own chips — the family tail, the catalog badge, the spinner — sit
+  outside the clip and never move.
+- **Strike-through.** The out-of-balance line is set on the row's text, so on a
+  hosted row it runs across whatever the occupant drew, promotion chip included.
+  This is accepted: the alternative is no strike on those rows, and "this model
+  has no balance" is information, while the chips are decoration.
+- **A crash still keeps the badge.** The catalog badge is drawn in the
+  `LabelBoundary` *fallback*, not suppressed unconditionally: suppression is
+  justified only while the occupant is there to draw the badge itself.
+- **The row is always named.** The row button carries `aria-label` with the model
+  name, so an occupant that renders `null` — which is not a crash, and so is not
+  caught by the boundary — cannot leave a nameless button.
 
 ## Native mode
 
@@ -687,10 +719,15 @@ the measured overflow, and the duration is that distance divided by 50 px/s
   the next heartbeat honours it with no restart. A missing or damaged file reads
   as **enabled** — an unreadable choice must never silently silence reporting.
   Disabling the bundle stops the heartbeat with everything else.
-- The trigger's label cell renders ANOTHER PLUGIN'S component. It is written
-  against the documented `ModelLabelOwner` props, but nothing guarantees every
-  future contributor stays compatible; `LabelBoundary` degrades a crash to the
-  catalog name, which is the same fallback the host uses for an empty cell.
+- The trigger's label cell renders ANOTHER PLUGIN'S component, and so does every
+  model row under *By provider* (DEC-046). It is written against the documented
+  `ModelLabelOwner` props, but nothing guarantees every future contributor stays
+  compatible; `LabelBoundary` degrades a crash to the catalog name plus the
+  catalog badge, which is the same fallback the host uses for an empty cell. Two
+  things it cannot cover: an occupant that renders `null` without throwing (the
+  row keeps its `aria-label`, but the visible name is gone), and an occupant that
+  renders something very wide (the name window clips it, as it clips any long
+  name).
 - Addressed subagent sessions hide the seat, matching the shipped selector.
 - The visibility record is per-browser-origin (`localStorage`), so it does not
   follow an account to another machine or another browser profile. It narrows

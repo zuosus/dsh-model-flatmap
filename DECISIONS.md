@@ -5,6 +5,58 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-047 — 2026-11-18 — 行内 host 原生 cell 的收尾：选中行角标、崩溃回退、可访问名与删除线（修订 DEC-046）
+
+**Context.** DEC-046 把 picker 自带的 label 槽搬到了模型行上，一次 UI/UX 复核又找出几处
+「机制对、细节错」的问题。多数源于同一个盲点：**占用者的输出是不透明的第三方组件，而本插件
+原有的若干规则都假设行的内容是自己画的。**
+
+**Findings.**（均已对照 `dsh-connect-workbuddy` 与出厂 `ModelSelect.module.css` 核实）
+
+- 选中行是深蓝底白字，本插件自绘角标因此有一条 `.dshmf-badge` 反白覆盖规则；但 host 了
+  cell 的行画的是**占用者的**角标（品牌色 16% 半透明底 + 品牌色文字），在深蓝底上几乎
+  不可见，而那条覆盖规则对它无效。
+- `LabelBoundary` 只接住**抛错**；占用者渲染 `null` 不是崩溃。此时行既没有自绘名字也没有
+  badge，`<button>` 又没有 `aria-label`，于是变成**无名按钮**。
+- `renderRow` 抑制目录 badge 的条件是「cell 存在」而非「cell 渲染成功」，所以占用者崩溃
+  时**目录 badge 跟着丢失**——而 README 与 DEC-046 都承诺崩溃只损失装饰、名字和 badge 仍在。
+- `text-decoration` 会传播到行内后代且**后代无法取消**，而 cell 的角标位于被划线的轨道内；
+  workbuddy 的 label 根是 `inline-flex`，删除线是否进入它取决于浏览器对原子内联盒的处理。
+  无论哪种，规则里「不划 badge」的说法都已不成立。
+- `.dshmf-rowLabelFallback` 硬编码了 `13px/18px/400`，与 `.dshmf-row` 重复，且 400 会
+  **覆盖选中行的 600**：占用者一崩，选中行就悄悄掉回常规字重。
+- 崩溃测试从未真正触发边界（测试渲染器不调用子组件），把边界删掉它照样通过。
+- 文档引用编号错了两处（触发器 cell 是 DEC-030 不是 DEC-028；family 尾巴是 DEC-023 不是
+  DEC-024），测试总数也写成了过期的 256 → 262。
+
+**Decision.**
+
+1. 选中行用属性子串选择器把**占用者的**角标压到反白底上：
+   `[class*="badge"|"promo"|"Badge"|"Promo"]`，只改底色/文字色/边框，**不碰布局**。这是对
+   第三方类名的**有意耦合**，写进注释与 DETAIL，因为除此之外没有杠杆。
+2. 行按钮加 `aria-label` = 模型名。占用者渲染空内容时行仍然有名，且这个名字不依赖装饰。
+3. 目录 badge 挪进 `LabelBoundary` 的 **fallback**：崩溃时名字与 badge 一起回来，与文档
+   承诺一致。抑制自绘 badge 的理由是「占用者自己会画」，占用者不在了，这个理由也就不成立。
+4. 删除线**保持现状**：它继续横穿占用者的角标。另一种选择是 host 行完全不划线，但那样丢掉
+   的是**信息**（这个模型没余额），留下的才是装饰。宁可让角标被划，不可让信号消失。注释与
+   测试改成陈述事实，不再声称「不划 badge」。
+5. `.dshmf-rowLabelFallback` 只声明盒模型（`display`/`white-space`），字号字重全部继承行，
+   选中行的 600 不再被覆盖。
+6. 崩溃测试改为**真的驱动边界**（构造 `LabelBoundary`、注入错误 state、断言回退），再断言
+   每一行都把占用者包在该边界里、回退里含模型名。测试渲染器不调用子组件这一点，写进注释。
+7. 抽 `providerNameFor(group, t)`：`deepseek-account` 的本地化例外此前有三份拷贝。
+8. 更正 DEC-028 → DEC-030、DEC-024 → DEC-023 的引用与测试总数。
+
+**Rejected.**（1）host 行完全不画删除线：丢掉真正的信号。（2）为角标重新自绘一套：正是
+DEC-046 否掉的做法。（3）让占用者自己适配选中行：它是第三方代码，且不知道本插件的色板。
+（4）去掉 `LabelBoundary`、改由行兜住空输出：接不住抛错，且崩溃必须止于装饰。
+
+**Consequences.** `renderRowLabel` 多解析一次 badge 供 fallback 使用；`renderRow` 的
+`aria-label` 与「抑制条件不变」的注释；CSS 多一条选中行角标规则、`.dshmf-rowLabelFallback`
+瘦身为两条声明；新增 `providerNameFor` 助手。测试 278 → 287（崩溃测试拆分断言，另有选中行角标、
+可访问名、崩溃仍留 badge、回退继承字重四条新测试）。
+
+
 ## DEC-045 — 2026-11-17 — 设置页以文字行展示「无额度」：模型逐个标注，provider 仅全组无额度时标注
 
 **Context.** 用户要求：面板里靠线划掉的「余额/额度不足」（含以 429 返回的额度不足），要在
@@ -68,14 +120,14 @@ render 测试改为断言「ON 模型名 = primary、OFF = tertiary 且不等于
 ## DEC-046 — 2026-11-18 — 模型行也渲染 picker 自带的 label 槽：倍数、负载、促销角标与原生一致
 
 **Context.** 用户要求模型行在模型名后带上和原生 picker 一样的信息——`x0.01` 倍数、忙碌
-标记、`Free Now` 之类的促销角标——并建议直接复用原生 picker 的渲染视图。此前 DEC-028 只在
+标记、`Free Now` 之类的促销角标——并建议直接复用原生 picker 的渲染视图。此前 DEC-030 只在
 **触发器**上渲染了 `conversation.input.model.label` 槽的胜者；网格里的模型行画的是目录名
 加自绘的 `model.badge` 芯片，连接插件的倍数/负载/促销信息全部丢失。
 
 **Findings.**
 
 - 原生 `ModelSelect` 的**每一行**都经 label cell 胜者渲染（`placement: 'option'`），目录
-  badge 只是它「无人应答」时的回退。即槽系统本来就是为行设计的，DEC-028 的触发器只是同一
+  badge 只是它「无人应答」时的回退。即槽系统本来就是为行设计的，DEC-030 的触发器只是同一
   机制的一个 placement。
 - 行持有行所需的全部 owner props：`provider`、`model`、`placement: 'option'`、
   `selected`，与触发器同源，无需新数据。
@@ -97,7 +149,7 @@ render 测试改为断言「ON 模型名 = primary、OFF = tertiary 且不等于
 5. cell 外包 `LabelBoundary`，回退到 `.dshmf-rowLabelFallback`（纯目录名，沿用行的 13px/
    18px 文本度量、不换行）。占用者崩溃只损失装饰，不损失行本身。
 6. **按 family 分组下不 host**：此时行的主文本是 **provider** 而非模型，把模型 label cell
-   放进去会让 cell 装饰的是 provider 名；family 行继续用 DEC-024 的「更安静的尾巴」
+   放进去会让 cell 装饰的是 provider 名；family 行继续用 DEC-023 的「更安静的尾巴」
    （模型型号 + 更小更粗的倍数）。
 
 **Rejected.**
@@ -107,13 +159,17 @@ render 测试改为断言「ON 模型名 = primary、OFF = tertiary 且不等于
 - 在 family 分组下也 host：cell 会装饰 provider 名（上文 Decision 6）。
 - 每行重建 inject face：N× 服务读取与对象装配；原生 picker 亦为每次一份。
 - 把 `LabelBoundary` 去掉、让行自己兜住崩溃：占用者是第三方代码，崩溃必须止于装饰
-  （与 DEC-028 同一 containment 结论）。
+  （与 DEC-030 同一 containment 结论）。
 
 **Consequences.** 行条目增加一个 `providerName` 字段；新增 `renderRowLabel` 与
 `labelFaceValue`/`labelTranslate` 两个 memo；`renderRow` 在 cell 命中时改画 `nativeCell`
 并抑制目录 badge。CSS 增加一条 `.dshmf-rowLabelFallback`。测试新增 6 条
 （cell owner props、无双重装饰、无占用者回退不变、崩溃只损装饰、family 不 host、每面板
-一份 face）；测试总数 256 → 262。
+一份 face）。合入时全仓测试总数 272 → 278。
+
+**Follow-up.** 合并后的一次 UI/UX 复核发现若干实现缺陷（选中行角标在深蓝底上不可读、
+占用者崩溃时目录 badge 一起丢失、行失去可访问名称等），逐条修在 **DEC-047**；本条其余
+结论不变。
 
 
 ## DEC-043 — 2026-11-17 — 关闭态标题降一档改为 tertiary：ON/OFF 一眼可辨且仍可读（修订 DEC-042）

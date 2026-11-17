@@ -249,6 +249,23 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
   background: color-mix(in srgb, var(--dsw-static-neutral-bluish-00) 22%, transparent);
   color: inherit;
 }
+/* The same legibility problem, one level out: a row that hosts the shipped
+   model-label cell draws ANOTHER PLUGIN'S chips, and those chips are tinted for
+   the normal row background — a 16%-alpha brand pill with brand-coloured text
+   all but disappears on the selected row's deep blue, where the text is white.
+   The occupant cannot know about this band, so the row has to fix it. An
+   attribute-substring selector is the only lever over an opaque third-party
+   component: a deliberate, documented coupling (DEC-047), not an accident.
+   Only the pill SURFACE and the TEXT are touched — never layout, so the
+   occupant's own spacing and truncation still hold. */
+.dshmf-row[aria-pressed="true"] .dshmf-rowNameWindow [class*="badge"],
+.dshmf-row[aria-pressed="true"] .dshmf-rowNameWindow [class*="promo"],
+.dshmf-row[aria-pressed="true"] .dshmf-rowNameWindow [class*="Badge"],
+.dshmf-row[aria-pressed="true"] .dshmf-rowNameWindow [class*="Promo"] {
+  background: color-mix(in srgb, var(--dsw-static-neutral-bluish-00) 22%, transparent) !important;
+  color: inherit !important;
+  border-color: transparent !important;
+}
 .dshmf-rowNameWindow {
   flex: 1 1 auto; min-width: 0; display: block;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -287,8 +304,14 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
    STRIKE_TTL (24h) without a fresh attempt. The row text is struck through
    rather than recoloured: the strike survives both themes and the selected
    row's blue band, and it does not compete with the error strip's own red.
-   The decoration is applied to the row's text only (name + variant tag), not
-   to the badge chip or the spinner. */
+   The decoration covers the row's text (name + variant tag) and the spinner is
+   excluded. A row that hosts the shipped model-label cell is the one case where
+   the strike reaches FURTHER than this plugin's own chips: the cell's output is
+   opaque, so the line the window draws runs across whatever the occupant put
+   there, promotion chip included. That is accepted rather than fixed (DEC-047):
+   the alternative is no strike at all on hosted rows, and "this model has no
+   balance" is exactly the signal that must not be lost — the chips are
+   decoration, the strike is information. */
 .dshmf-row[data-insufficient="true"] .dshmf-rowName,
 .dshmf-row[data-insufficient="true"] .dshmf-rowProvider {
   text-decoration: line-through;
@@ -302,12 +325,11 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
 .dshmf-rowNameMark { font-size: 11px; line-height: 18px; font-weight: 700; letter-spacing: normal; }
 /* The row's own fallback when the picker's render view is hosted but its
    occupant crashed (DEC-046). It replaces the decorated cell with the plain
-   catalog name, so it carries the row's text metrics rather than the occupant's
-   and never wraps: the window around it already clips. */
-.dshmf-rowLabelFallback {
-  display: inline-block; min-width: 0; white-space: nowrap;
-  font-size: 13px; line-height: 18px; font-weight: 400;
-}
+   catalog name, and it deliberately sets NO type: size, weight and tone are
+   inherited from the row, so the fallback reads exactly like a row that never
+   hosted a cell — including the selected row's 600 weight, which a hard-coded
+   400 here would have silently dropped. Only the box is declared. */
+.dshmf-rowLabelFallback { display: inline-block; white-space: nowrap; }
 /* The model-specific tail of a family-grouped row, e.g. "3.8-Flash-Next",
    "V4.1-Flash · x0.01", "2.1 Turbo". The primary text is the provider and the
    heading names the family, so this is what is LEFT after both are removed —
@@ -941,11 +963,31 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
     function providerLabel(group, t, resolveText, alias) {
       const renamed = sanitizeAlias(alias)
       if (renamed !== '') return renamed
-      if (group.id === 'deepseek-account') return t('provider.account')
-      const resolved = resolveText === undefined ? undefined : resolveText(group.name)
+      const name = providerNameFor(group, t)
+      const resolved = resolveText === undefined ? undefined : resolveText(name)
       if (typeof resolved === 'string' && resolved.trim() !== '') return resolved
-      const fallback = fallbackText(group.name)
+      const fallback = fallbackText(name)
       return fallback.trim() === '' ? group.id : fallback
+    }
+
+    /**
+     * A provider's catalog name, UNRESOLVED, as the model-label cell wants it.
+     *
+     * The cell resolves localized catalog text with its own locale seat, so this
+     * hands it the raw catalog name — except for the one provider the shipped
+     * picker itself localizes, which is spelled out here so the row and the
+     * trigger agree with the native menu.
+     *
+     * Extracted because three call sites need it (the panel's display label,
+     * the trigger's owner props, a row's owner props) and three copies of the
+     * `deepseek-account` exception would drift apart.
+     * @param {{id: string, name: unknown}} group - one provider entry.
+     * @param {Function} t - the panel's own translate seat.
+     * @returns {unknown} the catalog name, unresolved.
+     */
+    function providerNameFor(group, t) {
+      if (group.id === 'deepseek-account') return t('provider.account')
+      return group.name
     }
 
     /**
@@ -4330,7 +4372,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
             id: group.id,
             // The catalog's own name, unresolved: the occupant resolves it with
             // its own locale seat, exactly as it does inside the native picker.
-            name: group.id === 'deepseek-account' ? t('provider.account') : group.name,
+            name: providerNameFor(group, t),
           },
           model: currentModel.model,
           placement: 'trigger',
@@ -4453,6 +4495,9 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         if (labelEntry === undefined) return null
         const { model, providerId, providerLabel, providerName } = entry
         const Occupant = labelEntry.component
+        // Resolved once: the fallback draws it, and `renderRow` needs to know
+        // whether one exists before deciding not to draw its own.
+        const badge = badgeOf(model)
         return h(LabelBoundary, {
           // Keyed by the route, so a change of occupant (or of the model a row
           // stands for) remounts rather than handing one plugin's component
@@ -4460,18 +4505,31 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
           key: `row-label-${providerId}/${model?.id}`,
           // A crashing occupant costs the DECORATION, never the row: the
           // boundary falls back to exactly what this row drew before it hosted
-          // the cell — the catalog name with its multiplier markers lifted.
-          fallback: h('span', { className: 'dshmf-rowLabelFallback' }, ...nameRuns(primary)),
+          // the cell — the catalog name with its multiplier markers lifted, and
+          // the catalog badge, which is the one piece of decoration this plugin
+          // can still draw without the occupant. Suppression of `dshmf-badge` in
+          // `renderRow` is keyed on the cell being HOSTED, not on it having
+          // rendered, so a crash would otherwise lose the badge as well as the
+          // chips — and the badge is not the occupant's to lose.
+          fallback: h('span', { className: 'dshmf-rowLabelFallback' },
+            ...nameRuns(primary),
+            badge === null ? null : h('span', {
+              className: 'dshmf-badge',
+              'data-tone': badge.tone,
+            }, badge.label)),
         }, h(Occupant, {
           ...labelFaceValue,
           t: labelTranslate,
           provider: {
             id: providerId,
             // The catalog's own name, unresolved, except for the one provider
-            // the shipped picker localizes on the occupant's behalf.
-            name: providerId === 'deepseek-account'
-              ? t('provider.account')
-              : (typeof providerName === 'string' && providerName !== '' ? providerName : providerLabel),
+            // the shipped picker localizes on the occupant's behalf. A group's
+            // `name` is preferred over the row's `providerName` because the row
+            // entry carries it for the family tail's stripping, where an alias
+            // must not be used.
+            name: typeof providerName === 'string' && providerName !== ''
+              ? providerNameFor({ id: providerId, name: providerName }, t)
+              : providerLabel,
           },
           model,
           // `option` is the placement a selectable model row has in the shipped
@@ -4527,6 +4585,13 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
           'aria-pressed': selected,
           'data-insufficient': insufficientRoute ? 'true' : undefined,
           title: rowTitle,
+          // The row's accessible name, spelled out rather than inherited from
+          // its content. Once a row hosts the shipped cell, its text comes from
+          // ANOTHER PLUGIN: an occupant may render nothing (a crash is caught by
+          // `LabelBoundary`, but rendering `null` is not a crash), and the row
+          // would then be a nameless button. The model name is what the row is,
+          // so it is stated here and never depends on the decoration.
+          'aria-label': String(model.name ?? ''),
           disabled: busy,
           onClick: () => { chooseModel(providerId, model) },
           // The pointer must REST for MARQUEE_DELAY before anything moves, so
@@ -4551,6 +4616,14 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
           // to it would decorate the same characters twice. The window and the
           // one-pass marquee still wrap it — a decorated row can be wider than
           // its column like any other.
+          //
+          // That does mean the occupant's own chips sit INSIDE the clipping
+          // window, so a narrow column can cut one, and a marquee pass carries
+          // them along with the name (DEC-047). The shipped picker has the same
+          // property — its `.modelName` clips a `.badgedName` that contains the
+          // badge — so this is the native behaviour, not a regression; only the
+          // plugin's OWN chips (the family tail, the catalog badge, the spinner)
+          // stay outside the clip and never move.
           nativeCell !== null
             ? h('span', { className: 'dshmf-rowNameWindow' },
               running
