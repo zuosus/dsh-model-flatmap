@@ -5,6 +5,23 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## LES-033 — 2026-11-17 — 只改 CSS 的提交，在已经打开的窗口里可能「看起来没生效」
+
+把模型开关改成另一种颜色后，用户说「it's still the same」。代码、测试、合并都没问题；
+真正的原因是本插件注入样式表时**只在文档里没有对应 `<style>` 时才写入**：
+
+```js
+if (document.querySelector('style[data-plugin-css=...]') === null) { ...append... }
+```
+
+HMR 重新执行模块时，文档里的旧 `<style>` 还在，于是条件不成立，**新 CSS 被整段跳过**；
+JS 的行为改动会生效，纯样式改动却一直停留在上一版，直到整页刷新。升级成一个「找不到就建、
+找得到就覆盖 `textContent`」的幂等写入即可。
+
+**教训**：给插件注入的全局样式做「已存在就跳过」的优化时，先问一句「HMR 会重新执行这个
+模块，但不会重建 document；旧样式谁来更新？」。同理，验证纯样式改动时，别只看 HMR——
+先整页刷新一次，再判断是代码问题还是热更新问题。
+
 ## LES-032 — 2026-11-17 — 父级开关做成「覆盖」，就等于拿走了子项自己的发言权
 
 给模型列表加 provider 开关时，我把 provider 键当成**覆盖**：命中就直接判定整个 provider

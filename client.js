@@ -607,13 +607,20 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
 `
     const STYLE_TAG = 'dsh-model-flatmap/panel.css'
     const STYLE_OWNER = 'dsh-model-flatmap'
-    if (typeof document !== 'undefined'
-      && document.querySelector(`style[data-plugin-css=${JSON.stringify(STYLE_TAG)}]`) === null) {
-      const tag = document.createElement('style')
-      tag.dataset.plugin = STYLE_OWNER
-      tag.dataset.pluginCss = STYLE_TAG
+    if (typeof document !== 'undefined') {
+      const selector = `style[data-plugin-css=${JSON.stringify(STYLE_TAG)}]`
+      let tag = document.querySelector(selector)
+      if (tag === null) {
+        tag = document.createElement('style')
+        tag.dataset.plugin = STYLE_OWNER
+        tag.dataset.pluginCss = STYLE_TAG
+        document.head.append(tag)
+      }
+      // Rewrite the body on every (re)load. HMR re-executes this module while
+      // leaving the document untouched, so skipping the write when the tag
+      // already exists would keep the browser on the previous revision's CSS
+      // until the whole page is reloaded.
       tag.textContent = CSS
-      document.head.append(tag)
     }
 
     // ---------------------------------------------------------------------
