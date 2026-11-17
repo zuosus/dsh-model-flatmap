@@ -4,6 +4,45 @@ Project-level decision log for the dsh-model-flatmap plugin. Append-only: new
 entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
+
+## DEC-045 — 2026-11-17 — 设置页以文字行展示「无额度」：模型逐个标注，provider 仅全组无额度时标注
+
+**Context.** 用户要求：面板里靠线划掉的「余额/额度不足」（含以 429 返回的额度不足），要在
+设置页模型名下方以文字展示；且**设置页不用线划**；当一个 provider 下**所有**模型都无额度时，
+provider 名下方也要有该提示。
+
+**Findings.**
+
+- 现有 strike 系统已是全局单例：`createMarkStore` + localStorage `dshmf:insufficient`，
+  route key = `provider/model`，TTL 24h——设置页直接复用**同一个 store** 即可。
+- Host 已把额度耗尽归类为结构化错误码 `QUOTA` / `ACCOUNT_QUOTA`，插件现有
+  `INSUFFICIENT_CODES` 已包含这两个码，判定层无需改动。
+- 设置行的「变暗/降档」已经表达「关掉了」；线划会与它撞车——两个状态不能共用一种装饰，
+  这正是用户禁止线划的原因。
+- provider 级聚合必须是「本组**全部**模型无额度」且**组非空**：空组是「目录还没加载」；
+  且聚合范围用目录全量模型（含被隐藏的），隐藏是显示选择，不能制造「整个 provider 无额度」。
+
+**Decision.**
+
+1. `creditNotes(marked, groups)` 纯函数：从 live map（`getSnapshot().marks`）推导两级标注
+   ——模型级 `models: Set<routeKey>`，provider 级 `providers: Set<groupId>`（仅非空且全 strike）。
+2. `SettingsSection` 增加 `insufficient` 注入（`inject` face 增加
+   `insufficient: markStore ?? EMPTY_INSUFFICIENT`），`useSyncExternalStore` 读同一 store，
+   快照恒为同一对象。
+3. 渲染：provider 名下、模型名下各渲染 `.dshmf-setNoCredit` 文字行（`No credit` /「无额度」；
+   provider 级用 `all models out of credit` /「全部模型无额度」），带 `title` 长解释。
+   模型行新增 `.dshmf-setModelText` 文本列以容纳两行。
+4. 样式：12px/18px、`--dsw-alias-state-warn-label`；`data-hidden` 下走 dimmed（与 meta 行同档，
+   标题降到 tertiary）。**整个设置块禁用 line-through**（测试钉死）。面板线划行为不变。
+
+**Rejected.**（1）设置页也画线划：与「关」的降档撞车，用户明令禁止。（2）provider 标注只算
+「当前开启」的模型：隐藏是显示选择，不能改变账号事实。（3）用 `account/getBalance` 取真实余额：
+账号级、仅 DeepSeek 平台账号 route 有意义，超出本次需求。（4）改用 Host 错误码替代现有判定：
+现有码表已一致，属无谓重构。
+
+**Consequences.** 设置页现在会说「这个模型/这组模型没钱了」，与面板线划是同一事实的两种表达；
+provider 行在**折叠**状态下也能看到全组无额度。新增测试：creditNotes 真值表、展开/折叠渲染、
+部分无额度负例、无 mark face 降级、注入 face 检查、CSS 无线划守卫。
 ## DEC-044 — 2026-11-17 — ON 的模型名提到 primary（亮色近黑/暗色近白），拉大 ON/OFF 差距（修订 DEC-043）
 
 **取代：** DEC-043 中「ON 的模型名用 secondary」这一条；DEC-043 的其余结论（OFF 落 tertiary、

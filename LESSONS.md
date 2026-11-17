@@ -5,6 +5,23 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## LES-036 — 2026-11-17 — 测试夹具要用「消费者拿到的形状」，不是「存储里的形状」
+
+给 creditNotes（设置页「无额度」标注的推导函数）写单测时，我照着持久层的样子造夹具：
+`Map<route, {marked:true, at:时间戳}>`。函数读的是 `getSnapshot().marks`——**live map**，
+值恒为 `true`。结果断言全部失败，而函数本身完全正确。
+
+同一个「余额标记」在一个插件里有**三种形状**：存储记录（带时间戳，store 私有）、live map
+（`true`，快照暴露）、渲染层集合（creditNotes 的输出）。夹具造错形状时失败模式很安静：
+不抛异常、只是空集合，deepEqual 报「[] !== [p/a]」，乍看像逻辑错了。
+
+**教训**：为 store 包装器的输出写测试前，先写一行断言确认夹具形状。渲染测试里我把记录形状的
+夹具塞进 `readStored`、live 形状喂给 `creditNotes`，两条路径要分开造。
+
+另外两条同批踩到的：渲染树里的文本是**子节点数组**不是字符串，断言文案要用 `textOf(node)`；
+以及分支上的提交在 main 前进后不要硬 rebase——把 main 当基准重放功能改动，比解决十来个
+交织的冲突块更安全，也不会把别人新加的测试（rename、telemetry）弄丢。
+
 ## LES-035 — 2026-11-17 — 给 Provider 改名，改的是标签，不是身份
 
 需求看起来是「在设置里改个名字，让 picker 也显示」。把它当一次字符串替换会在三处翻车：
