@@ -5565,3 +5565,167 @@ test('the row fallback inherits its type instead of hard-coding it', () => {
   }
   assert.match(rule, /white-space:\s*nowrap/, 'it still never wraps; the window clips it')
 })
+
+// ---------------------------------------------------------------------------
+// The badge beside a settings model name is the catalog's chip, and the name
+// line — not the chip — is what gives way when the row runs out of room.
+// ---------------------------------------------------------------------------
+test('a settings model row carries the catalog badge and the rate multiplier', async () => {
+  runtime.reset()
+  const face = bundle.__test.createHiddenStore({ readStored: () => new Set() })
+  // Two models: one the catalog badges with a LOCALIZED promotion chip and a
+  // rate inside the name, one with neither. The settings list has to show the
+  // same two facts the picker's rows do — and only where the catalog has them.
+  const groups = [{
+    id: 'vendor',
+    name: 'Vendor',
+    models: [
+      {
+        id: 'v4.1-flash',
+        name: 'Deepseek-V4.1-Flash · x0.01',
+        badge: { text: { zh: '限时免费', en: 'Free Now' }, tone: 'info' },
+      },
+      { id: 'plain', name: 'Plain Model' },
+    ],
+  }]
+  const catalog = bundle.__test.createCatalogStore({
+    read: () => ({ modelCatalog: async () => ({ ok: true, value: { groups } }) }),
+  })
+  await catalog.load()
+  const props = {
+    t: key => key,
+    visibility: face,
+    catalog,
+    telemetry: bundle.__test.createTelemetryStore({ readStored: () => true }),
+    resolveText: value => (typeof value === 'string' ? value : value.en),
+  }
+  let tree = runtime.render(bundle.__test.SettingsSection, props)
+  findAll(tree, node => hasClass(node, 'dshmf-setDisclosure'))[0].props.onClick()
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+
+  const rows = findAll(tree, node => hasClass(node, 'dshmf-setModelRow'))
+  assert.equal(rows.length, 2)
+
+  // The badged row: the chip sits AFTER the name, inside the name line, and
+  // wears the catalog's tone. It is the catalog's own badge, resolved through
+  // the host resolver — not a settings-only decoration.
+  const badges = findAll(rows[0], node => hasClass(node, 'dshmf-badge'))
+  assert.equal(badges.length, 1, 'the badged model wears exactly one chip')
+  assert.equal(textOf(badges[0]), 'Free Now')
+  assert.equal(badges[0].props['data-tone'], 'info')
+  assert.equal(badges[0].props.className, 'dshmf-badge dshmf-setModelBadge')
+  const line = findAll(rows[0], node => hasClass(node, 'dshmf-setModelNameLine'))[0]
+  assert.ok(line !== undefined, 'the name and its chip share one line')
+  assert.equal(findAll(line, node => hasClass(node, 'dshmf-badge')).length, 1,
+    'the chip lives on the name line, not beside the credit note')
+  const text = textOf(rows[0])
+  assert.ok(text.indexOf('Deepseek-V4.1-Flash') < text.indexOf('Free Now'),
+    `the badge follows the name: ${text}`)
+
+  // The multiplier is lifted out of the name into its marked run, exactly as
+  // the picker draws it, so the rate reads as an aside in both surfaces.
+  const marks = findAll(rows[0], node => hasClass(node, 'dshmf-rowNameMark'))
+  assert.equal(marks.length, 1)
+  assert.equal(textOf(marks[0]), 'x0.01')
+
+  // A model the catalog says nothing extra about keeps a bare name: no chip,
+  // and therefore no gap where one would have been.
+  assert.equal(findAll(rows[1], node => hasClass(node, 'dshmf-badge')).length, 0)
+  assert.equal(findAll(rows[1], node => hasClass(node, 'dshmf-rowNameMark')).length, 0)
+})
+
+test('a settings row without a badge resolver draws no chip instead of [object Object]', async () => {
+  runtime.reset()
+  const face = bundle.__test.createHiddenStore({ readStored: () => new Set() })
+  const groups = [{
+    id: 'vendor',
+    name: 'Vendor',
+    models: [{ id: 'v4.1-flash', name: 'Flash', badge: { text: { zh: '限时免费', en: 'Free Now' }, tone: 'info' } }],
+  }]
+  const catalog = bundle.__test.createCatalogStore({
+    read: () => ({ modelCatalog: async () => ({ ok: true, value: { groups } }) }),
+  })
+  await catalog.load()
+  const props = { t: key => key, visibility: face, catalog }
+  let tree = runtime.render(bundle.__test.SettingsSection, props)
+  findAll(tree, node => hasClass(node, 'dshmf-setDisclosure'))[0].props.onClick()
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  assert.equal(findAll(tree, node => hasClass(node, 'dshmf-badge')).length, 0,
+    'a section without the resolver shows the name alone, never an object string')
+})
+
+// The badge and the credit note are two DIFFERENT facts and must not share a
+// run: the chip rides on the name line, the note stays on its own line under it.
+test('a badged row that is also out of credit keeps the note on its own line', async () => {
+  runtime.reset()
+  const face = bundle.__test.createHiddenStore({ readStored: () => new Set() })
+  const groups = [{
+    id: 'vendor',
+    name: 'Vendor',
+    models: [{
+      id: 'v4.1-flash',
+      name: 'Flash · x0.01',
+      badge: { text: 'Free Now', tone: 'info' },
+    }],
+  }]
+  const catalog = bundle.__test.createCatalogStore({
+    read: () => ({ modelCatalog: async () => ({ ok: true, value: { groups } }) }),
+  })
+  await catalog.load()
+  const insufficient = bundle.__test.createMarkStore({
+    readStored: () => SETTINGS_RECORDS(['vendor/v4.1-flash']),
+  })
+  const props = {
+    t: key => key,
+    visibility: face,
+    catalog,
+    insufficient,
+    telemetry: bundle.__test.createTelemetryStore({ readStored: () => true }),
+    resolveText: value => value,
+  }
+  let tree = runtime.render(bundle.__test.SettingsSection, props)
+  findAll(tree, node => hasClass(node, 'dshmf-setDisclosure'))[0].props.onClick()
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+
+  const row = findAll(tree, node => hasClass(node, 'dshmf-setModelRow'))[0]
+  const line = findAll(row, node => hasClass(node, 'dshmf-setModelNameLine'))[0]
+  assert.equal(findAll(line, node => hasClass(node, 'dshmf-badge')).length, 1, 'the chip is on the name line')
+  assert.equal(findAll(line, node => hasClass(node, 'dshmf-setNoCredit')).length, 0,
+    'the credit note is NOT on the name line')
+  const note = findAll(row, node => hasClass(node, 'dshmf-setNoCredit'))[0]
+  assert.ok(note !== undefined, 'the note is still drawn, one level down')
+  assert.equal(textOf(note), 'noCredit')
+})
+
+// ---------------------------------------------------------------------------
+// The name line owns the free space and a hidden row dims its chip.
+// ---------------------------------------------------------------------------
+test('the settings name line owns the free space and a hidden row dims its chip', () => {
+  const css = source.match(/const CSS = `([\s\S]*?)`/)[1]
+  const ruleOf = selector => {
+    const at = css.indexOf(selector)
+    assert.ok(at >= 0, `${selector} exists`)
+    return css.slice(at, css.indexOf('}', at) + 1)
+  }
+  const prop = (block, name) => {
+    const hit = block.match(new RegExp(`${name}:\\s*([^;]+);`))
+    return hit === null ? undefined : hit[1].trim()
+  }
+  const cell = ruleOf('.dshmf-setModelText {')
+  assert.match(prop(cell, 'display'), /flex/, 'the name, chip and note stack in one cell')
+  assert.equal(prop(cell, 'min-width'), '0', 'the cell may shrink below its content')
+  assert.match(prop(cell, 'flex'), /^1 1 auto$/, 'the cell (not the chip or switch) absorbs the slack')
+  const line = ruleOf('.dshmf-setModelNameLine {')
+  assert.match(prop(line, 'display'), /flex/, 'the name and its chip lay out on one line')
+  assert.equal(prop(line, 'min-width'), '0')
+  // The ellipsis belongs to the name, so the chip keeps its size and the switch
+  // keeps its place however long the name is.
+  assert.equal(prop(ruleOf('.dshmf-setModelText .dshmf-setModelName {'), 'min-width'), '0')
+  assert.match(prop(ruleOf('.dshmf-setModelName {'), 'text-overflow'), /ellipsis/)
+  assert.equal(prop(ruleOf('.dshmf-setModelBadge {'), 'flex'), 'none',
+    'the chip never shrinks; the name does')
+  // A model switched off is out of the panel; its promotion chip must dim with
+  // the name rather than stay the loudest thing on the row.
+  const dim = ruleOf('.dshmf-setModelRow[data-hidden="true"] .dshmf-setModelBadge {')
+  assert.ok(Number.parseFloat(prop(dim, 'opacity'), 10) < 1, 'the chip dims on a hidden row')
+})

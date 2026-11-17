@@ -141,6 +141,10 @@ levels, and the agent-teamwork switch on one surface:
   uses is allowed: the grid obeys the switch, and the trigger still names the
   current model. If everything is hidden the panel says so and points back at
   Settings instead of claiming no models are available.
+  A model row names the model the way the picker does: a `· x0.01` rate inside
+  the name is lifted into its smaller bold run, and the catalog's own badge
+  chip (a promotion like "Free Now", a load mark, a rate) follows the name. A
+  model the catalog badges nothing about draws no chip and keeps no gap.
 - **Provider names you choose.** The same page renames a provider: use the
   pencil on a provider row, type the name and press Enter (Escape or the cross
   cancels).

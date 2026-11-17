@@ -575,6 +575,18 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
    and the note is the line UNDER it. Needed because a note cannot live inside
    .dshmf-setModelName — that span is one ellipsised line. */
 .dshmf-setModelText { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
+/* The name and its catalog chip share ONE line; the credit note, when present,
+   stays on the line UNDER them. The line — not the chip — is what gives way, so
+   the chip keeps its size and the switch keeps its place however long the name.
+   The name keeps its own min-width:0 so IT is the span that ellipsises. */
+.dshmf-setModelNameLine { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dshmf-setModelText .dshmf-setModelName { min-width: 0; }
+/* The catalog's own badge chip on a settings model row: the same chip the
+   picker's rows draw, so a model is decorated identically on both surfaces. It
+   is the catalog's data, not a settings invention — a model the catalog badges
+   nothing about draws no chip and keeps no gap for one. */
+.dshmf-setModelBadge { flex: none; }
+.dshmf-setModelRow[data-hidden="true"] .dshmf-setModelBadge { opacity: .55; }
 /* The "no credit" line, on both the provider row and the model rows.
    The PICKER says the same fact with a strike through the row text (see
    .dshmf-row[data-insufficient]); Settings says it in WORDS, because a settings
@@ -922,6 +934,54 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
     const PATH_CONFIRM = 'M3.1 7.4 5.8 10.1 11 4.6'
     /* A circular arrow: put the catalog's own name back. */
     const PATH_RESET = 'M3.2 6.2A3.9 3.9 0 1 1 3.4 8.7M3.2 6.2V2.9M3.2 6.2h3.3'
+
+    /**
+     * A model's catalog badge, resolved for display, or null.
+     *
+     * Module-level so the Settings model list can draw the same chip the
+     * picker's rows do. The catalog's `badge.text` may be a literal or a
+     * translation map, so resolution goes through the host's own resolver; a
+     * catalog with no badge, or one whose text resolves to nothing, answers
+     * null and the caller draws no chip (and therefore no gap).
+     * @param {object|undefined} model - one catalog model entry.
+     * @param {Function|undefined} resolveText - the host's catalog-text resolver.
+     * @returns {{label: string, tone: string}|null} the chip, or null.
+     */
+    function catalogBadge(model, resolveText) {
+      const badge = model === undefined || model === null ? undefined : model.badge
+      if (badge === undefined || badge === null) return null
+      const label = resolveText === undefined ? undefined : resolveText(badge.text)
+      if (typeof label !== 'string' || label.trim() === '') return null
+      return { label, tone: badge.tone ?? 'neutral' }
+    }
+
+    /**
+     * Split a model name into React children, lifting any "xN" multiplier
+     * marker (rate/size tags like "x0.01", "x1.5", "X 2.2") into a smaller,
+     * bold span so it reads as an aside while the full name and its order are
+     * preserved. Matches an x (any case, or the multiplication sign) that
+     * STARTS a token — preceded by start-of-string or a non-word character,
+     * so it is not embedded in a word like "GenX5" — followed by optional
+     * whitespace and a number (integer or decimal, optional leading +).
+     *
+     * Module-level so the Settings model list lifts "· x0.01" exactly as the
+     * picker's rows do, or one surface shows the rate as plain prose.
+     * @param {unknown} rawName - the catalog name.
+     * @returns {Array} React children: literal text and marked spans.
+     */
+    const MULT_MARKER = /(?<![\p{L}\p{N}])[xX×]\s*[+]?\d+(?:\.\d+)?/gu
+    function nameRuns(rawName) {
+      const name = String(rawName ?? '')
+      const out = []
+      let cursor = 0
+      for (const m of name.matchAll(MULT_MARKER)) {
+        if (m.index > cursor) out.push(name.slice(cursor, m.index))
+        out.push(h('span', { className: 'dshmf-rowNameMark' }, m[0]))
+        cursor = m.index + m[0].length
+      }
+      if (cursor < name.length) out.push(name.slice(cursor))
+      return out
+    }
 
     function svg(path, size, extra) {
       return h('svg', {
@@ -4441,30 +4501,16 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       }
 
       /**
-       * Split a model name into React children, lifting any "xN" multiplier
-       * marker (rate/size tags like "x0.01", "x1.5", "X 2.2") into a smaller,
-       * bold span so it reads as an aside while the full name and its order are
-       * preserved. Matches an x (any case, or the multiplication sign) that
-       * STARTS a token — preceded by start-of-string or a non-word character,
-       * so it is not embedded in a word like "GenX5" — followed by optional
-       * whitespace and a number (integer or decimal, optional leading +).
-       * "Claude x3", "GPT x0.1", "Model X 2.2" all get the run; a plain
-       * "Model X" (no number) or "GenX5" (x inside a word) do not.
+       * The name runs come from the module-level `nameRuns` so the panel and the
+       * Settings model list lift a "· x0.01" rate identically (DEC-048). Only
+       * the marker regex and the split live there now; this comment records
+       * the grammar: an x (any case, or the multiplication sign) that STARTS a
+       * token — preceded by start-of-string or a non-word character, so it is
+       * not embedded in a word like "GenX5" — followed by optional whitespace
+       * and a number (integer or decimal, optional leading +). "Claude x3",
+       * "GPT x0.1", "Model X 2.2" all get the run; a plain "Model X" (no
+       * number) or "GenX5" (x inside a word) do not.
        */
-      const MULT_MARKER = /(?<![\p{L}\p{N}])[xX×]\s*[+]?\d+(?:\.\d+)?/gu
-      const nameRuns = rawName => {
-        const name = String(rawName ?? '')
-        const out = []
-        let cursor = 0
-        for (const m of name.matchAll(MULT_MARKER)) {
-          if (m.index > cursor) out.push(name.slice(cursor, m.index))
-          out.push(h('span', { className: 'dshmf-rowNameMark' }, m[0]))
-          cursor = m.index + m[0].length
-        }
-        if (cursor < name.length) out.push(name.slice(cursor))
-        return out
-      }
-
       /**
        * One row's cell, drawn by the picker's own render view (DEC-046).
        *
@@ -5456,7 +5502,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
      * @param props - the settings slot's props plus the injected face.
      */
     function SettingsSection(props) {
-      const { t, visibility, catalog, insufficient, telemetry, aliases } = props
+      const { t, visibility, catalog, insufficient, telemetry, aliases, resolveText } = props
       const visibleFace = visibility ?? ALL_VISIBLE
       const subscribeHidden = useCallback(listener => visibleFace.subscribe(listener), [visibleFace])
       const getHidden = useCallback(() => visibleFace.getSnapshot(), [visibleFace])
@@ -5853,12 +5899,25 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
               // switched back on while its provider stays mostly off.
               const own = modelIsVisible(hidden, group.id, model.id)
               const out = notes.models.has(routeKeyOf(group.id, model.id))
+              // The row carries the same catalog facts the picker's rows do, in
+              // the same order: the rate/multiplier inside the name ("· x0.01",
+              // lifted out by `nameRuns`) and the catalog's own badge chip after
+              // it ("Free Now", "繁忙"). Settings is where a model is turned on
+              // or off, so "what is this model, and is it the cheap one right
+              // now" has to be answerable without opening the picker.
+              const badge = catalogBadge(model, resolveText)
               return h('div', { className: 'dshmf-setModelRow', key: String(model?.id ?? ''), 'data-hidden': !own },
-                // Same shape as the provider row: the name with the note under
-                // it, so the two levels of the list read alike. The note is
-                // WORDS, not the panel's line-through (see `.dshmf-setNoCredit`).
+                // The name (with its chip) on one line, the credit note — when
+                // the account is out — on the line UNDER it, so the two facts
+                // never compete for the same run of text.
                 h('span', { className: 'dshmf-setModelText' },
-                  h('span', { className: 'dshmf-setModelName', title: modelTitle }, modelTitle),
+                  h('span', { className: 'dshmf-setModelNameLine' },
+                    h('span', { className: 'dshmf-setModelName', title: modelTitle }, ...nameRuns(modelTitle)),
+                    badge === null ? null : h('span', {
+                      className: 'dshmf-badge dshmf-setModelBadge',
+                      'data-tone': badge.tone,
+                      title: badge.label,
+                    }, badge.label)),
                   out
                     ? h('span', { className: 'dshmf-setNoCredit', title: creditHint }, translate('noCredit'))
                     : null),
@@ -6502,6 +6561,11 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
                     catalog: catalogStore,
                     telemetry: telemetryStore,
                     aliases: aliasStore,
+                    // The badge text is catalog-authored and may be a
+                    // translation map, so the section resolves it through the
+                    // same host resolver the picker uses; without this the chip
+                    // would print "[object Object]" for a localized badge.
+                    resolveText,
                     // The SAME global balance store the panel reads. The section
                     // only draws from it, never writes: whether a route is out of
                     // credit is observed from the Sessions, not chosen here.
