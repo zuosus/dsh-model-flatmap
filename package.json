@@ -1,6 +1,6 @@
 {
   "name": "dsh-model-flatmap",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Flat, two-level-free model picker for the DSH composer: every model and reasoning level on one surface.",
   "license": "MIT",
   "repository": {
