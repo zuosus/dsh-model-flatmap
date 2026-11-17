@@ -549,6 +549,28 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
    1.26:1 / 1.64:1, below any readable threshold. ON (primary) 18.90:1 /
    15.03:1 vs OFF (tertiary) 2.13:1 / 4.24:1. */
 .dshmf-setModelRow[data-hidden="true"] .dshmf-setModelName { color: var(--dsw-alias-label-tertiary); }
+/* A model row's text side, mirroring the provider row: the name is the heading
+   and the note is the line UNDER it. Needed because a note cannot live inside
+   .dshmf-setModelName — that span is one ellipsised line. */
+.dshmf-setModelText { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
+/* The "no credit" line, on both the provider row and the model rows.
+   The PICKER says the same fact with a strike through the row text (see
+   .dshmf-row[data-insufficient]); Settings says it in WORDS, because a settings
+   row is read as a list of switches rather than as a live status line, and a
+   strike here would collide with the tone-stepping that already marks a row as
+   switched off — two different states must not share one decoration. The warn
+   label token is the shell's own and flips with the theme, so the line stays
+   legible on both backgrounds without a second colour being invented here. */
+.dshmf-setNoCredit {
+  display: block; font-size: 12px; line-height: 18px;
+  color: var(--dsw-alias-state-warn-label);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* A switched-off row keeps the credit note in the dimmed tone: the same rung
+   the meta line takes when hidden (titles step to tertiary, meta dims), so the
+   note stays present but stops outshining the fact that the row is off. */
+.dshmf-setProvider[data-hidden="true"] .dshmf-setNoCredit,
+.dshmf-setModelRow[data-hidden="true"] .dshmf-setNoCredit { color: var(--dsw-alias-label-dimmed); }
 /* The telemetry toggle is its own band at the BOTTOM of the section, divided
    from the model list above by the same hairline the list rows use. It governs
    the whole plugin's one network request, so it sits apart from the provider
@@ -3191,6 +3213,12 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         'alias.cancel': '取消重命名',
         'alias.reset': '恢复原名 {original}',
         'alias.duplicate': '另一个 Provider 使用了这个名称',
+        // The balance verdict, said in words rather than with a strike: see
+        // `.dshmf-setNoCredit`. `allNoCredit` is the same fact one level up, for
+        // a provider whose every model is out.
+        noCredit: '无额度',
+        allNoCredit: '全部模型无额度',
+        noCreditHint: '该模型最近一次调用因余额/额度不足而失败（含以 429 返回的额度不足）。任何一次正常响应的调用都会清除它；连续 24 小时没有再调用也会自动消失。',
         note: '新增的 Provider 和模型默认显示。',
         'telemetry.title': '匿名使用统计',
         'telemetry.desc': '每天最多一次，仅上报安装标识、插件版本、平台与架构，不含任何会话内容。默认开启。',
@@ -3218,6 +3246,9 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         'alias.cancel': 'Cancel rename',
         'alias.reset': 'Restore {original}',
         'alias.duplicate': 'Another provider already uses this name',
+        noCredit: 'No credit',
+        allNoCredit: 'all models out of credit',
+        noCreditHint: 'Its most recent call failed on an insufficient balance, credit or quota — including a 429 that says so. Any call that answers clears it, as does 24h without another attempt.',
         note: 'Newly added providers and models are shown by default.',
         'telemetry.title': 'Anonymous usage statistics',
         'telemetry.desc': 'At most once a day: install id, plugin version, platform and architecture only — never any session content. On by default.',
@@ -5296,6 +5327,48 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
     }
 
     /**
+     * The routes the Settings list should call out as out of credit.
+     *
+     * The panel answers this question with a strike through the row text; the
+     * Settings list says it in words under the name instead (see
+     * `.dshmf-setNoCredit`). Both read the SAME live mark map, so the two
+     * surfaces can never disagree.
+     *
+     * Two levels come out of one pass: a model is noted when its own route is
+     * marked, and a provider is noted only when it has models and EVERY one of
+     * them is marked — a partly-out provider would otherwise claim a fact the
+     * user can see is untrue one level down. An empty group never qualifies:
+     * that is "the catalogue has not loaded", not "the account is out".
+     *
+     * Visibility is deliberately NOT consulted. Hiding is a display choice; it
+     * must not be able to manufacture "this whole provider is out" by hiding
+     * the half that still answers.
+     * @param marked - the live mark map from the store snapshot (route → true).
+     * @param groups - the catalogue's provider groups.
+     * @returns the marked route keys and the all-out provider ids.
+     */
+    function creditNotes(marked, groups) {
+      const models = new Set()
+      const providers = new Set()
+      const list = Array.isArray(groups) ? groups : []
+      if (marked === undefined || marked === null || typeof marked.get !== 'function') {
+        return { models, providers }
+      }
+      for (const group of list) {
+        const modelsOf = Array.isArray(group?.models) ? group.models : []
+        let struck = 0
+        for (const model of modelsOf) {
+          const route = routeKeyOf(group?.id, model?.id)
+          if (marked.get(route) !== true) continue
+          models.add(route)
+          struck += 1
+        }
+        if (modelsOf.length > 0 && struck === modelsOf.length) providers.add(String(group?.id ?? ''))
+      }
+      return { models, providers }
+    }
+
+    /**
      * The Settings section: every provider with a switch, and its models with
      * one switch each.
      *
@@ -5304,10 +5377,13 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
      * `modelIsVisible`), and switching it back on restores exactly the
      * per-model exceptions it had. The row also reports how many of its models
      * are hidden, so a collapsed provider still says what it is hiding.
+     *
+     * Both levels also report the account's balance verdict in words under the
+     * name — see {@link creditNotes}.
      * @param props - the settings slot's props plus the injected face.
      */
     function SettingsSection(props) {
-      const { t, visibility, catalog, telemetry, aliases } = props
+      const { t, visibility, catalog, insufficient, telemetry, aliases } = props
       const visibleFace = visibility ?? ALL_VISIBLE
       const subscribeHidden = useCallback(listener => visibleFace.subscribe(listener), [visibleFace])
       const getHidden = useCallback(() => visibleFace.getSnapshot(), [visibleFace])
@@ -5319,6 +5395,13 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       const subscribeAliases = useCallback(listener => aliasFace.subscribe(listener), [aliasFace])
       const getAliases = useCallback(() => aliasFace.getSnapshot(), [aliasFace])
       const aliasMap = useSyncExternalStore(subscribeAliases, getAliases, getAliases)
+
+      // The ONE global balance store, the same face the panel reads. The marks
+      // are not Session state, so the section shows exactly what the panel shows.
+      const markFace = insufficient ?? EMPTY_INSUFFICIENT
+      const subscribeMarks = useCallback(listener => markFace.subscribe(listener), [markFace])
+      const getMarks = useCallback(() => markFace.getSnapshot(), [markFace])
+      const marks = useSyncExternalStore(subscribeMarks, getMarks, getMarks)
 
       const catalogFace = catalog ?? EMPTY_CATALOG
       const subscribeCatalog = useCallback(listener => catalogFace.subscribe(listener), [catalogFace])
@@ -5406,6 +5489,10 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       }
 
       const groups = Array.isArray(catalogue.groups) ? catalogue.groups : []
+      // Both credit-note levels from one pass over the live mark map — see
+      // `creditNotes`. Computed once per render, not per row.
+      const notes = creditNotes(marks.marks, groups)
+      const creditHint = translate('noCreditHint')
       /** The catalog's own name, ignoring any alias. */
       const originalOf = group => providerLabel(group, translate, undefined)
       /** The name this page draws: the alias when one exists. */
@@ -5643,7 +5730,15 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
                     alias === undefined
                       ? null
                       : h('span', { className: 'dshmf-setProviderOriginal' },
-                        ` · ${fillText('alias.original', { original })}`)))),
+                        ` · ${fillText('alias.original', { original })}`)),
+                  // Under the provider name, and only when every model of this
+                  // provider is out — see `creditNotes`. The per-model rows say
+                  // it individually, so this line never implies a fact the user
+                  // can see is untrue one level down. It sits AFTER the meta
+                  // line so a collapsed row still shows it.
+                  notes.providers.has(String(group.id ?? ''))
+                    ? h('span', { className: 'dshmf-setNoCredit', title: creditHint }, translate('allNoCredit'))
+                    : null)),
             // Pencil and switch are ONE trailing group: the row already spaces
             // its two sides by 16px, and letting each control be its own flex
             // item would put 32px of air around a 22px button.
@@ -5684,8 +5779,16 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
               // not a parent that locks its children, so a model can be
               // switched back on while its provider stays mostly off.
               const own = modelIsVisible(hidden, group.id, model.id)
+              const out = notes.models.has(routeKeyOf(group.id, model.id))
               return h('div', { className: 'dshmf-setModelRow', key: String(model?.id ?? ''), 'data-hidden': !own },
-                h('span', { className: 'dshmf-setModelName', title: modelTitle }, modelTitle),
+                // Same shape as the provider row: the name with the note under
+                // it, so the two levels of the list read alike. The note is
+                // WORDS, not the panel's line-through (see `.dshmf-setNoCredit`).
+                h('span', { className: 'dshmf-setModelText' },
+                  h('span', { className: 'dshmf-setModelName', title: modelTitle }, modelTitle),
+                  out
+                    ? h('span', { className: 'dshmf-setNoCredit', title: creditHint }, translate('noCredit'))
+                    : null),
                 h(Switch, {
                   checked: own,
                   className: 'dshmf-switchModel',
@@ -5735,7 +5838,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       // Pure layout and grouping derivations plus the component itself,
       // exposed for `node --test` so grouping, filtering and the column
       // algorithm are pinned without a browser. The shell never reads this key.
-      __test: { marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, readDisplayMode, writeDisplayMode, createDisplayModeStore, DISPLAY_MODE_KEY, DISPLAY_MODE_DEFAULT, FLAT_DISPLAY_MODE, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore, quantizeMetric, metricChanged, METRIC_HYSTERESIS, LabelBoundary, readLabelEntry, labelSeat, labelSlotSource, LABEL_SLOT, providerLabel, fetchProjectLink, openInNewTab, PROJECT_LINK_PATH, PROJECT_LINK_FALLBACK, PROJECT_LINK_TIMEOUT_MS, HIDDEN_KEY, readHidden, writeHidden, providerHiddenKey, modelHiddenKey, modelIsVisible, visibleGroups, createHiddenStore, ALL_VISIBLE, hiddenKeysForGroup, groupVisibility, setGroupVisible, sameKeys, migrateLegacyHidden, NO_ALIASES, createAliasStore, aliasOf, writeAliases, readAliases, aliasFor, sanitizeAlias, ALIAS_MAX, ALIAS_KEY, createCatalogStore, EMPTY_CATALOG, TELEMETRY_KEY, readTelemetryEnabled, writeTelemetryEnabled, syncTelemetryEnabled, createTelemetryStore, TELEMETRY_ON, TELEMETRY_SETTINGS_PATH, SETTINGS_NS, settingsDict, installSettingsNavIcon, SettingsSection, Switch },
+      __test: { marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, readDisplayMode, writeDisplayMode, createDisplayModeStore, DISPLAY_MODE_KEY, DISPLAY_MODE_DEFAULT, FLAT_DISPLAY_MODE, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore, quantizeMetric, metricChanged, METRIC_HYSTERESIS, LabelBoundary, readLabelEntry, labelSeat, labelSlotSource, LABEL_SLOT, providerLabel, fetchProjectLink, openInNewTab, PROJECT_LINK_PATH, PROJECT_LINK_FALLBACK, PROJECT_LINK_TIMEOUT_MS, HIDDEN_KEY, readHidden, writeHidden, providerHiddenKey, modelHiddenKey, modelIsVisible, visibleGroups, createHiddenStore, ALL_VISIBLE, hiddenKeysForGroup, groupVisibility, setGroupVisible, sameKeys, migrateLegacyHidden, NO_ALIASES, createAliasStore, aliasOf, writeAliases, readAliases, aliasFor, sanitizeAlias, ALIAS_MAX, ALIAS_KEY, createCatalogStore, EMPTY_CATALOG, TELEMETRY_KEY, readTelemetryEnabled, writeTelemetryEnabled, syncTelemetryEnabled, createTelemetryStore, TELEMETRY_ON, TELEMETRY_SETTINGS_PATH, SETTINGS_NS, settingsDict, installSettingsNavIcon, SettingsSection, creditNotes, Switch },
       __component: ModelFlatMap,
       __seat: Seat,
       __nativeMenuRow: NativeMenuRow,
@@ -6326,6 +6429,10 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
                     catalog: catalogStore,
                     telemetry: telemetryStore,
                     aliases: aliasStore,
+                    // The SAME global balance store the panel reads. The section
+                    // only draws from it, never writes: whether a route is out of
+                    // credit is observed from the Sessions, not chosen here.
+                    insufficient: markStore ?? EMPTY_INSUFFICIENT,
                   }),
                 }, SettingsSection)
               } catch (error) {

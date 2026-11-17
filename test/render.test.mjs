@@ -4624,6 +4624,161 @@ test('a blank name restores the original, and a duplicate name warns without blo
 })
 
 
+// ---------------------------------------------------------------------------
+// Settings → Model list: the balance verdict in WORDS. The picker strikes the
+// row through; Settings says "No credit" under the name instead (DEC-041), so
+// a settings row keeps a single decoration for "switched off". A provider is
+// noted only when EVERY one of its models is out.
+// ---------------------------------------------------------------------------
+
+// The LIVE map the settings section reads: route key → true, exactly what
+// `markStore.getSnapshot().marks` holds (records with stamps are the store's
+// private truth; the section never sees them).
+const SETTINGS_MARKS = routes => new Map(routes.map(route => [route, true]))
+// The PERSISTED shape `createMarkStore` reads from storage: route → record.
+const SETTINGS_RECORDS = routes => new Map(routes.map(route => [route, { marked: true, at: ago(0) }]))
+
+test('creditNotes marks a model per route and a provider only when all of its models are out', () => {
+  const creditNotes = bundle.__test.creditNotes
+  const groups = [
+    { id: 'p', models: [{ id: 'a' }, { id: 'b' }] },
+    { id: 'q', models: [{ id: 'c' }, { id: 'd' }] },
+    { id: 'empty', models: [] },
+  ]
+  const notes = creditNotes(SETTINGS_MARKS(['p/a', 'p/b', 'q/c']), groups)
+  // Every marked route is noted individually, whatever its siblings say.
+  assert.deepEqual([...notes.models].sort(), ['p/a', 'p/b', 'q/c'], 'each marked route is noted')
+  // Only the provider whose models are ALL out is noted at the group level.
+  assert.deepEqual([...notes.providers], ['p'], 'only the fully-out provider is noted')
+  // A group with no models is "not loaded yet", never "out of credit".
+  assert.equal(notes.providers.has('empty'), false, 'an empty group never qualifies')
+
+  // The degraded faces: no store, or a store whose map is missing entirely.
+  for (const absent of [undefined, null, new Set()]) {
+    const none = creditNotes(absent, groups)
+    assert.equal(none.models.size, 0, 'no mark map notes nothing')
+    assert.equal(none.providers.size, 0, 'no mark map notes no provider')
+  }
+  // A missing/absent group list must not throw.
+  assert.equal(creditNotes(SETTINGS_MARKS(['p/a']), undefined).models.size, 0, 'no groups notes nothing')
+})
+
+test('the settings section notes an exhausted provider while collapsed, and its models when expanded', async () => {
+  runtime.reset()
+  const face = bundle.__test.createHiddenStore({ readStored: () => new Set() })
+  const catalog = bundle.__test.createCatalogStore({
+    read: () => ({ modelCatalog: async () => ({ ok: true, value: { groups: catalogState().groups } }) }),
+  })
+  await catalog.load()
+  // Both models of the first provider are out: the provider itself must say so.
+  const insufficient = bundle.__test.createMarkStore({
+    readStored: () => SETTINGS_RECORDS(['deepseek-account/deepseek-chat', 'deepseek-account/deepseek-reasoner']),
+  })
+  const props = {
+    t: key => key,
+    visibility: face,
+    catalog,
+    insufficient,
+    telemetry: bundle.__test.createTelemetryStore({ readStored: () => true }),
+  }
+  let tree
+  runtime.setRerender(() => { tree = runtime.render(bundle.__test.SettingsSection, props) })
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+
+  const notes = node => findAll(node, child => hasClass(child, 'dshmf-setNoCredit'))
+  // Collapsed: no model row exists, so the provider line is the only place the
+  // fact can appear — and it does.
+  assert.equal(findAll(tree, node => hasClass(node, 'dshmf-setModelRow')).length, 0, 'collapsed draws no model rows')
+  assert.equal(notes(tree).length, 1, 'the exhausted provider is noted while collapsed')
+  assert.equal(notes(tree)[0].props.title, 'noCreditHint', 'the provider note carries the long explanation')
+  assert.equal(textOf(notes(tree)[0]), 'allNoCredit', 'the provider note says every model is out')
+
+  // Expanded: the provider line stays (its models really are all out) and each
+  // model gains its own note, so the fact is legible at both levels.
+  findAll(tree, node => hasClass(node, 'dshmf-setDisclosure'))[0].props.onClick()
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  const modelNotes = notes(tree)
+  assert.equal(modelNotes.length, 1 + 2, 'the provider plus each of its two models are noted')
+  const modelRowNotes = findAll(tree, node => hasClass(node, 'dshmf-setModelRow'))
+    .flatMap(row => notes(row))
+  assert.equal(modelRowNotes.length, 2, 'each model row carries its own note')
+  for (const note of modelRowNotes) {
+    assert.equal(textOf(note), 'noCredit', 'a model note is the short wording')
+    assert.equal(note.props.title, 'noCreditHint', 'every note explains itself on hover')
+  }
+})
+
+test('a partly exhausted provider is not noted, but its struck model still is', async () => {
+  runtime.reset()
+  const face = bundle.__test.createHiddenStore({ readStored: () => new Set() })
+  const catalog = bundle.__test.createCatalogStore({
+    read: () => ({ modelCatalog: async () => ({ ok: true, value: { groups: catalogState().groups } }) }),
+  })
+  await catalog.load()
+  // Only ONE of the two models is out: the provider must NOT claim otherwise.
+  const insufficient = bundle.__test.createMarkStore({
+    readStored: () => SETTINGS_RECORDS(['deepseek-account/deepseek-chat']),
+  })
+  const props = {
+    t: key => key,
+    visibility: face,
+    catalog,
+    insufficient,
+    telemetry: bundle.__test.createTelemetryStore({ readStored: () => true }),
+  }
+  let tree
+  runtime.setRerender(() => { tree = runtime.render(bundle.__test.SettingsSection, props) })
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  const notes = node => findAll(node, child => hasClass(child, 'dshmf-setNoCredit'))
+  assert.equal(notes(tree).length, 0, 'a partly-out provider says nothing at the provider level')
+
+  findAll(tree, node => hasClass(node, 'dshmf-setDisclosure'))[0].props.onClick()
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  const noted = findAll(tree, node => hasClass(node, 'dshmf-setModelRow'))
+    .filter(row => notes(row).length > 0)
+  assert.equal(noted.length, 1, 'exactly the struck model row is noted')
+  const text = findAll(noted[0], child => hasClass(child, 'dshmf-setModelName'))[0]
+  assert.equal(textOf(text), 'DeepSeek Chat', 'the noted row is the struck model')
+})
+
+test('a settings section without the mark face renders no credit notes at all', async () => {
+  runtime.reset()
+  const face = bundle.__test.createHiddenStore({ readStored: () => new Set() })
+  const catalog = bundle.__test.createCatalogStore({
+    read: () => ({ modelCatalog: async () => ({ ok: true, value: { groups: catalogState().groups } }) }),
+  })
+  await catalog.load()
+  // No `insufficient` in the props at all: the section must fall back to the
+  // empty face rather than crash or invent a verdict.
+  const props = {
+    t: key => key,
+    visibility: face,
+    catalog,
+    telemetry: bundle.__test.createTelemetryStore({ readStored: () => true }),
+  }
+  let tree
+  runtime.setRerender(() => { tree = runtime.render(bundle.__test.SettingsSection, props) })
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  findAll(tree, node => hasClass(node, 'dshmf-setDisclosure'))[0].props.onClick()
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  assert.equal(findAll(tree, node => hasClass(node, 'dshmf-setNoCredit')).length, 0, 'no face, no notes')
+})
+
+test('the settings section injects the global mark store into its face', () => {
+  // The section reads the SAME store the panel reads, so the two surfaces can
+  // never disagree. Registration exposes it through `inject`.
+  runtime.reset()
+  const { ctx, registered } = makeCtx()
+  bundle.apply(ctx)
+  const entry = registered.find(item => item.registration?.name === 'settings.section')
+  assert.ok(entry, 'the section registered itself')
+  const face = entry.registration.inject()
+  assert.ok(face.insufficient, 'the face carries the balance store')
+  for (const method of ['subscribe', 'getSnapshot', 'refresh']) {
+    assert.equal(typeof face.insufficient[method], 'function', `the injected face has ${method}()`)
+  }
+})
+
 test('every copy key the settings section renders exists in both languages', () => {
   // The section is translated through its OWN namespace, so a key that lives
   // only in the panel dictionary would render as the raw key. This walks the
@@ -4631,7 +4786,7 @@ test('every copy key the settings section renders exists in both languages', () 
   // dotted identifier.
   const dict = bundle.__test.settingsDict
   for (const locale of ['zh', 'en']) {
-    for (const key of ['nav', 'title', 'intro', 'empty', 'models', 'visibleCount', 'allOff', 'expand', 'collapse', 'providerToggle', 'modelToggle', 'note', 'provider.account', 'alias.editLabel', 'alias.renamedLabel', 'alias.field', 'alias.original', 'alias.keyboard', 'alias.save', 'alias.cancel', 'alias.reset', 'alias.duplicate']) {
+    for (const key of ['nav', 'title', 'intro', 'empty', 'models', 'visibleCount', 'allOff', 'expand', 'collapse', 'providerToggle', 'modelToggle', 'note', 'provider.account', 'alias.editLabel', 'alias.renamedLabel', 'alias.field', 'alias.original', 'alias.keyboard', 'alias.save', 'alias.cancel', 'alias.reset', 'alias.duplicate', 'noCredit', 'allNoCredit', 'noCreditHint']) {
       assert.equal(typeof dict[locale][key], 'string', `${locale} declares ${key}`)
       assert.notEqual(dict[locale][key], '', `${locale} ${key} is not empty`)
     }
