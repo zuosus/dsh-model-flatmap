@@ -115,11 +115,14 @@ levels, and the agent-teamwork switch on one surface:
   far more models than anyone picks between, so the panel can be narrowed down.
   **Settings → Model list** (`settings.section`, so it sits in the app's own
   settings panel beside the shipped pages) lists every provider with a switch,
-  and expanding a provider lists its models with one switch each. A hidden
-  provider hides all of its models; switching it back on restores exactly the
-  per-model exceptions it had. The choice applies to the panel's grid, its
-  search index, its group headings and its model count at once, because the
-  filter runs on the single catalogue every one of them derives from. The
+  and expanding a provider lists its models with one switch each. The provider
+  switch is a **bulk action**: it writes every one of that provider's models,
+  and the model switches stay live — so the useful workflow works, switch a
+  provider with dozens of models off and then switch the two or three you want
+  back on. Such a provider reports `mixed` and "N on"; one with every model off
+  dims and says "all off". The choice applies to the panel's grid, its search
+  index, its group headings and its model count at once, because the filter
+  runs on the single catalogue every one of them derives from. The
   record stores what is **hidden**, not what is shown, so a provider or model
   added by a plugin installed later appears without re-opening Settings. It is
   kept in `localStorage` (`dshmf:hidden`) and shared by the settings page and

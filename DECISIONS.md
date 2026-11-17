@@ -5,6 +5,52 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-035 — 2026-11-17 — Provider 开关改成批量写，不是覆盖；旧记录自动折叠成逐模型键
+
+**Context.** 用户反馈 DEC-034 的 provider 开关「没帮上忙」：关掉一个 provider 后，它下面的
+模型开关**变灰且不可点**，于是「关掉有几十个模型的 provider，再只开想要的两三个」这个真正
+有用的流程根本走不通。
+
+**Findings.**
+
+- 根因是语义选择，不是样式：DEC-034 把 provider 键当成**覆盖**（`modelIsVisible` 先看
+  provider 键，命中就直接 `false`），并据此把子开关 `disabled`。覆盖的代价是子项**没有
+  自己的发言权** —— 用户一旦关掉 provider，就只能整组重新打开，无法只留几个。
+- 反过来，「provider 键 = 批量写」在记录层面与逐模型开关**同构**：批量关 = 写满该 provider
+  下每个模型的键，批量开 = 清空它们。两者写的是同一批键，因此可以任意组合，记录里也不会
+  出现「谁优先」的特殊情况。
+- 但只改写入不改读取是不够的：旧记录里存的是**裸 provider id**，新语义下 UI 再也产生不出
+  这种键，而它仍然会隐藏整个 provider —— 结果是模型开关显示为开、却关不掉。必须迁移。
+
+**Decision.**
+
+1. **`modelIsVisible` 只认逐模型键**；裸 provider 键降级为**读取兜底**（旧记录仍然生效，
+   不会突然失效）。
+2. **provider 开关 = 批量操作**：`setGroupVisible` 写/清该组每个模型的键，并**删掉**该
+   provider 的裸键（否则旧键会继续压住整组，「开几个」看起来毫无反应）。
+3. **模型开关永远可用**，不再 `disabled`；关掉的模型行变暗，但可点。
+4. **provider 开关是三态**：`checked` = 全开，`mixed` = 部分开（`aria-checked="mixed"`，
+   中间态拇指停在中间），全关时整行变暗并显示「全部关闭」。混合态从**模型状态派生**，
+   provider 开关自己没有独立状态 —— 它是这组模型的一个视图 + 一个批量动作。
+5. **旧记录自动迁移**：`migrateLegacyHidden` 在目录到达后把裸 provider 键展开成逐模型键，
+   幂等；目录里查不到的 provider 键**原样保留**（可能是本 Host 已不再列出的 provider，
+   猜它覆盖了哪些模型比留着更糟）。
+
+**Rejected.**（1）保留覆盖语义、只把 `disabled` 去掉：子开关会显示「开」但实际无效，
+是更糟的谎言。（2）provider 开关只作为「全选/全不选」快捷按钮、不显示状态：用户看不到
+这一组当前是部分开还是全关。（3）给 provider 开关单独的 `providerHidden` 三态字段：
+与「记录里只有隐藏项」的设计冲突，且引入第二个真相来源。
+
+**Consequences.**
+
+- `modelIsVisible` 语义反转；新增 `hiddenKeysForGroup`、`groupVisibility`、
+  `setGroupVisible`（纯函数）、`sameKeys`、`migrateLegacyHidden`；store 新增
+  `setGroupVisible` / `migrateLegacy`，并把持久化+通知收敛到一个 `commit`。
+- `Switch` 支持 `mixed`，输出 `aria-checked="mixed"` 与 `data-mixed`。
+- 文案：`hiddenCount` 由 `visibleCount` + `allOff` 取代。
+- 测试 233 → 242，含「provider 关掉后模型开关仍可点」这条回归断言。
+
+
 ## DEC-034 — 2026-11-17 — Provider/模型可见性：设置页放在 `settings.section`，记录「隐藏了什么」，键用 route
 
 **Context.** 用户反馈「面板里 provider 和模型太多了」，要求新增一个设置项：列出所有

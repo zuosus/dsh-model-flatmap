@@ -429,13 +429,18 @@ and belongs where the app's other preferences are.
 ### What it shows
 
 Every provider is one row: a disclosure button carrying the chevron, the
-provider's name, and how many models it has (and how many of those are hidden),
-then a separate switch. The disclosure spans the whole text side of the row, so
-a click anywhere between the chevron and the switch expands it. Expanding the
-row lists that provider's models, each with its own switch. A provider that is
-switched off dims, and its model switches render disabled — they keep showing
-each model's **own** record, so it is visible what will come back when the
-provider is switched on again.
+provider's name, and how many of its models are on, then a separate switch. The
+disclosure spans the whole text side of the row, so a click anywhere between the
+chevron and the switch expands it. Expanding the row lists that provider's
+models, each with its own switch.
+
+The provider switch is a **bulk action**, not an override. Switching it off
+writes every one of that provider's model keys; switching it on clears them.
+The model switches stay live the whole time, so the workflow the feature exists
+for works: switch a provider with dozens of models off, then switch the two or
+three you want back on. A provider in that state reports `mixed` on its switch
+and "N on" beside its name, and a provider with every model off dims and says
+"all off".
 
 The section reads the catalogue from `remote.session.modelCatalog()`, which is
 the Host-generation catalog shared by every Session. It is not Session-scoped,
@@ -458,10 +463,16 @@ record, so a provider switch and a per-model exception can never disagree about
 which was written last. The two key shapes cannot collide: provider ids contain
 no `/`, and routes always do.
 
-A provider switch is a parent switch, not a summary of its children: hiding a
-provider hides every model under it whatever their own records say, and showing
-it again restores exactly the exceptions it had, because they were never
-rewritten.
+A provider switch writes the same per-model keys a user could write one at a
+time, so the two controls compose instead of one overriding the other. That is
+what makes "switch the provider off, then switch a few models back on" produce
+an ordinary record with no special case in it.
+
+A record written by an earlier design stored a bare provider id as an override.
+It is still honoured when reading, so an existing record keeps working, and the
+settings page folds it into per-model keys as soon as the catalogue names the
+models it covered. A provider key whose provider is no longer in the catalogue
+is left alone rather than guessed at.
 
 ### Where the filter applies
 

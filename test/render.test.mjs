@@ -3948,15 +3948,17 @@ test('writing the hidden record round-trips through storage', () => {
   }
 })
 
-test('the provider switch wins over a per-model record', () => {
+test('a model is hidden by its own key, and a legacy provider key still hides it', () => {
   const { modelIsVisible, providerHiddenKey, modelHiddenKey } = bundle.__test
-  const hidden = new Set([providerHiddenKey('p')])
-  assert.equal(modelIsVisible(hidden, 'p', 'm'), false, 'a hidden provider hides its models')
   // A provider id never collides with a route: routes carry a `/`.
   assert.notEqual(providerHiddenKey('p'), modelHiddenKey('p', 'm'))
   assert.equal(modelIsVisible(new Set([modelHiddenKey('p', 'm')]), 'p', 'm'), false, 'the model itself is hidden')
   assert.equal(modelIsVisible(new Set([modelHiddenKey('p', 'm')]), 'p', 'other'), true, 'its siblings are untouched')
   assert.equal(modelIsVisible(new Set(), 'p', 'm'), true, 'nothing hidden means visible')
+  // A record written by the PREVIOUS design stored a bare provider id as an
+  // override. It must keep hiding, or an existing record would silently stop
+  // working; the settings page migrates it to per-model keys when it can.
+  assert.equal(modelIsVisible(new Set([providerHiddenKey('p')]), 'p', 'm'), false, 'a legacy provider key still hides')
 })
 
 test('a provider whose models are all hidden is dropped, not drawn empty', () => {
@@ -4143,12 +4145,12 @@ test('every copy key the settings section renders exists in both languages', () 
   // dotted identifier.
   const dict = bundle.__test.settingsDict
   for (const locale of ['zh', 'en']) {
-    for (const key of ['nav', 'title', 'intro', 'empty', 'models', 'hiddenCount', 'expand', 'collapse', 'providerToggle', 'modelToggle', 'note', 'provider.account']) {
+    for (const key of ['nav', 'title', 'intro', 'empty', 'models', 'visibleCount', 'allOff', 'expand', 'collapse', 'providerToggle', 'modelToggle', 'note', 'provider.account']) {
       assert.equal(typeof dict[locale][key], 'string', `${locale} declares ${key}`)
       assert.notEqual(dict[locale][key], '', `${locale} ${key} is not empty`)
     }
     // The two fill-templates must declare exactly the placeholder the call site fills.
-    for (const [key, name] of [['models', 'count'], ['hiddenCount', 'count'], ['providerToggle', 'name'], ['modelToggle', 'name']]) {
+    for (const [key, name] of [['models', 'count'], ['visibleCount', 'count'], ['providerToggle', 'name'], ['modelToggle', 'name']]) {
       const declared = [...String(dict[locale][key]).matchAll(/\{(\w+)\}/gu)].map(m => m[1])
       assert.deepEqual(declared, [name], `${locale} ${key} declares {${name}}`)
     }
@@ -4217,4 +4219,144 @@ test('a broken locale service never costs the settings section', () => {
   // With no usable locale service the label falls back to the literal English
   // nav text rather than rendering a raw key or throwing.
   assert.equal(entry.registration.label(), 'Model list')
+})
+
+// ---------------------------------------------------------------------------
+// The provider switch is a BULK ACTION, not an override.
+//
+// The point of the feature is "switch a provider off, then switch a few of its
+// models back on". That only works if the provider switch writes each model's
+// own key instead of overriding them, so these tests pin the composition.
+// ---------------------------------------------------------------------------
+const GROUP_FIXTURE = {
+  id: 'p',
+  models: [{ id: 'a' }, { id: 'b' }, { id: 'c' }],
+}
+
+test('switching a provider off writes every model key and drops the provider key', () => {
+  const { setGroupVisible, modelHiddenKey, providerHiddenKey } = bundle.__test
+  const next = setGroupVisible(new Set(), GROUP_FIXTURE, false)
+  assert.deepEqual([...next].sort(), ['p/a', 'p/b', 'p/c'].sort(), 'every model is written')
+  assert.equal(next.has(providerHiddenKey('p')), false, 'no provider-wide override is left behind')
+  // The result is exactly what the user could have produced one switch at a time.
+  assert.deepEqual(next, new Set(['p/a', 'p/b', 'p/c'].map(id => modelHiddenKey('p', id.split('/')[1]))))
+})
+
+test('switching a provider on clears every model key, including a legacy provider key', () => {
+  const { setGroupVisible, providerHiddenKey } = bundle.__test
+  const dirty = new Set(['p/a', 'p/b', 'p/c', providerHiddenKey('p'), 'other/x'])
+  const next = setGroupVisible(dirty, GROUP_FIXTURE, true)
+  assert.deepEqual([...next], ['other/x'], 'only the other provider stays hidden')
+})
+
+test('a bulk write never mutates the record it was given', () => {
+  const { setGroupVisible } = bundle.__test
+  const before = new Set(['p/a'])
+  const snapshot = [...before]
+  setGroupVisible(before, GROUP_FIXTURE, false)
+  assert.deepEqual([...before], snapshot, 'the input set is untouched')
+})
+
+test('the headline case: provider off, then two of its models back on', () => {
+  const { createHiddenStore, modelHiddenKey } = bundle.__test
+  const face = createHiddenStore({ readStored: () => new Set(), writeStored: () => {} })
+  // Switch the whole provider off.
+  face.setGroupVisible(GROUP_FIXTURE, false)
+  assert.equal(face.getSnapshot().size, 3, 'all three models are hidden')
+  // Switch two of them back on, one at a time — exactly what the user asked for.
+  face.setVisible(modelHiddenKey('p', 'a'), true)
+  face.setVisible(modelHiddenKey('p', 'b'), true)
+  assert.deepEqual([...face.getSnapshot()], ['p/c'], 'only the model left off stays hidden')
+  // And the provider now reports a partial state rather than "off".
+  const state = bundle.__test.groupVisibility(face.getSnapshot(), GROUP_FIXTURE)
+  assert.equal(state.visible, 2)
+  assert.equal(state.hidden, 1)
+  assert.equal(state.mixed, true, 'the provider reads as partly on')
+  assert.equal(state.allVisible, false)
+  assert.equal(state.allHidden, false)
+})
+
+test('group visibility reports the three states a bulk switch needs', () => {
+  const { groupVisibility, modelHiddenKey } = bundle.__test
+  const all = groupVisibility(new Set(), GROUP_FIXTURE)
+  assert.deepEqual([all.allVisible, all.mixed, all.allHidden], [true, false, false])
+  const none = groupVisibility(new Set(['p/a', 'p/b', 'p/c']), GROUP_FIXTURE)
+  assert.deepEqual([none.allVisible, none.mixed, none.allHidden], [false, false, true])
+  const some = groupVisibility(new Set([modelHiddenKey('p', 'b')]), GROUP_FIXTURE)
+  assert.deepEqual([some.allVisible, some.mixed, some.allHidden], [false, true, false])
+  assert.equal(some.visible, 2)
+  assert.equal(some.total, 3)
+  // An empty provider is neither fully on nor mixed.
+  const empty = groupVisibility(new Set(), { id: 'q', models: [] })
+  assert.deepEqual([empty.allVisible, empty.mixed, empty.allHidden], [false, false, true])
+})
+
+test('a bulk write through the store notifies once and persists', () => {
+  const store = installStorage()
+  try {
+    const face = bundle.__test.createHiddenStore({ readStored: bundle.__test.readHidden, writeStored: bundle.__test.writeHidden })
+    let notified = 0
+    face.subscribe(() => { notified += 1 })
+    face.setGroupVisible(GROUP_FIXTURE, false)
+    assert.equal(notified, 1, 'one notification for the whole group, not one per model')
+    assert.deepEqual([...bundle.__test.readHidden()].sort(), ['p/a', 'p/b', 'p/c'], 'persisted as per-model keys')
+    // A no-op bulk write is silent.
+    face.setGroupVisible(GROUP_FIXTURE, false)
+    assert.equal(notified, 1, 'writing the same state notifies nobody')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('the settings section keeps model switches interactive under a switched-off provider', async () => {
+  runtime.reset()
+  const face = bundle.__test.createHiddenStore({ readStored: () => new Set() })
+  face.setGroupVisible(GROUP_FIXTURE, false)
+  const catalog = bundle.__test.createCatalogStore({
+    read: () => ({ modelCatalog: async () => ({ ok: true, value: { groups: [GROUP_FIXTURE] } }) }),
+  })
+  await catalog.load()
+  const props = { t: key => key, visibility: face, catalog }
+  let tree
+  runtime.setRerender(() => { tree = runtime.render(bundle.__test.SettingsSection, props) })
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  findAll(tree, node => hasClass(node, 'dshmf-setDisclosure'))[0].props.onClick()
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  const modelSwitches = findAll(tree, node => node?.type === bundle.__test.Switch).slice(1)
+  assert.equal(modelSwitches.length, 3, 'one per model')
+  for (const item of modelSwitches) {
+    assert.equal(item.props.checked, false, 'the bulk write switched them off')
+    // The regression this feature fixes: a disabled switch cannot be re-enabled.
+    assert.notEqual(item.props.disabled, true, 'a model switch stays interactive')
+  }
+})
+
+test('a legacy provider key is folded into per-model keys once the catalogue is known', () => {
+  const { migrateLegacyHidden, providerHiddenKey } = bundle.__test
+  const legacy = new Set([providerHiddenKey('p'), 'other/x'])
+  const migrated = migrateLegacyHidden(legacy, [GROUP_FIXTURE])
+  assert.deepEqual([...migrated].sort(), ['other/x', 'p/a', 'p/b', 'p/c'], 'the provider key became its models')
+  assert.equal(migrated.has(providerHiddenKey('p')), false, 'the override is gone')
+  // Idempotent: running it again is a no-op, and the same set comes back.
+  assert.equal(migrateLegacyHidden(migrated, [GROUP_FIXTURE]), migrated, 'a second run changes nothing')
+  // An unknown provider key is left alone rather than guessed at.
+  const unknown = new Set([providerHiddenKey('gone')])
+  assert.equal(migrateLegacyHidden(unknown, [GROUP_FIXTURE]), unknown, 'an unknown provider is not touched')
+  // An empty record is returned as-is (the common case must stay free).
+  const empty = new Set()
+  assert.equal(migrateLegacyHidden(empty, [GROUP_FIXTURE]), empty)
+})
+
+test('the migrated record means exactly what the model switches show', () => {
+  const { migrateLegacyHidden, providerHiddenKey, modelIsVisible, groupVisibility } = bundle.__test
+  const legacy = new Set([providerHiddenKey('p')])
+  const migrated = migrateLegacyHidden(legacy, [GROUP_FIXTURE])
+  // Every model reads as off — which is what the legacy key did anyway.
+  for (const model of GROUP_FIXTURE.models) {
+    assert.equal(modelIsVisible(migrated, 'p', model.id), false, `${model.id} stays off across the migration`)
+  }
+  assert.equal(groupVisibility(migrated, GROUP_FIXTURE).allHidden, true)
+  // And now one can actually be switched back on, which the legacy key forbade.
+  const after = bundle.__test.setGroupVisible(migrated, GROUP_FIXTURE, false)
+  assert.equal(after.size, 3, 'still three hidden models')
 })

@@ -383,12 +383,18 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
 .dshmf-setModels { display: flex; flex-direction: column; padding: 0 0 8px 23px; }
 .dshmf-setModelRow { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 6px 0; }
 .dshmf-setModelName { font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dshmf-setModelRow[data-hidden="true"] .dshmf-setModelName { color: var(--dsw-alias-label-dimmed); }
 .dshmf-switch {
   box-sizing: border-box; position: relative; flex: 0 0 auto;
   width: 36px; height: 20px; padding: 2px; border: 0; border-radius: 999px;
   background: var(--dsw-alias-border-l3); cursor: pointer;
 }
 .dshmf-switch[aria-checked="true"] { background: var(--dsw-alias-brand-primary); }
+/* A bulk switch with only SOME of its models on. It reads as "partly on"
+   without a third colour: the track takes the brand fill at reduced weight and
+   the thumb parks in the middle, which is the conventional mixed rendering. */
+.dshmf-switch[aria-checked="mixed"] { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, var(--dsw-alias-border-l3)); }
+.dshmf-switch[aria-checked="mixed"] .dshmf-switchThumb { transform: translate(8px); }
 .dshmf-switch:disabled { cursor: default; opacity: .45; }
 .dshmf-switch:focus-visible { outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: 2px; }
 .dshmf-switchThumb {
@@ -1687,19 +1693,104 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
     /**
      * Is one model currently allowed on screen?
      *
-     * The provider switch wins: a hidden provider hides every model under it,
-     * whatever the per-model records say. That is what makes the provider row a
-     * single control rather than a summary of its children — switching a
-     * provider off and on again restores exactly the per-model exceptions it
-     * had, because they were never rewritten.
+     * The provider switch is NOT an override: it is a bulk action that writes
+     * every model's own key (see {@link groupVisibility} and
+     * {@link hiddenKeysForGroup}). A model is therefore hidden only because its
+     * OWN key says so, which is what lets the user switch a provider off and
+     * then switch a few of its models back on.
+     *
+     * A provider-wide key is still honoured as a fallback, for a record written
+     * by the previous design (which stored `provider -> true` and treated it as
+     * an override). Without that, an existing record would silently stop
+     * hiding anything. The settings page migrates such a record to per-model
+     * keys the first time it sees the provider's catalogue.
      * @param {Set<string>} hidden - the hidden record.
      * @param {unknown} providerId - the provider's id.
      * @param {unknown} modelId - the model's id.
      * @returns {boolean} whether the model should be drawn.
      */
     function modelIsVisible(hidden, providerId, modelId) {
-      if (hidden.has(providerHiddenKey(providerId))) return false
-      return !hidden.has(modelHiddenKey(providerId, modelId))
+      if (hidden.has(modelHiddenKey(providerId, modelId))) return false
+      return !hidden.has(providerHiddenKey(providerId))
+    }
+
+    /**
+     * Every key that switches one provider's models on or off.
+     *
+     * Includes the legacy provider-wide key so a bulk action CLEARS it: while
+     * that key is present it hides the whole provider regardless of the
+     * per-model keys, and a "show these three models" action would otherwise
+     * appear to do nothing.
+     * @param {{id: string, models: Array<object>}} group - one provider.
+     * @returns {string[]} the keys a bulk write must set or clear.
+     */
+    function hiddenKeysForGroup(group) {
+      const keys = [providerHiddenKey(group.id)]
+      for (const model of group.models) keys.push(modelHiddenKey(group.id, model.id))
+      return keys
+    }
+
+    /**
+     * How one provider reads at a glance.
+     *
+     * The provider switch has no state of its own any more; it reports its
+     * models and acts on them. `allVisible` is what the switch is drawn
+     * checked from, and `mixed` is the state that tells the user "this
+     * provider is partly on" — the situation the bulk action exists to create.
+     * @param {Set<string>} hidden - the hidden record.
+     * @param {{id: string, models: Array<object>}} group - one provider.
+     * @returns {{total: number, hidden: number, visible: number, allVisible: boolean, allHidden: boolean, mixed: boolean}}
+     */
+    function groupVisibility(hidden, group) {
+      const total = group.models.length
+      let visible = 0
+      for (const model of group.models) {
+        if (modelIsVisible(hidden, group.id, model.id)) visible += 1
+      }
+      return {
+        total,
+        visible,
+        hidden: total - visible,
+        allVisible: total > 0 && visible === total,
+        allHidden: visible === 0,
+        mixed: visible > 0 && visible < total,
+      }
+    }
+
+    /**
+     * Do two records hold the same keys?
+     * @param {Set<string>} left - one record.
+     * @param {Set<string>} right - the other.
+     * @returns {boolean} whether they are equal.
+     */
+    function sameKeys(left, right) {
+      if (left.size !== right.size) return false
+      for (const key of left) if (!right.has(key)) return false
+      return true
+    }
+
+    /**
+     * The record after switching one provider's models on or off.
+     *
+     * Pure, so the semantics can be pinned without a store or a browser: every
+     * model in the group is written to its own key, and the legacy provider key
+     * is dropped. Switching a provider off therefore produces the SAME record
+     * the user could have produced one model at a time, which is why a later
+     * per-model switch composes with it instead of fighting it.
+     * @param {Set<string>} hidden - the current record.
+     * @param {{id: string, models: Array<object>}} group - the provider.
+     * @param {boolean} visible - `false` hides every model in the group.
+     * @returns {Set<string>} the new record (the input is never mutated).
+     */
+    function setGroupVisible(hidden, group, visible) {
+      const next = new Set(hidden)
+      next.delete(providerHiddenKey(group.id))
+      for (const model of group.models) {
+        const key = modelHiddenKey(group.id, model.id)
+        if (visible) next.delete(key)
+        else next.add(key)
+      }
+      return next
     }
 
     /**
@@ -1724,6 +1815,35 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
     }
 
     /**
+     * Rewrite a legacy record so it can be edited per model.
+     *
+     * The previous design stored a bare provider id and treated it as an
+     * OVERRIDE. Now that the provider switch is a bulk action, such a key is
+     * not something the UI can produce any more — and worse, it would hide the
+     * provider's models while the model switches showed them as on and could
+     * not turn them off. Folding it into per-model keys makes the record mean
+     * exactly what the switches show.
+     *
+     * A provider key whose provider is not in the catalogue is LEFT ALONE: it
+     * may belong to a provider this Host no longer lists, and guessing which
+     * models it covered would be worse than keeping it inert.
+     * @param {Set<string>} hidden - the current record.
+     * @param {Array<{id: string, models: Array<object>}>} groups - the catalogue.
+     * @returns {Set<string>} the migrated record, or the input when nothing changed.
+     */
+    function migrateLegacyHidden(hidden, groups) {
+      if (hidden.size === 0) return hidden
+      let next = hidden
+      for (const group of groups) {
+        if (!next.has(providerHiddenKey(group.id))) continue
+        if (next === hidden) next = new Set(hidden)
+        next.delete(providerHiddenKey(group.id))
+        for (const model of group.models) next.add(modelHiddenKey(group.id, model.id))
+      }
+      return next
+    }
+
+    /**
      * The ONE visibility store per plugin generation, shared by the Settings
      * page that writes it and every panel that reads it. Both live in the same
      * page, so a switch flipped in Settings re-renders an open panel without a
@@ -1741,6 +1861,18 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
           /* storage unavailable — the in-memory value still applies */
         }
       }
+      /** Publish one new record: persist, then notify every surface. */
+      const commit = next => {
+        hidden = next
+        persist()
+        for (const listener of [...listeners]) {
+          try {
+            listener()
+          } catch {
+            /* one bad subscriber must not starve the others */
+          }
+        }
+      }
       return {
         getSnapshot: () => hidden,
         subscribe: listener => {
@@ -1749,7 +1881,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         },
         /**
          * Show or hide one key.
-         * @param {string} key - a provider id or a `provider/model` route.
+         * @param {string} key - a `provider/model` route, or a provider id.
          * @param {boolean} visible - `false` to hide it.
          */
         setVisible: (key, visible) => {
@@ -1757,15 +1889,32 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
           const next = new Set(hidden)
           if (visible) next.delete(key)
           else next.add(key)
-          hidden = next
-          persist()
-          for (const listener of [...listeners]) {
-            try {
-              listener()
-            } catch {
-              /* one bad subscriber must not starve the others */
-            }
-          }
+          commit(next)
+        },
+        /**
+         * Switch every model of one provider at once.
+         *
+         * This is what the provider row's switch does: it writes the same
+         * per-model keys the user could have written one at a time, so the two
+         * controls compose — switch a provider off, then switch one model back
+         * on, and the result is a normal record with no special case in it.
+         * @param {{id: string, models: Array<object>}} group - the provider.
+         * @param {boolean} visible - `false` hides every model in the group.
+         */
+        setGroupVisible: (group, visible) => {
+          const next = setGroupVisible(hidden, group, visible)
+          if (sameKeys(next, hidden)) return
+          commit(next)
+        },
+        /**
+         * Fold a record written by the previous design into per-model keys.
+         * Idempotent: once migrated, a second call changes nothing.
+         * @param {Array<{id: string, models: Array<object>}>} groups - the catalogue.
+         */
+        migrateLegacy: groups => {
+          const next = migrateLegacyHidden(hidden, groups)
+          if (next === hidden || sameKeys(next, hidden)) return
+          commit(next)
         },
         /** Drop every subscriber (activation teardown). */
         dispose: () => { listeners.clear() },
@@ -1780,6 +1929,8 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       getSnapshot: () => EMPTY_HIDDEN,
       subscribe: () => () => {},
       setVisible: () => {},
+      setGroupVisible: () => {},
+      migrateLegacy: () => {},
     }
 
     // ---------------------------------------------------------------------
@@ -2475,7 +2626,8 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         intro: '选择在平铺模型面板中显示哪些 Provider 和模型。隐藏的项不会出现在面板里，也不会出现在搜索结果中。',
         empty: '模型目录尚未加载。打开一次模型面板后再回来查看。',
         models: '{count} 个模型',
-        hiddenCount: '已隐藏 {count} 个',
+        visibleCount: '{count} 个已开启',
+        allOff: '全部关闭',
         expand: '展开',
         collapse: '收起',
         providerToggle: '显示 {name}',
@@ -2489,7 +2641,8 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         intro: 'Choose which providers and models appear in the flat model panel. Hidden entries are left out of the panel and of search results.',
         empty: 'The model catalogue has not loaded yet. Open the model panel once, then come back.',
         models: '{count} models',
-        hiddenCount: '{count} hidden',
+        visibleCount: '{count} on',
+        allOff: 'all off',
         expand: 'Expand',
         collapse: 'Collapse',
         providerToggle: 'Show {name}',
@@ -4352,14 +4505,18 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
      * @param props - `checked`, `onChange`, `label`, and an optional `disabled`.
      */
     function Switch(props) {
-      const { checked, onChange, label, disabled } = props
+      const { checked, onChange, label, disabled, mixed } = props
       return h('button', {
         type: 'button',
         role: 'switch',
-        'aria-checked': checked === true,
+        // `mixed` is the third state a bulk switch needs: a provider with some
+        // of its models on. `aria-checked="mixed"` is the standard way to say
+        // that, so assistive tech reports it without extra markup.
+        'aria-checked': mixed === true ? 'mixed' : checked === true,
         'aria-label': label,
         disabled: disabled === true,
         className: 'dshmf-switch',
+        'data-mixed': mixed === true,
         onClick: () => { if (disabled !== true) onChange(checked !== true) },
       }, h('span', { className: 'dshmf-switchThumb' }))
     }
@@ -4392,6 +4549,16 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       // catalogue, so switching sections back and forth costs nothing.
       useEffect(() => { catalogFace.load() }, [catalogFace])
 
+      // Fold a record written by the previous design into per-model keys, now
+      // that the catalogue names the models those keys covered. Runs whenever a
+      // catalogue is available; it is idempotent, so a re-render costs nothing
+      // and a catalogue that arrives late is still handled.
+      const catalogueGroups = Array.isArray(catalogue.groups) ? catalogue.groups : []
+      useEffect(() => {
+        if (catalogueGroups.length === 0) return
+        visibleFace.migrateLegacy(catalogueGroups)
+      }, [visibleFace, catalogueGroups])
+
       const [expanded, setExpanded] = useState(() => new Set())
       const toggleExpanded = id => {
         setExpanded(previous => {
@@ -4411,19 +4578,15 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
 
       const groups = Array.isArray(catalogue.groups) ? catalogue.groups : []
       const labelOf = group => providerLabel(group, translate, undefined)
-      const providerVisible = group => !hidden.has(providerHiddenKey(group.id))
-      const hiddenModelsOf = group => group.models
-        .filter(model => !modelIsVisible(hidden, group.id, model.id)).length
-
       const setVisible = (key, visible) => visibleFace.setVisible(key, visible)
+      const setGroup = (group, visible) => visibleFace.setGroupVisible(group, visible)
 
       const rows = groups.map(group => {
         const isOpen = expanded.has(group.id)
-        const shown = providerVisible(group)
-        const hiddenCount = hiddenModelsOf(group)
         const models = Array.isArray(group.models) ? group.models : []
+        const state = groupVisibility(hidden, group)
         const title = labelOf(group)
-        return h('div', { className: 'dshmf-setProvider', key: group.id, 'data-hidden': !shown },
+        return h('div', { className: 'dshmf-setProvider', key: group.id, 'data-hidden': state.allHidden },
           h('div', { className: 'dshmf-setProviderRow' },
             // The disclosure is the WHOLE text area, not the chevron alone:
             // the name, the model count and the chevron are one button, so a
@@ -4436,28 +4599,41 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
               onClick: () => toggleExpanded(group.id),
             },
               svg(PATH_CHEVRON, 13, { className: isOpen ? 'dshmf-setChevron dshmf-setChevronOpen' : 'dshmf-setChevron' }),
+              // The row's own text lives INSIDE the disclosure button (see
+              // above), so the whole text side is one click target. The meta
+              // line reports the bulk state: "all off" when nothing is on, and
+              // how many are on when the user has switched a few back on.
               h('span', { className: 'dshmf-setProviderText' },
                 h('span', { className: 'dshmf-setProviderName' }, title),
                 h('span', { className: 'dshmf-setProviderMeta' },
                   fillText('models', { count: models.length }),
-                  hiddenCount === 0 ? null : ` · ${fillText('hiddenCount', { count: hiddenCount })}`))),
+                  state.allHidden
+                    ? ` · ${translate('allOff')}`
+                    : state.mixed
+                      ? ` · ${fillText('visibleCount', { count: state.visible })}`
+                      : null))),
             h(Switch, {
-              checked: shown,
+              // The provider switch reports its models and writes them all; it
+              // has no state of its own. `checked` is "every model is on", and
+              // `mixed` is a provider the user has partly switched back on.
+              checked: state.allVisible,
+              mixed: state.mixed,
               label: fillText('providerToggle', { name: title }),
-              onChange: next => setVisible(providerHiddenKey(group.id), next),
+              // Switching ON from a mixed state is the useful reading of "turn
+              // this provider on": make it fully on, not toggle one model.
+              onChange: next => setGroup(group, next),
             })),
           isOpen
             ? h('div', { className: 'dshmf-setModels' }, ...models.map(model => {
               const modelTitle = typeof model?.name === 'string' ? model.name : String(model?.id ?? '')
-              // A model under a hidden provider is off through its parent. The
-              // switch still shows its OWN record, so the user can see what
-              // will come back when the provider is switched on again.
-              const own = !hidden.has(modelHiddenKey(group.id, model.id))
-              return h('div', { className: 'dshmf-setModelRow', key: String(model?.id ?? '') },
+              // Always interactive: the provider switch above is a bulk action,
+              // not a parent that locks its children, so a model can be
+              // switched back on while its provider stays mostly off.
+              const own = modelIsVisible(hidden, group.id, model.id)
+              return h('div', { className: 'dshmf-setModelRow', key: String(model?.id ?? ''), 'data-hidden': !own },
                 h('span', { className: 'dshmf-setModelName', title: modelTitle }, modelTitle),
                 h(Switch, {
                   checked: own,
-                  disabled: !shown,
                   label: fillText('modelToggle', { name: modelTitle }),
                   onChange: next => setVisible(modelHiddenKey(group.id, model.id), next),
                 }))
@@ -4489,7 +4665,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       // Pure layout and grouping derivations plus the component itself,
       // exposed for `node --test` so grouping, filtering and the column
       // algorithm are pinned without a browser. The shell never reads this key.
-      __test: { marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, readDisplayMode, writeDisplayMode, createDisplayModeStore, DISPLAY_MODE_KEY, DISPLAY_MODE_DEFAULT, FLAT_DISPLAY_MODE, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore, quantizeMetric, metricChanged, METRIC_HYSTERESIS, LabelBoundary, readLabelEntry, labelSeat, labelSlotSource, LABEL_SLOT, providerLabel, fetchProjectLink, openInNewTab, PROJECT_LINK_PATH, PROJECT_LINK_FALLBACK, PROJECT_LINK_TIMEOUT_MS, HIDDEN_KEY, readHidden, writeHidden, providerHiddenKey, modelHiddenKey, modelIsVisible, visibleGroups, createHiddenStore, ALL_VISIBLE, createCatalogStore, EMPTY_CATALOG, SETTINGS_NS, settingsDict, SettingsSection, Switch },
+      __test: { marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, readDisplayMode, writeDisplayMode, createDisplayModeStore, DISPLAY_MODE_KEY, DISPLAY_MODE_DEFAULT, FLAT_DISPLAY_MODE, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore, quantizeMetric, metricChanged, METRIC_HYSTERESIS, LabelBoundary, readLabelEntry, labelSeat, labelSlotSource, LABEL_SLOT, providerLabel, fetchProjectLink, openInNewTab, PROJECT_LINK_PATH, PROJECT_LINK_FALLBACK, PROJECT_LINK_TIMEOUT_MS, HIDDEN_KEY, readHidden, writeHidden, providerHiddenKey, modelHiddenKey, modelIsVisible, visibleGroups, createHiddenStore, ALL_VISIBLE, hiddenKeysForGroup, groupVisibility, setGroupVisible, sameKeys, migrateLegacyHidden, createCatalogStore, EMPTY_CATALOG, SETTINGS_NS, settingsDict, SettingsSection, Switch },
       __component: ModelFlatMap,
       __seat: Seat,
       __nativeMenuRow: NativeMenuRow,
