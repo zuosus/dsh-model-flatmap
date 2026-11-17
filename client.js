@@ -609,6 +609,71 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
    from the model list above by the same hairline the list rows use. It governs
    the whole plugin's one network request, so it sits apart from the provider
    and model switches rather than inside the list. */
+/* The seat-conflict notice: a bordered band under the page title, in the
+   WARNING family rather than the danger one. The composer still has a working
+   model control when this appears; what is missing is the default style, so
+   painting it as an error would overstate it. The left rule carries the tone
+   and the icon repeats it, so the band is readable in grayscale too. */
+.dshmf-setConflict {
+  box-sizing: border-box; display: flex; flex-direction: column; gap: 6px;
+  padding: 10px 12px; border: 0.5px solid var(--dsw-alias-border-l2);
+  border-left: 3px solid var(--dsw-alias-state-warning-primary, #d99b2b);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-l2);
+}
+.dshmf-setConflict[data-severity="unknown"] {
+  border-left-color: var(--dsw-alias-border-l3);
+}
+.dshmf-setConflictHead { display: flex; align-items: center; gap: 6px; }
+.dshmf-setConflictIcon { flex: 0 0 auto; color: var(--dsw-alias-state-warning-primary, #d99b2b); }
+.dshmf-setConflict[data-severity="unknown"] .dshmf-setConflictIcon { color: var(--dsw-alias-label-tertiary); }
+.dshmf-setConflictTitle {
+  flex: 1 1 auto; min-width: 0; margin: 0;
+  font-size: 13px; line-height: 18px; font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+.dshmf-setConflictDismiss {
+  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; padding: 0; border: 0; border-radius: var(--dsw-radius-sm);
+  background: transparent; color: var(--dsw-alias-label-tertiary); cursor: pointer;
+  outline: none;
+}
+.dshmf-setConflictDismiss:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+}
+@media (hover: hover) { .dshmf-setConflictDismiss:hover { background: var(--dsw-alias-interactive-bg-hover); } }
+.dshmf-setConflictBody { margin: 0; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); }
+.dshmf-setConflictCulprit {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin: 0;
+  font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary);
+}
+.dshmf-setConflictName {
+  padding: 1px 6px; border-radius: 999px;
+  background: var(--dsw-alias-bg-l3); color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 11px; line-height: 16px;
+}
+.dshmf-setConflictActions { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+.dshmf-setConflictBtn {
+  box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center;
+  height: 26px; padding: 0 12px;
+  border: 1px solid var(--dsw-alias-border-l3); border-radius: var(--dsw-radius-sm);
+  outline: none; background: transparent; color: var(--dsw-alias-label-primary);
+  font-family: inherit; font-size: 12px; line-height: 18px; font-weight: 500;
+  white-space: nowrap; cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.dshmf-setConflictBtn:focus-visible {
+  box-shadow: 0 0 0 2px var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+}
+@media (hover: hover) {
+  .dshmf-setConflictBtn:hover {
+    background: var(--dsw-alias-interactive-bg-hover);
+    border-color: var(--dsw-alias-border-l4);
+  }
+}
+.dshmf-setConflictResult { margin: 0; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); }
+.dshmf-setConflictResult[data-ok="true"] { color: var(--dsw-alias-state-success-primary, #2f9e44); }
 .dshmf-setTelemetry { margin-top: 4px; padding-top: 12px; border-top: 0.5px solid var(--dsw-alias-border-l2); }
 .dshmf-setTelemetryRow { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 4px 0; }
 .dshmf-setTelemetryText { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
@@ -934,6 +999,10 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
     const PATH_CONFIRM = 'M3.1 7.4 5.8 10.1 11 4.6'
     /* A circular arrow: put the catalog's own name back. */
     const PATH_RESET = 'M3.2 6.2A3.9 3.9 0 1 1 3.4 8.7M3.2 6.2V2.9M3.2 6.2h3.3'
+    /* A triangle with an exclamation: the conflict notice's own glyph. A
+       warning rather than an error cross, because the composer still WORKS —
+       what is lost is the default style, not the model control. */
+    const PATH_WARN = 'M7 2.1 12.4 11.4H1.6L7 2.1ZM7 5.7v2.6M7 9.8v.6'
 
     /**
      * A model's catalog badge, resolved for display, or null.
@@ -3325,6 +3394,26 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         'telemetry.title': '匿名使用统计',
         'telemetry.desc': '每天最多一次，仅上报安装标识、插件版本、平台与架构，不含任何会话内容。默认开启。',
         'telemetry.toggle': '匿名使用统计',
+        // ---- the seat-conflict report
+        //
+        // Shown only when `diagnoseSeat` finds something wrong, so these keys
+        // never appear on a healthy install. Wording states WHAT is broken and
+        // WHAT it costs, because the visible symptom ("the button is grey") does
+        // not explain itself.
+        'conflict.title': '模型选择器冲突',
+        'conflict.broken': '另一个插件占用了输入框的模型选择位，原生选择器没有加载成功，它的子槽（模型名角标、菜单底部的返回行）也随之丢失。后果是「默认样式」暂时不可用——平铺面板本身仍然正常。',
+        'conflict.contested': '另一个插件也在占用输入框的模型选择位，但当前仍由本插件接管，面板和「默认样式」都能正常工作。',
+        'conflict.empty': '输入框的模型选择位现在是空的：原生选择器在启动时与另一个插件发生注册冲突并失败，而且这种失败不会自动重试。刷新页面即可恢复。',
+        'conflict.unknown': '无法检查模型选择位的状态（当前 Host 不提供槽位枚举）。',
+        'conflict.culprit': '占用者：{name}',
+        'conflict.repair': '强制修复',
+        'conflict.repairHint': '重新注册本插件，把模型选择位从占位者手里抢回来，平铺面板随即恢复。不会修改或卸载对方插件，也无法让「默认样式」恢复——那取决于对方插件是否退出这个位置。',
+        'conflict.repaired': '已修复：本插件重新接管了模型选择位，平铺面板已恢复。要拿回「默认样式」，需要停用占用该位置的插件。',
+        'conflict.reload': '刷新页面',
+        'conflict.reloadHint': '选择位为空时，只有刷新能让原生选择器重新注册。',
+        'conflict.failed': '修复没有成功：{message}',
+        'conflict.notRepairable': '本插件已经持有模型选择位，平铺面板正常；「默认样式」是否可用取决于占用该位置的插件，无法在这里修复。',
+        'conflict.dismiss': '隐藏此提示',
       },
       en: {
         nav: 'Model list',
@@ -3355,6 +3444,20 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         'telemetry.title': 'Anonymous usage statistics',
         'telemetry.desc': 'At most once a day: install id, plugin version, platform and architecture only — never any session content. On by default.',
         'telemetry.toggle': 'Anonymous usage statistics',
+        'conflict.title': 'Model picker conflict',
+        'conflict.broken': 'Another plugin is occupying the composer\u2019s model seat, so the native picker did not load and its child slots (the name badge and the return row at the bottom of the menu) went with it. The default style is therefore unavailable; the flat panel itself still works.',
+        'conflict.contested': 'Another plugin also occupies the composer\u2019s model seat, but this plugin still holds it, so the panel and the default style both work.',
+        'conflict.empty': 'The composer\u2019s model seat is empty: the native picker failed a registration collision at startup, and that failure never retries. Reload the page to restore it.',
+        'conflict.unknown': 'The state of the model seat cannot be checked (this Host does not expose slot enumeration).',
+        'conflict.culprit': 'Occupied by: {name}',
+        'conflict.repair': 'Force repair',
+        'conflict.repairHint': 'Re-register this plugin to take the model seat back from the occupant, which restores the flat panel. The other plugin is neither modified nor uninstalled, and this cannot restore the default style \u2014 that depends on the occupant leaving this slot.',
+        'conflict.repaired': 'Repaired: this plugin holds the model seat again and the flat panel is back. To regain the default style, disable the plugin occupying this slot.',
+        'conflict.reload': 'Reload the page',
+        'conflict.reloadHint': 'When the seat is empty, only a reload lets the native picker register again.',
+        'conflict.failed': 'The repair did not succeed: {message}',
+        'conflict.notRepairable': 'This plugin already holds the model seat and the flat panel works. Whether the default style is available depends on the plugin occupying that slot, so it cannot be repaired here.',
+        'conflict.dismiss': 'Hide this notice',
       },
     }
 
@@ -3484,6 +3587,150 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
      * picker rather than another plugin's replacement control.
      */
     const NATIVE_MENU_SLOT = 'conversation.input.model.options'
+
+    /** The seat cell itself: the slot this plugin's panel is registered into. */
+    const SEAT_SLOT = 'conversation.input.model'
+
+    /**
+     * Which foreign plugins are competing for the model seat, and can we fix it?
+     *
+     * The model seat is a `single` slot, and a `single` slot keeps every
+     * registration while rendering only the LOWEST priority — and REFUSES a
+     * second registration at a priority already taken. A third-party plugin that
+     * registers the seat without a priority therefore lands on `0`, exactly
+     * where the shipped picker sits, and one of the two THROWS. When the throw
+     * is the shipped picker's, its registration and the two child slots it
+     * declares die with it, and `slots.inject` cannot retry because the
+     * declaration epoch never changed (DEC-049).
+     *
+     * This function is the DIAGNOSIS, kept pure so it can be unit-tested against
+     * real entry shapes: it reads live entries and reports what is wrong, what
+     * it means for the user, and whether this plugin can do anything about it.
+     * It never mutates.
+     * @param {object|undefined} slots - the `slots` client service.
+     * @returns a diagnosis object; `severity` is 'ok' when nothing is wrong.
+     */
+    function diagnoseSeat(slots) {
+      const report = {
+        severity: 'ok',
+        /** Every live registration in the seat, lowest priority first. */
+        entries: [],
+        /** Foreign entries that are NOT a native picker (no return-row slot). */
+        competitors: [],
+        /** The live winner of the seat, if any. */
+        winner: undefined,
+        /** Is the winner this plugin's own entry? */
+        winnerIsOurs: false,
+        /** Is the return row's child slot declared by anyone? */
+        returnRowDeclared: false,
+        /** Does this plugin's own entry currently hold the seat? */
+        ours: false,
+        /** May this plugin repair the situation by re-registering? */
+        repairable: false,
+        /** Why not, when `repairable` is false. */
+        blockedReason: undefined,
+      }
+      try {
+        if (slots === undefined || slots === null) {
+          report.severity = 'unknown'
+          report.blockedReason = 'no-slots'
+          return report
+        }
+        if (typeof slots.entries !== 'function') {
+          // An older Host cannot enumerate entries, so nothing can be verified.
+          report.severity = 'unknown'
+          report.blockedReason = 'no-enumeration'
+          return report
+        }
+        const all = slots.entries(SEAT_SLOT)
+        if (!Array.isArray(all)) {
+          report.severity = 'unknown'
+          report.blockedReason = 'no-enumeration'
+          return report
+        }
+        const sorted = [...all].sort((left, right) =>
+          (left?.options?.priority ?? 0) - (right?.options?.priority ?? 0))
+        report.entries = sorted.map(entry => ({
+          registrant: entryName(entry),
+          priority: entry?.options?.priority ?? 0,
+          native: declaresSlot(entry, NATIVE_MENU_SLOT),
+          ours: entry?.component === Seat,
+        }))
+        report.ours = report.entries.some(entry => entry.ours)
+        report.returnRowDeclared = typeof slots.spec === 'function'
+          ? slots.spec(NATIVE_MENU_SLOT) !== undefined
+          : report.entries.some(entry => entry.native)
+
+        const winnerEntry = sorted[0]
+        report.winner = winnerEntry === undefined ? undefined : entryName(winnerEntry)
+        report.winnerIsOurs = winnerEntry !== undefined && winnerEntry.component === Seat
+
+        // A competitor is a live entry that is neither ours nor a native
+        // picker. Those are the ones that can steal the cell from under us.
+        const competitors = sorted.filter(entry =>
+          entry?.component !== Seat && !declaresSlot(entry, NATIVE_MENU_SLOT))
+        report.competitors = competitors.map(entry => ({
+          registrant: entryName(entry),
+          priority: entry?.options?.priority ?? 0,
+        }))
+
+        if (report.entries.length === 0) {
+          // Nobody is in the seat: the shipped picker's registration died in a
+          // collision and cannot retry. Only a reload brings it back.
+          report.severity = 'broken'
+          report.blockedReason = 'seat-empty'
+          return report
+        }
+        if (report.competitors.length === 0) {
+          report.severity = 'ok'
+          return report
+        }
+        // A competitor exists. Is it actually winning, or merely queued behind
+        // us? Either way the seat is contested, but only a WINNING competitor
+        // can stop this plugin from honouring "default style".
+        const winningCompetitor = winnerEntry !== undefined
+          && winnerEntry.component !== Seat
+          && !declaresSlot(winnerEntry, NATIVE_MENU_SLOT)
+        report.severity = winningCompetitor ? 'broken' : 'contested'
+        // Repair means: re-register our own entry below the lowest competitor,
+        // declaring the return row ourselves when nobody else does. Both are
+        // proven operations on the real SlotCore (see DEC-050).
+        //
+        // Only a WINNING competitor leaves something to repair. A competitor
+        // merely queued behind us is harmless, and offering an action that
+        // cannot change anything would be a lie told by a button.
+        report.repairable = winningCompetitor
+        return report
+      } catch {
+        return { ...report, severity: 'unknown', blockedReason: 'threw' }
+      }
+    }
+
+    /** The name a support log and the settings page should show for an entry. */
+    function entryName(entry) {
+      try {
+        const registrant = entry?.registrant
+        if (typeof registrant === 'string' && registrant !== '') return registrant
+        const id = entry?.options?.id
+        if (typeof id === 'string' && id !== '') return id
+        const locale = entry?.locale
+        if (typeof locale === 'string' && locale !== '') return locale
+        return 'unknown'
+      } catch {
+        return 'unknown'
+      }
+    }
+
+    /** Does this entry declare the given child slot? */
+    function declaresSlot(entry, key) {
+      try {
+        const declared = entry?.children ?? entry?.options?.children
+        if (declared === undefined || declared === null) return false
+        return declared[key] !== undefined
+      } catch {
+        return false
+      }
+    }
 
     /**
      * Read the entry that currently OWNS the label cell, or undefined.
@@ -5428,6 +5675,30 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
     }
 
     /**
+     * A seat reading for a degraded activation: "cannot tell", never "fine".
+     *
+     * Reporting `ok` here would hide a real conflict behind a broken
+     * activation, and the settings page would then claim the picker is healthy
+     * while the composer has no control at all.
+     */
+    const SEAT_HEALTH_UNKNOWN = {
+      severity: 'unknown',
+      entries: [],
+      competitors: [],
+      winner: undefined,
+      winnerIsOurs: false,
+      returnRowDeclared: false,
+      ours: false,
+      repairable: false,
+      blockedReason: 'unavailable',
+    }
+    const EMPTY_SEAT_HEALTH = {
+      getSnapshot: () => SEAT_HEALTH_UNKNOWN,
+      subscribe: () => () => {},
+      refresh: () => {},
+    }
+
+    /**
      * One switch, drawn with the settings domain's own geometry.
      *
      * Deliberately NOT imported from `@deepseek-ai/dsh-client-ui-primitives`:
@@ -5513,7 +5784,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
      * @param props - the settings slot's props plus the injected face.
      */
     function SettingsSection(props) {
-      const { t, visibility, catalog, insufficient, telemetry, aliases, resolveText } = props
+      const { t, visibility, catalog, insufficient, telemetry, aliases, resolveText, seatHealth, repairSeat, reloadPage } = props
       const visibleFace = visibility ?? ALL_VISIBLE
       const subscribeHidden = useCallback(listener => visibleFace.subscribe(listener), [visibleFace])
       const getHidden = useCallback(() => visibleFace.getSnapshot(), [visibleFace])
@@ -5549,6 +5820,37 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       // second visit re-reads only when the first one never produced a
       // catalogue, so switching sections back and forth costs nothing.
       useEffect(() => { catalogFace.load() }, [catalogFace])
+
+      // ---- the seat-conflict report
+      //
+      // The composer's model seat is a `single` slot, and a third-party plugin
+      // can occupy it (DEC-049/DEC-050). That failure is INVISIBLE where it
+      // happens — the button is simply greyed out — so it is reported here,
+      // where the user goes to configure the model list, with the one action
+      // that can repair it.
+      const healthFace = seatHealth ?? EMPTY_SEAT_HEALTH
+      const subscribeHealth = useCallback(listener => healthFace.subscribe(listener), [healthFace])
+      const getHealth = useCallback(() => healthFace.getSnapshot(), [healthFace])
+      const health = useSyncExternalStore(subscribeHealth, getHealth, getHealth)
+      const [repairState, setRepairState] = useState(null)
+      const [dismissed, setDismissed] = useState(false)
+      const healthSeverity = health?.severity ?? 'ok'
+      // `contested` is informational only: this plugin still holds the seat, so
+      // there is nothing to repair and nothing to alarm the user about.
+      const healthNeedsAttention = healthSeverity === 'broken' || healthSeverity === 'unknown'
+      const runRepair = () => {
+        if (typeof repairSeat !== 'function') {
+          setRepairState({ ok: false, message: 'unavailable' })
+          return
+        }
+        let outcome
+        try {
+          outcome = repairSeat()
+        } catch (error) {
+          outcome = { ok: false, message: error instanceof Error ? error.message : 'failed' }
+        }
+        setRepairState(outcome ?? { ok: false, message: 'failed' })
+      }
 
       // Fold a record written by the previous design into per-model keys, now
       // that the catalogue names the models those keys covered. Runs whenever a
@@ -5942,9 +6244,100 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
             : null)
       })
 
+      // ---- the seat-conflict notice
+      //
+      // Rendered only when there is something to say. Three different faults,
+      // three different bodies, because the user's next step differs:
+      //   broken    — a competitor holds the seat; offer "Force repair".
+      //   empty     — nobody holds it; only a reload can bring the picker back.
+      //   unknown   — this Host cannot be asked; say so, never claim "fine".
+      // `contested` (we still hold it) is deliberately silent: the composer
+      // works, and a notice about a plugin that is not causing harm is noise.
+      const conflictCard = (() => {
+        if (!healthNeedsAttention) return null
+        const bodyKey = healthSeverity === 'unknown'
+          ? 'conflict.unknown'
+          : (health?.entries?.length === 0 ? 'conflict.empty' : 'conflict.broken')
+        const culprits = (health?.competitors ?? []).map(entry => entry.registrant)
+        // `repairable` means a repair would CHANGE something: a competitor is
+        // actually winning the cell. Holding the seat ourselves while the
+        // default style is unavailable is not repairable from here, so no
+        // button is offered — only the explanation.
+        const canRepair = health?.entries?.length > 0 && health?.repairable === true
+        const explainOnly = health?.entries?.length > 0 && health?.repairable !== true
+        const reloadable = health?.entries?.length === 0
+        return h('div', {
+          className: 'dshmf-setConflict',
+          'data-severity': healthSeverity,
+          role: 'status',
+          'aria-live': 'polite',
+        },
+          h('div', { className: 'dshmf-setConflictHead' },
+            svg(PATH_WARN, 14, { className: 'dshmf-setConflictIcon' }),
+            h('h3', { className: 'dshmf-setConflictTitle' }, translate('conflict.title')),
+            h('button', {
+              type: 'button',
+              className: 'dshmf-setConflictDismiss',
+              title: translate('conflict.dismiss'),
+              'aria-label': translate('conflict.dismiss'),
+              onClick: () => setDismissed(true),
+            }, svg(PATH_CLOSE, 12))),
+          h('p', { className: 'dshmf-setConflictBody' }, translate(bodyKey)),
+          culprits.length === 0
+            ? null
+            : h('p', { className: 'dshmf-setConflictCulprit' },
+              ...culprits.map((name, index) => h('code', {
+                className: 'dshmf-setConflictName',
+                key: `${name}-${index}`,
+              }, name))),
+          h('div', { className: 'dshmf-setConflictActions' },
+            canRepair
+              ? h('button', {
+                type: 'button',
+                className: 'dshmf-setConflictBtn',
+                title: translate('conflict.repairHint'),
+                onClick: () => runRepair(),
+              }, translate('conflict.repair'))
+              : null,
+            reloadable
+              ? h('button', {
+                type: 'button',
+                className: 'dshmf-setConflictBtn',
+                title: translate('conflict.reloadHint'),
+                onClick: () => {
+                  const done = typeof reloadPage === 'function' ? reloadPage() : false
+                  if (done !== true) setRepairState({ ok: false, message: 'needs-reload' })
+                },
+              }, translate('conflict.reload'))
+              : null),
+          explainOnly && repairState === null
+            ? h('p', { className: 'dshmf-setConflictResult' }, translate('conflict.notRepairable'))
+            : null,
+          repairState === null
+            ? null
+            : h('p', {
+              className: 'dshmf-setConflictResult',
+              role: 'status',
+              'aria-live': 'polite',
+              'data-ok': repairState.ok === true,
+            }, repairState.ok === true
+              ? translate('conflict.repaired')
+              : (repairState.message === 'not-repairable'
+                ? translate('conflict.notRepairable')
+                : fillText('conflict.failed', {
+                  message: repairState.message === 'needs-reload'
+                    ? translate('conflict.reload')
+                    : String(repairState.message ?? ''),
+                }))))
+      })()
+
       const nothingLoaded = groups.length === 0
       return h('div', { className: 'dshmf-setSection' },
         h('h2', { className: 'dshmf-setTitle' }, translate('title')),
+        // The notice sits directly under the title: it is about the composer
+        // this page configures, and it must be the first thing read when the
+        // model control is broken.
+        dismissed ? null : conflictCard,
         h('p', { className: 'dshmf-setIntro' }, translate('intro')),
         nothingLoaded
           ? h('p', { className: 'dshmf-setEmpty', role: 'status' }, translate('empty'))
@@ -5981,7 +6374,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       // Pure layout and grouping derivations plus the component itself,
       // exposed for `node --test` so grouping, filtering and the column
       // algorithm are pinned without a browser. The shell never reads this key.
-      __test: { marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, readDisplayMode, writeDisplayMode, createDisplayModeStore, DISPLAY_MODE_KEY, DISPLAY_MODE_DEFAULT, FLAT_DISPLAY_MODE, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore, quantizeMetric, metricChanged, METRIC_HYSTERESIS, LabelBoundary, readLabelEntry, labelSeat, labelSlotSource, LABEL_SLOT, providerLabel, fetchProjectLink, openInNewTab, PROJECT_LINK_PATH, PROJECT_LINK_FALLBACK, PROJECT_LINK_TIMEOUT_MS, HIDDEN_KEY, readHidden, writeHidden, providerHiddenKey, modelHiddenKey, modelIsVisible, visibleGroups, createHiddenStore, ALL_VISIBLE, hiddenKeysForGroup, groupVisibility, setGroupVisible, sameKeys, migrateLegacyHidden, NO_ALIASES, createAliasStore, aliasOf, writeAliases, readAliases, aliasFor, sanitizeAlias, ALIAS_MAX, ALIAS_KEY, createCatalogStore, EMPTY_CATALOG, TELEMETRY_KEY, readTelemetryEnabled, writeTelemetryEnabled, syncTelemetryEnabled, createTelemetryStore, TELEMETRY_ON, TELEMETRY_SETTINGS_PATH, SETTINGS_NS, settingsDict, installSettingsNavIcon, SettingsSection, creditNotes, Switch },
+      __test: { diagnoseSeat, entryName, declaresSlot, SEAT_SLOT, NATIVE_MENU_SLOT, EMPTY_SEAT_HEALTH, SEAT_HEALTH_UNKNOWN, marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, readDisplayMode, writeDisplayMode, createDisplayModeStore, DISPLAY_MODE_KEY, DISPLAY_MODE_DEFAULT, FLAT_DISPLAY_MODE, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore, quantizeMetric, metricChanged, METRIC_HYSTERESIS, LabelBoundary, readLabelEntry, labelSeat, labelSlotSource, LABEL_SLOT, providerLabel, fetchProjectLink, openInNewTab, PROJECT_LINK_PATH, PROJECT_LINK_FALLBACK, PROJECT_LINK_TIMEOUT_MS, HIDDEN_KEY, readHidden, writeHidden, providerHiddenKey, modelHiddenKey, modelIsVisible, visibleGroups, createHiddenStore, ALL_VISIBLE, hiddenKeysForGroup, groupVisibility, setGroupVisible, sameKeys, migrateLegacyHidden, NO_ALIASES, createAliasStore, aliasOf, writeAliases, readAliases, aliasFor, sanitizeAlias, ALIAS_MAX, ALIAS_KEY, createCatalogStore, EMPTY_CATALOG, TELEMETRY_KEY, readTelemetryEnabled, writeTelemetryEnabled, syncTelemetryEnabled, createTelemetryStore, TELEMETRY_ON, TELEMETRY_SETTINGS_PATH, SETTINGS_NS, settingsDict, installSettingsNavIcon, SettingsSection, creditNotes, Switch },
       __component: ModelFlatMap,
       __seat: Seat,
       __nativeMenuRow: NativeMenuRow,
@@ -6433,13 +6826,30 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         /**
          * Register the seat, escalating priority when a stale generation still
          * holds the previous entry.
+         *
+         * `options.floor` lowers the starting priority: the repair path uses it
+         * to land BELOW a competitor that took a lower slot than ours, which is
+         * the only way back when a third-party plugin registered the seat at a
+         * more negative priority (DEC-050).
+         * @param {{floor?: number}} [options] - `floor` is the most negative
+         *   priority already taken, so the repair can land BELOW it.
+         * @returns a dispose function (a no-op when every attempt failed).
          */
-        const registerSeat = () => {
+        const registerSeat = options => {
+          const floor = typeof options?.floor === 'number' ? options.floor : -1
+          // Start at the requested floor and keep escalating: a stale generation
+          // of our own entry, or a competitor at the same slot, must not stop us.
+          const ladder = []
+          for (let step = 0; step < 6; step += 1) {
+            const priority = floor - step
+            if (ladder.includes(priority)) continue
+            ladder.push(priority)
+          }
           let lastError
-          for (const priority of [-1, -2, -3, -4, -5]) {
+          for (const priority of ladder) {
             try {
               return slots.register({
-                name: 'conversation.input.model',
+                name: SEAT_SLOT,
                 priority,
                 locale: NS,
                 inject: sessionId => safeFace(sessionId, buildFace),
@@ -6498,6 +6908,140 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
           }
         }
 
+        // ---- the seat-conflict diagnosis and its one repair
+        //
+        // `diagnoseSeat` reads the live entries; this block turns that reading
+        // into a STORE the Settings page subscribes to, plus the single action
+        // that can put things right. The store is a real store (snapshot +
+        // subscribe) rather than a function call from render, because the
+        // Settings page must re-render when the seat changes underneath it: a
+        // plugin enabled in another tab is invisible to a pure read.
+        const seatDiagnosis = (() => {
+          let snapshot = diagnoseSeat(slots)
+          const listeners = new Set()
+          let scheduled = false
+          const notify = () => {
+            for (const listener of [...listeners]) {
+              try {
+                listener()
+              } catch {
+                /* one bad subscriber must not starve the others */
+              }
+            }
+          }
+          const refresh = () => {
+            const next = diagnoseSeat(slots)
+            // Compare the facts that change the UI, not object identity: the
+            // slot notifies on every mutation, and a fresh object per read would
+            // re-render the page forever.
+            const same = next.severity === snapshot.severity
+              && next.repairable === snapshot.repairable
+              && next.ours === snapshot.ours
+              && next.winner === snapshot.winner
+              && next.competitors.length === snapshot.competitors.length
+              && next.competitors.every((entry, index) =>
+                entry.registrant === snapshot.competitors[index]?.registrant)
+            snapshot = next
+            if (!same) notify()
+          }
+          return {
+            getSnapshot: () => snapshot,
+            subscribe: listener => {
+              listeners.add(listener)
+              // Coalesce: a burst of slot mutations must not re-diagnose per
+              // mutation, and the read must not happen inside the mutation.
+              if (!scheduled) {
+                scheduled = true
+                const run = () => { scheduled = false; refresh() }
+                if (typeof queueMicrotask === 'function') queueMicrotask(run)
+                else if (typeof setTimeout === 'function') setTimeout(run, 0)
+              }
+              return () => { listeners.delete(listener) }
+            },
+            refresh,
+            dispose: () => { listeners.clear() },
+          }
+        })()
+
+        /**
+         * Take the seat back, repairing the collision when possible.
+         *
+         * Three separate faults, three separate fixes — never one blanket
+         * re-register:
+         *
+         * 1. A competitor holds a LOWER priority than us: re-register below it.
+         *    Nothing else works, because a `single` slot renders the lowest
+         *    priority and ours is simply not it any more.
+         * 2. Nobody declares the return-row child slot (the shipped picker's
+         *    registration died in the collision): declare it ourselves, so the
+         *    way back from native mode exists again.
+         * 3. The seat is empty: nothing in this process can revive the shipped
+         *    entry, because `slots.inject` only reconciles on a declaration
+         *    epoch change. Report that honestly instead of pretending.
+         * @returns {{ok: boolean, message?: string}} the outcome for the caller.
+         */
+        const repairSeat = () => {
+          // The repair disposes and re-registers the seat, and BOTH mutate the
+          // slot — which notifies synchronously, which re-enters `syncMode`,
+          // which would re-mount the entry we just disposed and leak it beside
+          // the repaired one. `syncing` is the same re-entry guard `syncMode`
+          // uses, so holding it across the whole repair keeps the seat's own
+          // notification from fighting the repair.
+          if (syncing) return { ok: false, message: 'busy' }
+          syncing = true
+          try {
+            const before = diagnoseSeat(slots)
+            if (before.severity === 'ok') return { ok: true }
+            if (before.severity === 'unknown') return { ok: false, message: 'unknown' }
+            // Already holding the seat: there is nothing to repair. Re-registering
+            // would only ratchet our priority downward on every click, changing
+            // the situation while fixing nothing. The default style being
+            // unavailable in this state is NOT repairable from here: it depends
+            // on who inherits the cell when we step aside, and that is the other
+            // plugin's entry — declaring the return-row slot on OUR OWN entry
+            // cannot help, because in native mode our entry is disposed and the
+            // ELECTED entry's children are what render.
+            if (before.winnerIsOurs && before.entries.length > 0) {
+              return { ok: false, message: 'not-repairable' }
+            }
+            // A previous repair may have left our own entry registered while a
+            // competitor still outranks it. That entry holds a priority the new
+            // registration would collide with, so it must go first — otherwise
+            // the `single` slot throws and the repair silently adds nothing.
+            if (before.ours) unmountSeat()
+            if (before.entries.length === 0) {
+              // An empty seat cannot be repaired in place: the shipped entry
+              // never registered, and no amount of registering on our side makes
+              // it try again. Say so rather than registering a panel the user
+              // did not ask for.
+              return { ok: false, message: 'needs-reload' }
+            }
+            // Land below every live competitor, then re-register. Disposing
+            // first is required: a `single` slot refuses a second registration
+            // at a priority already taken, and our old entry holds one.
+            const lowest = before.entries.reduce(
+              (min, entry) => Math.min(min, entry.priority), 0)
+            const floor = Math.min(-1, lowest - 1)
+            unmountSeat()
+            seatDispose = registerSeat({ floor })
+            // The panel is the seat again, so the STORED mode must agree with
+            // what is on screen. Leaving a persisted `native` here would make
+            // the next reconcile dispose the entry we just repaired (DEC-027).
+            modeStore.set('flat')
+            seatDiagnosis.refresh()
+            const after = diagnoseSeat(slots)
+            if (after.severity === 'ok') return { ok: true }
+            // Partial success is still progress worth naming: the panel is back
+            // even if a competitor remains queued behind us.
+            if (after.ours && after.severity === 'contested') return { ok: true }
+            return { ok: false, message: after.severity }
+          } catch (error) {
+            return { ok: false, message: error instanceof Error ? error.message : 'failed' }
+          } finally {
+            syncing = false
+          }
+        }
+
         try {
           slots.inject('conversation.input.model', () => {
             syncMode()
@@ -6508,9 +7052,15 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
             const offSlot = typeof slots.subscribe === 'function'
               ? slots.subscribe('conversation.input.model', syncMode)
               : undefined
+            // The Settings page shows the SAME reading, so it must follow the
+            // same mutations — including the ones this plugin causes itself.
+            const offHealth = typeof slots.subscribe === 'function'
+              ? slots.subscribe('conversation.input.model', seatDiagnosis.refresh)
+              : undefined
             return () => {
               if (typeof offMode === 'function') offMode()
               if (typeof offSlot === 'function') offSlot()
+              if (typeof offHealth === 'function') offHealth()
               unmountSeat()
             }
           })
@@ -6635,6 +7185,26 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
                     // only draws from it, never writes: whether a route is out of
                     // credit is observed from the Sessions, not chosen here.
                     insufficient: markStore ?? EMPTY_INSUFFICIENT,
+                    // The seat-conflict report: a live reading of who holds the
+                    // composer's model seat, plus the one action that repairs a
+                    // collision. A store, not a function, so the page updates
+                    // when another plugin mounts or unmounts underneath it.
+                    seatHealth: seatDiagnosis,
+                    repairSeat,
+                    // The reload button is only offered when a reload is the
+                    // actual remedy (an empty seat), so the page never asks the
+                    // user to refresh for something a re-register can fix.
+                    reloadPage: () => {
+                      try {
+                        if (typeof location !== 'undefined' && typeof location.reload === 'function') {
+                          location.reload()
+                          return true
+                        }
+                      } catch {
+                        /* a browser refusing the reload is reported by the button */
+                      }
+                      return false
+                    },
                   }),
                 }, SettingsSection)
               } catch (error) {

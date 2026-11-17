@@ -4,6 +4,57 @@ Project-level decision log for the dsh-model-flatmap plugin. Append-only: new
 entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
+## DEC-050 — 2026-11-17 — 设置页报告模型位冲突，并提供「强制修复」；但只承诺真能做到的事
+
+**Context.** DEC-049 修好了「交出席位不安全」，但用户看不见那次修复：冲突的表现仍然只是
+「默认样式」按钮变灰，没有任何地方解释为什么。用户要求把这个变成功能：设置页写清楚错误，
+并且「如果可以」给一个强制解决的按钮。
+
+**Decision.** 设置页顶部加一条**按需出现**的冲突提示（`diagnoseSeat` + `repairSeat`），
+四种状态各有各的说法，因为用户下一步动作不同：
+
+| severity | 触发条件 | 页面表现 |
+| --- | --- | --- |
+| `ok` | 没有竞争者 | 不显示 |
+| `contested` | 有竞争者，但我们仍持有 | **不显示**（面板正常，提示只会变成噪音） |
+| `broken` | 竞争者真的赢下了格子 | 显示 + 点名 + 「强制修复」 |
+| `broken` + 空位 | 谁都不在里面 | 显示 + 说明 + 「刷新页面」 |
+| `unknown` | Host 不支持枚举 | 显示「无法检查」，**绝不显示为正常** |
+
+**诊断靠结构，不靠包名。** 沿用 DEC-049：一个 entry 是不是「原生选择器」只看它有没有声明
+`conversation.input.model.options`。所以 fork、改名发行版照样被认作原生，而任何只抢格子
+不声明子槽的插件都会被列为竞争者并**点名**（`dsh-acp-agents`），因为「另一个插件」不是
+一句可执行的说明。
+
+**修复动作（`repairSeat`）只做一件事：把格子抢回来。** 计算所有竞争者里最低的 priority，
+从它再往下 `-1` 重新注册，于是我们重新成为最低者、重新赢下格子。已在真实 `SlotCore` 上
+验证：`acp@-6` 占位时修复后 `flatmap@-7` 赢回，且**幂等**——再次点击不改变任何东西。
+
+**刻意不承诺的事（这一条比上面都重要）。** 最初我让修复「顺便声明缺失的
+`conversation.input.model.options` 子槽」，并在文案里承诺「让默认样式恢复可用」。
+在真实 `SlotCore` 上验证后发现**这是假的**：`renderSlot` 读的是**当前被选中的那个 entry**
+的 `children`，而原生模式恰恰要 dispose 我们自己的 entry，于是渲染的是**继承者**（acp）
+的子槽——它没有 `options`。在我们自己的 entry 上声明那个子槽，对用户毫无作用。
+所以：
+1. `registerSeat` 去掉了 `adoptReturnRow`（留着就是个没人受益的复杂分支）；
+2. 文案改成如实说明「不会、也无法让默认样式恢复——那取决于占位插件是否退出」；
+3. 已经持有格子时 `repairable: false`，页面**不显示按钮**，只显示解释
+   （`conflict.notRepairable`）——一个按下去不改变任何事的按钮就是在说谎。
+
+**Consequences.** 空位（两个插件都 disable 后的残骸）**无法就地修复**：shipped entry 当初
+注册就抛错了，`slots.inject` 不会因为声明纪元没变而重试，本插件再注册也只是把我们自己的
+面板放进去，不是用户要的原生选择器。所以那条路径只提供「刷新页面」，并在文案里说明原因，
+而不是假装能修。
+
+**Bug found by the tests, not by review.** 第一次实现时修复会留下**两个**自己的 entry：
+`unmountSeat()` 会同步触发槽位通知 → 重入 `syncMode` → 把我们刚 dispose 的 entry 重新挂上，
+和修复后的新 entry 并存（`[-1, -7]`）。修法是让 `repairSeat` 全程持有 `syncMode` 用的同一个
+`syncing` 重入保护。已补一条专门的回归测试，并验证「去掉守卫即变红」。
+
+**Test note.** 新增 13 条测试，其中 2 条**驱动真正的 `repairSeat`**（经
+`settings.section` 的 inject face），而不是塞一个 stub —— 早期的 stub 版本让「修复」在测试里
+永远是绿的。已验证两条关键回归在回退实现后确实变红。
+
 ## DEC-049 — 2026-11-17 — 「下面有人」不等于「原生选择器在」：交出席位前必须验它声明了回程槽
 
 **Context.** 用户报告与 `github:lilinfangrelax/dsh-acp-agents` 冲突，两个现象：

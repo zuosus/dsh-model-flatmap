@@ -1213,10 +1213,14 @@ function makeCtx(options = {}) {
       const declares = spec.children !== undefined
         ? spec.children
         : SHIPPED_SEAT_CHILDREN
+      // `priority` lets a test place a competitor ABOVE or BELOW this plugin,
+      // which is the difference between "contested" and "stolen".
+      const priority = spec.priority
+      const priorityPart = priority === undefined ? {} : { priority }
       return {
-        registration: { name: key, ...(declares === null ? {} : { children: declares }) },
+        registration: { name: key, ...priorityPart, ...(declares === null ? {} : { children: declares }) },
         component: spec.component,
-        options: { name: key, ...(declares === null ? {} : { children: declares }) },
+        options: { name: key, ...priorityPart, ...(declares === null ? {} : { children: declares }) },
         children: declares === null ? undefined : declares,
         registrant: spec.registrant ?? 'shipped',
       }
@@ -5857,4 +5861,362 @@ test('the settings name line owns the free space and a hidden row dims its chip'
   // the name rather than stay the loudest thing on the row.
   const dim = ruleOf('.dshmf-setModelRow[data-hidden="true"] .dshmf-setModelBadge {')
   assert.ok(Number.parseFloat(prop(dim, 'opacity'), 10) < 1, 'the chip dims on a hidden row')
+})
+
+// ---------------------------------------------------------------------------
+// The seat-conflict report in Settings (DEC-049 / DEC-050).
+//
+// The composer's model seat is a `single` slot: every registration is kept, the
+// LOWEST priority renders, and a second registration at a taken priority THROWS.
+// A third-party plugin that registers the seat without a priority lands on 0,
+// exactly where the shipped picker sits, and whichever mounts second throws —
+// taking its declared child slots with it. The visible symptom is only "the
+// default style button is grey", so the diagnosis has to be stated in words and
+// come with an action.
+// ---------------------------------------------------------------------------
+
+/** A live entry shaped like the real SlotCore's StoredEntry. */
+function seatEntry({ registrant, priority = 0, native = false, ours = false }) {
+  return {
+    component: ours ? bundle.__seat : () => null,
+    registrant,
+    options: { priority },
+    children: native ? { [bundle.__test.NATIVE_MENU_SLOT]: { kind: 'list', scope: 'session' } } : undefined,
+  }
+}
+
+/** A `slots` stub whose entries are exactly the given rows. */
+function seatSlots(entries, { declared = true } = {}) {
+  return {
+    entries: () => entries,
+    spec: key => (declared && key === bundle.__test.NATIVE_MENU_SLOT ? { kind: 'list' } : undefined),
+  }
+}
+
+test('a healthy seat reports ok and offers nothing to repair', () => {
+  const diagnosis = bundle.__test.diagnoseSeat(seatSlots([
+    seatEntry({ registrant: 'dsh-model-flatmap', priority: -1, ours: true }),
+    seatEntry({ registrant: 'shipped', priority: 0, native: true }),
+  ]))
+  assert.equal(diagnosis.severity, 'ok')
+  assert.equal(diagnosis.ours, true)
+  assert.equal(diagnosis.competitors.length, 0, 'the native picker is not a competitor')
+  assert.equal(diagnosis.winner, 'dsh-model-flatmap')
+})
+
+test('a foreign plugin holding the seat is reported as broken, naming it', () => {
+  // The lowest priority renders, so a competitor only "holds" the seat when it
+  // sits BELOW us — which is exactly what the acp collision produces.
+  const diagnosis = bundle.__test.diagnoseSeat(seatSlots([
+    seatEntry({ registrant: 'dsh-acp-agents', priority: -6 }),
+    seatEntry({ registrant: 'dsh-model-flatmap', priority: -1, ours: true }),
+  ]))
+  assert.equal(diagnosis.severity, 'broken', 'a competitor wins the cell')
+  assert.equal(diagnosis.repairable, true, 'this plugin can take it back')
+  assert.deepEqual(diagnosis.competitors.map(entry => entry.registrant), ['dsh-acp-agents'])
+  assert.equal(diagnosis.winner, 'dsh-acp-agents')
+})
+
+test('a competitor queued BEHIND us is contested, not broken', () => {
+  const diagnosis = bundle.__test.diagnoseSeat(seatSlots([
+    seatEntry({ registrant: 'dsh-model-flatmap', priority: -5, ours: true }),
+    seatEntry({ registrant: 'dsh-acp-agents', priority: 0 }),
+  ]))
+  assert.equal(diagnosis.severity, 'contested', 'we still hold the cell, so the composer works')
+  assert.equal(diagnosis.repairable, false, 'and there is nothing a repair could change')
+})
+
+test('an empty seat is broken and NOT repairable in place', () => {
+  const diagnosis = bundle.__test.diagnoseSeat(seatSlots([]))
+  assert.equal(diagnosis.severity, 'broken')
+  assert.equal(diagnosis.entries.length, 0)
+  assert.equal(diagnosis.blockedReason, 'seat-empty')
+  assert.equal(diagnosis.repairable, false, 'only a reload can revive the shipped entry')
+})
+
+test('a Host without slot enumeration reports unknown, never ok', () => {
+  assert.equal(bundle.__test.diagnoseSeat(undefined).severity, 'unknown')
+  assert.equal(bundle.__test.diagnoseSeat({}).severity, 'unknown')
+  assert.equal(bundle.__test.diagnoseSeat({ entries: () => undefined }).severity, 'unknown')
+  const threw = bundle.__test.diagnoseSeat({ entries: () => { throw new Error('nope') } })
+  assert.equal(threw.severity, 'unknown', 'a thrown service call must not claim health')
+})
+
+test('the diagnosis identifies a native picker by its declared child slot, not its name', () => {
+  const diagnosis = bundle.__test.diagnoseSeat(seatSlots([
+    seatEntry({ registrant: 'some-fork', priority: 0, native: true }),
+  ]))
+  assert.equal(diagnosis.severity, 'ok', 'declaring the return row is what makes it native')
+  assert.equal(diagnosis.competitors.length, 0)
+})
+
+test('the settings page shows no conflict notice on a healthy seat', () => {
+  runtime.reset()
+  // EMPTY_SEAT_HEALTH is the DEGRADED stand-in (severity 'unknown'), which
+  // deliberately draws the notice: "cannot tell" must never look like "fine".
+  // A healthy page needs a healthy reading.
+  const healthy = {
+    severity: 'ok', entries: [], competitors: [], winner: 'dsh-model-flatmap',
+    returnRowDeclared: true, ours: true, repairable: false,
+  }
+  const face = { getSnapshot: () => healthy, subscribe: () => () => {}, refresh: () => {} }
+  const tree = runtime.render(bundle.__test.SettingsSection, {
+    t: key => key,
+    visibility: bundle.__test.createHiddenStore({ readStored: () => new Set() }),
+    catalog: bundle.__test.EMPTY_CATALOG,
+    seatHealth: face,
+  })
+  assert.equal(findAll(tree, node => hasClass(node, 'dshmf-setConflict')).length, 0)
+})
+
+test('the settings page reports a broken seat and offers the repair button', () => {
+  runtime.reset()
+  const broken = {
+    severity: 'broken',
+    entries: [
+      { registrant: 'dsh-acp-agents', priority: 0, native: false, ours: false },
+      { registrant: 'dsh-model-flatmap', priority: -1, native: false, ours: true },
+    ],
+    competitors: [{ registrant: 'dsh-acp-agents', priority: 0 }],
+    winner: 'dsh-acp-agents',
+    returnRowDeclared: false,
+    ours: true,
+    repairable: true,
+  }
+  const face = { getSnapshot: () => broken, subscribe: () => () => {}, refresh: () => {} }
+  let repaired = 0
+  const tree = runtime.render(bundle.__test.SettingsSection, {
+    t: key => key,
+    visibility: bundle.__test.createHiddenStore({ readStored: () => new Set() }),
+    catalog: bundle.__test.EMPTY_CATALOG,
+    seatHealth: face,
+    repairSeat: () => { repaired += 1; return { ok: true } },
+  })
+  const card = findAll(tree, node => hasClass(node, 'dshmf-setConflict'))[0]
+  assert.ok(card, 'the notice is drawn')
+  assert.equal(card.props['data-severity'], 'broken')
+  // The culprit is named: "another plugin" is not an actionable sentence.
+  const names = findAll(tree, node => hasClass(node, 'dshmf-setConflictName'))
+  assert.deepEqual(names.map(node => node.children?.[0] ?? node.props?.children), ['dsh-acp-agents'])
+  const buttons = findAll(tree, node => hasClass(node, 'dshmf-setConflictBtn'))
+  assert.equal(buttons.length, 1, 'exactly one action: the repair')
+  assert.equal(buttons[0].children?.[0] ?? buttons[0].props?.children, 'conflict.repair')
+  buttons[0].props.onClick()
+  assert.equal(repaired, 1, 'clicking it runs the repair')
+})
+
+test('an empty seat offers a reload instead of a repair', () => {
+  runtime.reset()
+  const empty = {
+    severity: 'broken', entries: [], competitors: [], winner: undefined,
+    returnRowDeclared: false, ours: false, repairable: false, blockedReason: 'seat-empty',
+  }
+  const face = { getSnapshot: () => empty, subscribe: () => () => {}, refresh: () => {} }
+  let reloads = 0
+  const tree = runtime.render(bundle.__test.SettingsSection, {
+    t: key => key,
+    visibility: bundle.__test.createHiddenStore({ readStored: () => new Set() }),
+    catalog: bundle.__test.EMPTY_CATALOG,
+    seatHealth: face,
+    reloadPage: () => { reloads += 1; return true },
+  })
+  const buttons = findAll(tree, node => hasClass(node, 'dshmf-setConflictBtn'))
+  assert.equal(buttons.length, 1, 'one action, and it is the reload')
+  assert.equal(buttons[0].children?.[0] ?? buttons[0].props?.children, 'conflict.reload')
+  buttons[0].props.onClick()
+  assert.equal(reloads, 1)
+})
+
+test('a contested seat is silent: the composer still works', () => {
+  runtime.reset()
+  const contested = {
+    severity: 'contested',
+    entries: [{ registrant: 'dsh-model-flatmap', priority: -5, native: false, ours: true }],
+    competitors: [{ registrant: 'dsh-acp-agents', priority: 0 }],
+    winner: 'dsh-model-flatmap', returnRowDeclared: true, ours: true, repairable: true,
+  }
+  const face = { getSnapshot: () => contested, subscribe: () => () => {}, refresh: () => {} }
+  const tree = runtime.render(bundle.__test.SettingsSection, {
+    t: key => key,
+    visibility: bundle.__test.createHiddenStore({ readStored: () => new Set() }),
+    catalog: bundle.__test.EMPTY_CATALOG,
+    seatHealth: face,
+  })
+  assert.equal(findAll(tree, node => hasClass(node, 'dshmf-setConflict')).length, 0,
+    'a notice about a plugin that is not breaking anything is noise')
+})
+
+test('every conflict key is translated in both languages', () => {
+  const dicts = bundle.__test.settingsDict
+  for (const key of ['conflict.title', 'conflict.broken', 'conflict.contested', 'conflict.empty',
+    'conflict.unknown', 'conflict.culprit', 'conflict.repair', 'conflict.repairHint',
+    'conflict.repaired', 'conflict.reload', 'conflict.reloadHint', 'conflict.failed', 'conflict.dismiss']) {
+    assert.equal(typeof dicts.zh[key], 'string', `zh ${key}`)
+    assert.equal(typeof dicts.en[key], 'string', `en ${key}`)
+    assert.notEqual(dicts.zh[key], '', `zh ${key} is not empty`)
+    assert.notEqual(dicts.en[key], '', `en ${key} is not empty`)
+  }
+})
+
+test('repairSeat is idempotent: holding the seat is not repaired twice', async () => {
+  installModeStorage()
+  try {
+    runtime.reset()
+    // The shipped picker is present and healthy; we already own the cell.
+    const { ctx, seat, liveOf } = makeCtx({
+      extraEntries: { 'conversation.input.model': [() => null] },
+    })
+    bundle.apply(ctx)
+    const before = liveOf('conversation.input.model')
+      .find(entry => entry.registrant === 'dsh-model-flatmap')
+    assert.ok(before, 'the panel registered')
+    const priorityBefore = before.registration.priority
+
+    // The repair keeps one invariant that is visible from here: a healthy seat
+    // is never re-registered, so its priority can never ratchet downward.
+    const diagnosis = bundle.__test.diagnoseSeat({
+      entries: () => liveOf('conversation.input.model'),
+      spec: () => ({ kind: 'list' }),
+    })
+    assert.equal(diagnosis.severity, 'ok', 'a healthy seat reports ok')
+    assert.equal(diagnosis.winnerIsOurs, true)
+    assert.equal(diagnosis.repairable, false, 'and there is nothing to repair')
+    // The entry itself is untouched by a read.
+    const after = liveOf('conversation.input.model')
+      .find(entry => entry.registrant === 'dsh-model-flatmap')
+    assert.equal(after, before, 'diagnosing never mutates the registration')
+    assert.equal(after.registration.priority, priorityBefore)
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('the diagnosis never claims health when it cannot enumerate the seat', () => {
+  runtime.reset()
+  const { ctx } = makeCtx({ omitSlotEnumeration: true })
+  bundle.apply(ctx)
+  // `omitSlotEnumeration` removes `entries`, which is exactly the old Host this
+  // must degrade to "unknown" rather than "ok".
+  const diagnosis = bundle.__test.diagnoseSeat({ inject: () => {}, register: () => () => {} })
+  assert.equal(diagnosis.severity, 'unknown')
+  assert.equal(diagnosis.repairable, false)
+})
+
+test('the repair takes the seat back from a competitor that outranks us', async () => {
+  installModeStorage()
+  try {
+    runtime.reset()
+    // The real collision: the shipped picker THREW at boot, so it is absent
+    // from the entries entirely, and the foreign plugin that won priority 0 is
+    // all that is left. That is why the return row is missing too — the throw
+    // took the shipped entry's child-slot declarations with it (DEC-049).
+    const { ctx, registered, liveOf } = makeCtx({
+      extraEntries: {
+        'conversation.input.model': [
+          { component: () => null, children: null, priority: -6, registrant: 'dsh-acp-agents' },
+        ],
+      },
+    })
+    bundle.apply(ctx)
+    const winner = () => liveOf('conversation.input.model')
+      .slice().sort((a, b) => (a.options?.priority ?? 0) - (b.options?.priority ?? 0))[0]
+    assert.equal(winner().registrant, 'dsh-acp-agents', 'the competitor holds the seat before repair')
+
+    // Drive the REAL repair through the face the Settings page receives.
+    const section = registered.find(entry => entry.registration?.name === 'settings.section')
+    assert.ok(section, 'the settings section registered')
+    const face = section.registration.inject()
+    assert.equal(typeof face.repairSeat, 'function', 'the page is given the action')
+    assert.equal(face.seatHealth.getSnapshot().severity, 'broken', 'and the reading it shows')
+    assert.equal(face.seatHealth.getSnapshot().repairable, true)
+
+    const outcome = face.repairSeat()
+    assert.equal(outcome.ok, true, 'the repair reports success')
+
+    const after = winner()
+    assert.equal(after.registrant, 'dsh-model-flatmap', 'the panel holds the seat again')
+    assert.ok((after.options?.priority ?? 0) < -6, 'landing below the competitor, not beside it')
+    // What the repair does NOT do, stated as a test so nobody "fixes" it later:
+    // it cannot make the default style reachable while a foreign plugin owns the
+    // cell underneath. Declaring the return-row slot on OUR OWN entry is useless
+    // — in native mode our entry is disposed and the ELECTED entry's children
+    // are what render — so the repair must not pretend to offer that.
+    const declaredChildren = after.children ?? after.options?.children
+    assert.equal(declaredChildren?.[bundle.__test.NATIVE_MENU_SLOT], undefined,
+      'no cosmetic child slot is declared on our own entry')
+    const settled = face.seatHealth.getSnapshot()
+    assert.equal(settled.repairable, false, 'nothing is left to repair once we hold the seat')
+    assert.equal(settled.winnerIsOurs, true)
+    // A second click changes nothing: no priority ratchet.
+    const priorityAfter = after.options?.priority
+    assert.equal(face.repairSeat().ok, false, 'a second repair has nothing to do')
+    const all = liveOf('conversation.input.model')
+      .filter(entry => entry.registrant === 'dsh-model-flatmap')
+      .map(entry => entry.options?.priority)
+    assert.deepEqual(all, [priorityAfter], 'and leaves exactly one entry at the same priority')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('the repair refuses an empty seat and asks for a reload instead', async () => {
+  installModeStorage()
+  try {
+    runtime.reset()
+    // Nobody holds the seat: the shipped picker threw at boot and cannot retry.
+    const { ctx, registered, liveOf } = makeCtx()
+    bundle.apply(ctx)
+    // Dispose our own entry so the cell is genuinely empty.
+    const own = liveOf('conversation.input.model').find(entry => entry.registrant === 'dsh-model-flatmap')
+    const section = registered.find(entry => entry.registration?.name === 'settings.section')
+    const face = section.registration.inject()
+    // Drop our entry behind the plugin's back, as a collision would.
+    liveOf('conversation.input.model').splice(0)
+    face.seatHealth.refresh()
+    const health = face.seatHealth.getSnapshot()
+    assert.equal(health.severity, 'broken')
+    assert.equal(health.entries.length, 0)
+    assert.equal(health.repairable, false, 'no re-register can revive the shipped entry')
+
+    const outcome = face.repairSeat()
+    assert.equal(outcome.ok, false)
+    assert.equal(outcome.message, 'needs-reload', 'and it says exactly what to do')
+    assert.ok(own, 'sanity: the entry existed before we dropped it')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('a repair never leaks a second entry through the seat\'s own notification', async () => {
+  installModeStorage()
+  try {
+    runtime.reset()
+    // The seat is a live slot: disposing our entry notifies synchronously, and
+    // `syncMode` re-mounts on that notification. Without the re-entry guard the
+    // repair ends up with TWO of our entries — the disposed one resurrected
+    // beside the repaired one — and the old one can even outrank the new.
+    const { ctx, registered, liveOf } = makeCtx({
+      extraEntries: {
+        'conversation.input.model': [
+          { component: () => null, children: null, priority: -6, registrant: 'dsh-acp-agents' },
+        ],
+      },
+    })
+    bundle.apply(ctx)
+    const section = registered.find(entry => entry.registration?.name === 'settings.section')
+    const face = section.registration.inject()
+    assert.equal(face.repairSeat().ok, true)
+
+    const ours = liveOf('conversation.input.model')
+      .filter(entry => entry.registrant === 'dsh-model-flatmap')
+    assert.equal(ours.length, 1, 'exactly one entry: no resurrected duplicate')
+    assert.equal(ours[0].options?.priority, -7, 'and it is the repaired one, below the competitor')
+
+    // Repairing again must still not multiply entries.
+    face.repairSeat()
+    assert.equal(liveOf('conversation.input.model')
+      .filter(entry => entry.registrant === 'dsh-model-flatmap').length, 1)
+  } finally {
+    delete globalThis.localStorage
+  }
 })
