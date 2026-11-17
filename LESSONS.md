@@ -4,6 +4,36 @@ Project-level lessons log for the dsh-model-flatmap plugin. Append-only: new
 entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
+## LES-040 — 2026-11-17 — 「一处看得到、另一处看不到」先查两边读的是不是同一份数据，再查渲染
+
+用户说 Raccoon provider 在 picker 里看得到、在设置页看不到。我一开始往渲染方向想（过滤、
+折叠、分组），实际根因在**数据获取层**，而且是一行 memoisation：
+
+```js
+load: () => {
+  if (snapshot.status === 'ready') return Promise.resolve()   // ← 永久记忆
+```
+
+**两个表面读的不是同一个源**，这件事 DEC-034 当时就写清楚了，但只写了一半的后果：
+
+- picker → `modelDirectories.directoryFor(sessionId)`，内置 resolver 订阅了五个
+  `llm/*` / `settings/*` / `credentials/*` 事件并 `refresh()`，**有失效通道**；
+- 设置页 → `remote.session.modelCatalog()` + 自建 store，**没有任何失效通道**。
+
+于是同样的 Host 状态，一个有刷新路径、一个没有，症状就表现成「只有设置页不对」。
+教训是：**当两个 UI 表面读不同数据源时，「它们在某个时刻会分叉」是结构性的，不是偶发
+bug**；选源的时候要同时选失效策略，否则就是在造一个只会在插件中途注册时才现形的 bug。
+
+排查顺序因此应当是：先确认两边**数据源**是否相同 → 再看同一个源的两边**失效策略**是否
+相同 → 最后才看渲染。渲染层没问题，查多久都是白查。
+
+另一条：`status === 'ready'` 这种「成功即终态」的 memoisation 在**目录类**数据上是危险
+默认值。目录是 Host 的状态投影，不是常量；凡是有 `xxx-updated` 事件的地方，就说明上游
+自己认为它会变。写缓存时先问一句「谁负责让它失效」，答不上来就不要缓存。
+
+验证方式也值得记：我用一个独立脚本喂一个「首读之后才多出一个 provider」的假 Host，
+在改代码**之前**先跑出 `STALE`，改完再跑出 `fresh`。先有能失败的证据，再谈修复。
+
 ## LES-039 — 2026-11-17 — 按钮承诺的能力，必须先在真源码上验一遍再写文案
 
 做「设置页冲突提示 + 强制修复」时，我先写了「修复会补上缺失的子槽，让默认样式恢复可用」，

@@ -4,6 +4,57 @@ Project-level decision log for the dsh-model-flatmap plugin. Append-only: new
 entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
+## DEC-053 — 2026-11-17 — 设置页的模型目录必须随 Host 事件失效，否则永远停在首读
+
+**Context.** 用户报告：SenseNova Raccoon provider 已打开、在 model picker 里能看到，但
+**设置面板里看不到**。要求定位这是不是 bug。
+
+**Findings.** 是 bug，且只在这一个表面成立，因为两个表面读的是**不同**的目录源：
+
+- picker 走 `modelDirectories.directoryFor(sessionId)`（会话级目录），而
+  `dsh-client-ui-model-selection` 的 `ModelDirectoryResolver` 订阅了
+  `llm/adapters-updated` / `llm/models-updated` / `settings/document-updated` /
+  `credentials/record-updated` / `credentials/reference-updated` 五个 Host 事件并
+  `refresh()`，所以插件中途注册 adapter 后它自己会更新。
+- 设置页走 `remote.session.modelCatalog()`（DEC-034 定的，因为设置页没有会话），
+  包在 `createCatalogStore` 里。而该 store 的 `load()` 第一行是
+  `if (snapshot.status === 'ready') return` —— **一旦读成功就永久记忆**。
+
+于是：首读发生在 Raccoon 注册之前 → 快照停在那个目录；`SettingsSection` 的
+`useEffect(() => { catalogFace.load() }, [catalogFace])` 重新进入设置页时调的还是
+`load()`，被同一行挡掉；**没有任何路径能让它再问一次 Host**。picker 有失效通道，
+设置页没有 —— 这正是「一个地方看得到、另一个看不到」的全部原因。
+
+Raccoon 只是最容易撞上的触发者：`raccoon-publish.ts` 在切换开关/登录/目录漂移时都会
+`emit('llm/adapters-updated')`，即插件是**按设计**在运行中注册 provider 的。任何中途
+注册 provider 的连接插件都会复现。
+
+**Decision.**
+
+1. **`load()` 增加 `{ force: true }`**：`force` 是唯一的失效通道，绕过 `ready` 记忆；
+   不带参数的 `load()` 语义不变（设置页在多个页面间来回切换不该每次重新请求）。
+2. **订阅与宿主同名的那五个事件**，收到即以 `force` 重读。选这五个而不是自造信号：
+   内置 `ModelDirectoryResolver` 用的就是这组，二者不会漂移；它们都在客户端
+   forwarded-event 白名单（`API_REMOTE_FORWARDED_EVENTS`）里，`remote.$on` 才合法。
+3. **订阅是尽力而为**：`remote.$on` 缺失/抛错只损失新鲜度，绝不损失设置页本身；
+   `ctx.effect` 里逐个收集 disposer 并在 teardown 逐个释放。
+4. **`force` 同时修复失败的读**：`unavailable` 不再是终态，一个之前加载失败的 provider
+   会被「它回来了」的同一个信号重试。
+
+**Rejected.**（1）把 `ready` 记忆整个去掉：设置页在页面间切换会变成每次访问一次
+请求，而目录绝大多数时候不变。（2）只在 `SettingsSection` 挂载时强制重读：挂载不等于
+目录变化，且用户停在设置页时插件注册仍然不会出现。（3）用定时轮询：为一个低频事件
+付持续流量，且 `markStore` 已经证明定时器是这类插件的维护负担。（4）只订阅
+`llm/adapters-updated`：凭据/设置变更同样会改变目录（`listModels` 在缺凭据时返回空
+数组），只订一个会留下另一半的同类 bug。
+
+**Consequences.** 新增 `CATALOG_INVALIDATING_EVENTS`；`createCatalogStore().load`
+接受 `{ force }`；`apply()` 增加订阅块。测试 311 → 313：一条钉住「首读之后才注册的
+provider 能进设置页」（并断言不带参数的 `load()` 仍不重读，保住记忆语义），一条钉住
+「`apply()` 真的订阅了那五个事件、且订阅失败时设置页仍然注册」。两条都先在原始
+`client.js` 上跑成失败，再确认修复后通过。
+
+
 ## DEC-052 — 2026-11-17 — 关闭态 provider 的 subtitle 与标题同色，整行正文统一 secondary
 
 **Context.** DEC-051 修好标题色之后，用户继续要求「subtitle 也修改为一样的颜色」。

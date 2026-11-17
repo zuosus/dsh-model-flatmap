@@ -4320,6 +4320,91 @@ test('the catalogue store unwraps the Remote envelope and degrades on failure', 
   assert.deepEqual(malformed.getSnapshot().groups, [])
 })
 
+test('a provider that registers after the first read still reaches Settings', async () => {
+  // DEC-053. The store memoises a successful read, so a provider switched on
+  // mid-session (a connection plugin registering its adapter and emitting
+  // `llm/adapters-updated`) used to be invisible in Settings until a full
+  // reload — the picker listed it, the section did not.
+  const { createCatalogStore } = bundle.__test
+  let groups = [{ id: 'first', name: 'First', models: [{ id: 'm1', name: 'M1' }] }]
+  let reads = 0
+  const store = createCatalogStore({
+    read: () => ({
+      modelCatalog: async () => {
+        reads += 1
+        return { ok: true, value: { groups } }
+      },
+    }),
+  })
+
+  await store.load()
+  assert.deepEqual(store.getSnapshot().groups.map(group => group.id), ['first'])
+
+  // The Host now advertises a second provider.
+  groups = [...groups, { id: 'late', name: 'Late', models: [{ id: 'm2', name: 'M2' }] }]
+
+  // A plain load() must still not re-ask: the section may mount, unmount and
+  // re-mount as the user moves between settings pages, and re-reading on every
+  // one of those would be a request per page visit for data that rarely moves.
+  await store.load()
+  assert.equal(reads, 1, 'a plain load() keeps the memoised read')
+  assert.deepEqual(store.getSnapshot().groups.map(group => group.id), ['first'])
+
+  // The invalidation path is what a Host event drives.
+  await store.load({ force: true })
+  assert.equal(reads, 2, 'a forced load() asks the Host again')
+  assert.deepEqual(store.getSnapshot().groups.map(group => group.id), ['first', 'late'],
+    'the newly registered provider is listed without a reload')
+
+  // A forced read also repairs a store that failed earlier, so a provider that
+  // failed to load is retried by the same signal that announces it came back.
+  let healthy = false
+  const recovering = createCatalogStore({
+    read: () => ({
+      modelCatalog: async () => (healthy
+        ? { ok: true, value: { groups } }
+        : { ok: false, error: { code: 'gateway/internal' } }),
+    }),
+  })
+  await recovering.load()
+  assert.equal(recovering.getSnapshot().status, 'unavailable')
+  healthy = true
+  await recovering.load({ force: true })
+  assert.equal(recovering.getSnapshot().status, 'ready', 'a forced read retries after a failure')
+})
+
+test('apply subscribes the settings catalogue to the events that invalidate it', () => {
+  // The subscription is the other half of DEC-053: without it the forced read
+  // above is never triggered by anything.
+  runtime.reset()
+  installModeStorage()
+  try {
+    const seen = []
+    const { ctx, services, registered } = makeCtx()
+    const $on = (event, listener) => {
+      seen.push(event)
+      return () => {}
+    }
+    services.remote = { ...services.remote, $on }
+    ctx.get = name => services[name]
+    bundle.apply(ctx)
+
+    // The same five signals the shipped `ModelDirectoryResolver` uses, so this
+    // plugin and the native picker cannot drift apart.
+    for (const event of ['llm/adapters-updated', 'llm/models-updated',
+      'settings/document-updated', 'credentials/record-updated', 'credentials/reference-updated']) {
+      assert.ok(seen.includes(event), `subscribed to ${event}`)
+    }
+
+    // The section still registers when the Host forwards no events at all:
+    // losing freshness must never cost the page.
+    assert.ok(registered.some(entry => entry.registration?.name === 'settings.section'),
+      'the section is registered with the subscription in place')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
 test('the settings section lists every provider and model with a switch each', async () => {
   runtime.reset()
   const face = bundle.__test.createHiddenStore({ readStored: () => new Set() })

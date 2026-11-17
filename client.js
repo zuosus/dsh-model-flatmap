@@ -5616,8 +5616,16 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
          * Read the Host's catalog once, sharing any in-flight read.
          * @returns {Promise<void>} settles when the snapshot is final.
          */
-        load: () => {
-          if (snapshot.status === 'ready') return Promise.resolve()
+        load: (options = {}) => {
+          // `force` is the invalidation path, and the ONLY way a second read
+          // reaches the Host once the first one succeeded. Without it the store
+          // memoises `ready` forever and the section is frozen at the catalogue
+          // of the page's FIRST read — a provider registered afterwards (a
+          // connection plugin switched on mid-session, exactly what the Raccoon
+          // half of dsh-connect-sensenova-token-plan does) is never listed
+          // (DEC-053). Re-entering Settings does not help, because `load()` is
+          // what re-entry calls.
+          if (options.force !== true && snapshot.status === 'ready') return Promise.resolve()
           if (inflight !== undefined) return inflight
           const service = (() => {
             try {
@@ -5654,6 +5662,29 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         dispose: () => { listeners.clear() },
       }
     }
+
+    /**
+     * The Host events that mean "the model catalogue you read may be stale".
+     *
+     * These are the same five the shipped `ModelDirectoryResolver` subscribes
+     * to (`dsh-client-ui-model-selection`), so this plugin and the native
+     * picker invalidate on exactly the same signals instead of drifting. They
+     * are all on the client's forwarded-event allowlist
+     * (`API_REMOTE_FORWARDED_EVENTS`), which is what makes `remote.$on` legal
+     * for them.
+     *
+     * `llm/adapters-updated` is the one that matters for a provider that turns
+     * up mid-session: a connection plugin registering its adapter emits it, and
+     * that is how "I switched the provider on, but Settings does not show it"
+     * gets fixed without a reload (DEC-053).
+     */
+    const CATALOG_INVALIDATING_EVENTS = [
+      'llm/adapters-updated',
+      'llm/models-updated',
+      'settings/document-updated',
+      'credentials/record-updated',
+      'credentials/reference-updated',
+    ]
 
     /** Frozen catalogue face for a degraded Settings render. */
     const EMPTY_CATALOG = {
@@ -6534,6 +6565,39 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         } catch (error) {
           console.error('dsh-model-flatmap: the settings catalogue failed to start', error)
           catalogStore = EMPTY_CATALOG
+        }
+        // ---- keep that catalogue current (DEC-053)
+        //
+        // The store memoises a successful read, so without this the section is
+        // pinned to the catalogue of the page's FIRST read: a connection plugin
+        // switched on afterwards — a provider that appears in the picker but
+        // never in Settings — stays invisible until a full reload.
+        //
+        // Every event re-reads with `force`, which also repairs a read that
+        // failed earlier (`unavailable`), so a provider that failed to load is
+        // retried by the same signal that announces it came back. The
+        // subscription is best-effort: a Host that does not forward events, or
+        // a browser that refuses the listener, must cost freshness and never
+        // the section itself.
+        try {
+          const remote = read('remote')
+          if (remote !== undefined && typeof remote.$on === 'function') {
+            const refreshCatalogue = () => { catalogStore.load?.({ force: true })?.catch?.(() => {}) }
+            ctx.effect(() => {
+              const disposers = []
+              for (const event of CATALOG_INVALIDATING_EVENTS) {
+                try {
+                  const dispose = remote.$on(event, refreshCatalogue)
+                  if (typeof dispose === 'function') disposers.push(dispose)
+                } catch {
+                  /* one event the Host will not forward is not a failure */
+                }
+              }
+              return () => { for (const dispose of disposers) { try { dispose() } catch { /* teardown only */ } } }
+            }, 'dsh-model-flatmap: settings catalogue freshness')
+          }
+        } catch (error) {
+          console.error('dsh-model-flatmap: the settings catalogue could not subscribe to Host events', error)
         }
 
         /**
