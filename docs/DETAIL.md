@@ -515,6 +515,27 @@ three you want back on. A provider in that state reports `mixed` on its switch
 and "N on" beside its name, and a provider with every model off dims and says
 "all off".
 
+Each model row names the model the way the picker's rows do. A rate multiplier
+inside the name (`Deepseek-V4.1-Flash · x0.01`) is lifted into the same smaller
+bold run the panel draws (`nameRuns`), and the catalog's own `badge` follows the
+name as a chip — the promotion ("Free Now", "限时免费"), the load mark, or the
+rate a connection plugin publishes. The chip is the catalog's data, not a
+settings invention, so a model is decorated identically in both surfaces; a
+model the catalog says nothing about draws neither a chip nor the gap for one.
+The name line is the flex item that gives way (the name ellipsises), so the chip
+keeps its size and the switch keeps its place, and a row switched off dims its
+chip along with its name. The credit note, when the account is out on that
+route, stays on its own line UNDER the name line, so the two facts never share
+a run of text.
+
+The chip is drawn, not borrowed. The picker's row is a module-private component
+of the shipped model-selection package (its CSS is a hashed module), and the
+`conversation.input.model.label` slot it renders is session-scoped while
+`settings.section` is root-scoped, so the Settings page cannot mount the
+picker's own row. What is shared instead is the grammar and the data: same
+name-then-chip order, same `badge.text`/`badge.tone`, and the plugin's chip is
+already geometry-identical to the shipped `Tag`.
+
 The section reads the catalogue from `remote.session.modelCatalog()`, which is
 the Host-generation catalog shared by every Session. It is not Session-scoped,
 which matters because the settings panel has no Session and

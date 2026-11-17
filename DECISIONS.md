@@ -5,6 +5,35 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-048 — 2026-11-17 — 设置页模型行也画目录 badge 与倍率：与选择器同一套语法和数据
+
+**Context.** 选择器的模型行早就画了目录的 `badge` 芯片（「限时免费」、负载标记、费率）并
+把名字里的 `· x0.01` 倍率拆成更小更粗的一段，但设置页的模型行只画裸名字。于是同一个模型在
+两处长得不一样：用户要在「这里把它打开/关闭」的界面上判断「这是哪个模型、现在是不是便宜
+的那个」，还得先去开选择器。设置页恰恰是最该直接回答这个问题的界面。
+
+**Decision.** 设置页的模型行复用选择器的两件事，而不是另起一套：
+1. **倍率**由模块级的 `nameRuns`（与面板同一个正则语义）拆出，落进同一个
+   `.dshmf-rowNameMark` 样式，因此 `· x0.01` 在两处都是同一段小号粗体旁注。
+2. **芯片**由模块级的 `catalogBadge(model, resolveText)` 解析目录的 `badge.text` /
+   `badge.tone`，经 host 的 `resolveText` 解析（可能是翻译表），画成与选择器同款
+   `.dshmf-badge`。目录没给 badge、或解析出空串的模型**不画芯片、也不留空位**。
+3. 布局上，名字与芯片同处一行（`.dshmf-setModelNameLine`），**让位的是名字**
+   （`min-width:0` + 省略号），芯片 `flex:none` 不被压缩；行被关闭时芯片随名字一起变暗。
+   账户在该路由上额度耗尽时，欠费说明仍在名字行**下面**单独一行，两种事实不抢同一段文字。
+
+**Why drawn, not borrowed.** 选择器那行是 shipped 包的模块私有组件（CSS 是 hash 模块），
+而它渲染的 `conversation.input.model.label` 槽是 session 作用域，`settings.section` 是
+root 作用域，设置页挂不上选择器自己的行。能共享的是**语法和数据**：同样的「名字后跟芯片」
+顺序、同样的 `badge.text`/`badge.tone`，而插件的芯片本就与 shipped `Tag` 几何一致。
+
+**Consequences.** `catalogBadge` 与 `nameRuns` 提升到模块作用域供两处共用，避免一个表面
+把倍率画成普通文字；`settings.section` 的 inject 增加 `resolveText`，否则本地化 badge 会
+印出 `[object Object]`。此前的「设置页模型行只画名字」不再是设计选择，而是待补的缺口。
+
+**Lessons.** 同一份目录数据被两个表面渲染时，「谁负责画」要在模块级定一次，否则两个表面
+迟早长得不一样；而「让位的是谁」必须显式写进 CSS，默认的 flex 行为会让芯片先被压扁。
+
 ## DEC-047 — 2026-11-18 — 行内 host 原生 cell 的收尾：选中行角标、崩溃回退、可访问名与删除线（修订 DEC-046）
 
 **Context.** DEC-046 把 picker 自带的 label 槽搬到了模型行上，一次 UI/UX 复核又找出几处
