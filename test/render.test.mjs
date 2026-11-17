@@ -4634,11 +4634,13 @@ test('a provider row is bold in the UI face while a model row stays regular', ()
 })
 
 // ---------------------------------------------------------------------------
-// Settings → Model list: a switched-OFF row must stay READABLE. The titles
-// used to fall to the dimmed placeholder tone, which the installed shell
-// defines as #e1e5ee on white (light) and #43454a on near-black (dark) —
-// below the readable threshold in both themes. The requirement is "a
-// slightly gray color", not a gray-out.
+// Settings → Model list: a switched-OFF row must stay READABLE while being
+// OBVIOUSLY different from a switched-ON one. The titles used to fall to the
+// dimmed placeholder tone (#e1e5ee on white / #43454a on dark, 1.26:1 /
+// 1.64:1 — unreadable in both themes). A same-tone rule was then tried and
+// read as no difference at all. The ladder step that fits both requirements
+// is the shell's own tertiary tone: 2.13:1 / 4.24:1, one designed rung below
+// the secondary tone an ON title carries.
 // ---------------------------------------------------------------------------
 test('a disabled row keeps its title in a readable tone instead of the dimmed one', () => {
   const css = source.match(/const CSS = `([\s\S]*?)`/)[1]
@@ -4655,15 +4657,21 @@ test('a disabled row keeps its title in a readable tone instead of the dimmed on
   const hiddenProviderMeta = ruleOf('.dshmf-setProvider[data-hidden="true"] .dshmf-setProviderMeta {')
   const hiddenModelName = ruleOf('.dshmf-setModelRow[data-hidden="true"] .dshmf-setModelName {')
 
-  // The title drops at most ONE label step: the provider heading goes
-  // primary → secondary; the model name keeps the secondary tone its base
-  // rule already carries. The dimmed token must never reach a title.
+  // The title drops exactly ONE label rung, never two, never zero:
+  // primary → secondary for the provider heading, secondary → tertiary for
+  // the model name. One rung = obvious at a glance AND still readable; the
+  // dimmed token must never reach a title.
   assert.equal(colorOf(hiddenProviderName), 'var(--dsw-alias-label-secondary)',
-    'the hidden provider title stays at the readable secondary tone')
+    'the hidden provider title drops one rung, to the readable secondary tone')
   assert.doesNotMatch(colorOf(hiddenProviderName), /label-dimmed/, 'the provider title never falls to the dimmed tone')
-  assert.equal(colorOf(hiddenModelName), 'var(--dsw-alias-label-secondary)',
-    'the hidden model title keeps its readable tone')
+  assert.equal(colorOf(hiddenModelName), 'var(--dsw-alias-label-tertiary)',
+    'the hidden model title drops one rung, to the readable tertiary tone')
   assert.doesNotMatch(colorOf(hiddenModelName), /label-dimmed/, 'the model title never falls to the dimmed tone')
+  // And one rung is a REAL difference: the OFF tone is not the tone an ON
+  // model name carries, so ON/OFF cannot silently collapse back into the
+  // same color.
+  assert.notEqual(colorOf(hiddenModelName), 'var(--dsw-alias-label-secondary)',
+    'an OFF model title differs from an ON one (secondary)')
 
   // The at-a-glance "this row is off" signal stays on the meta line and the
   // switch, so the meta keeps the dimmed tone even though the title does not.

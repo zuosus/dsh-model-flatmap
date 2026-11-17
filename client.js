@@ -421,11 +421,13 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
   color: var(--dsw-alias-label-secondary);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-/* Stated, not inherited: a hidden model name keeps the SAME readable
-   secondary tone as a visible one (the base rule above), never the dimmed
-   placeholder tone — the title must not gray out, and an explicit rule keeps
-   it from drifting back if the base tone ever changes. */
-.dshmf-setModelRow[data-hidden="true"] .dshmf-setModelName { color: var(--dsw-alias-label-secondary); }
+/* Stated, not inherited: an OFF model title steps DOWN one designed label
+   rung (secondary → tertiary) so the ON/OFF difference is obvious at a
+   glance, while tertiary remains the shell's own readable quiet-prose tone
+   (it already carries setIntro/setEmpty here). Never the dimmed placeholder
+   tone — #e1e5ee on white / #43454a on dark measure 1.26:1 / 1.64:1, below
+   any readable threshold; tertiary measures 2.13:1 / 4.24:1. */
+.dshmf-setModelRow[data-hidden="true"] .dshmf-setModelName { color: var(--dsw-alias-label-tertiary); }
 /* The telemetry toggle is its own band at the BOTTOM of the section, divided
    from the model list above by the same hairline the list rows use. It governs
    the whole plugin's one network request, so it sits apart from the provider

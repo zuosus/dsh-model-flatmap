@@ -4,6 +4,38 @@ Project-level decision log for the dsh-model-flatmap plugin. Append-only: new
 entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
+## DEC-043 — 2026-11-17 — 关闭态标题降一档改为 tertiary：ON/OFF 一眼可辨且仍可读（修订 DEC-042）
+
+**取代：** DEC-042 中「模型名关闭时保持 secondary」这一条；DEC-042 的其余结论（标题永不落
+dimmed、meta 行保留 dimmed 承担关闭信号、规则显式声明）继续有效。
+
+**Context.** DEC-042 之后用户反馈两轮：先是「too subtle」要更明显，澄清后明确目标——
+**模型行标题的 ON/OFF 差异**要明显。DEC-042 把 OFF 模型名留在 secondary，与 ON 完全同色，
+差异为零，确实不可辨。
+
+**Findings.**
+
+- Host 色阶在 secondary 与 dimmed 之间还有一档**设计好的** rung：`label-tertiary`
+  （亮色 `#adb2b8`、暗色 `#81858c`），本仓库 `setIntro`/`setEmpty` 已用它承载「安静但可读」
+  的说明文字——即它就是 shell 自己的「明显变灰但仍是正文」的那一档。
+- 实测对比度（WCAG）：亮色 secondary 5.80:1 → tertiary 2.13:1（dimmed 1.26:1）；
+  暗色 10.42:1 → 4.24:1（dimmed 1.64:1）。一档 rung = 明显的灰阶跳跃，同时远离
+  dimmed 的不可读区间。
+- provider 行无需再改：primary → secondary（18.9 → 5.8 / 15.0 → 10.4）本来就是一档
+  明显差异。
+
+**Decision.** OFF 的模型行标题降一档到 `label-tertiary`；provider 行保持 DEC-042 的
+primary → secondary。标题仍永不落 dimmed。render 测试新增一条断言：OFF 的模型标题
+**不等于** ON 的（secondary），防止未来重新塌缩成同色。
+
+**Rejected.**（1）OFF 保持 secondary（DEC-042 原案）：与 ON 同色，即用户本轮反馈的
+「差异不可辨」。（2）继续降到 dimmed：回到最初不可读的投诉。（3）自造颜色
+（如 color-mix 混 secondary 与 dimmed）：绕开设计系统 token，且此前 DEC（DEC-035 时期）
+已有「tint 混色在两主题下不稳定」的教训。
+
+**Consequences.** 只改模型行一条 `[data-hidden]` 颜色规则与注释、测试断言从
+「等于 secondary」改为「等于 tertiary 且不等于 secondary」。测试数不变（256）。
+
 
 ## DEC-042 — 2026-11-17 — 关闭态行的标题不再落 dimmed 色，只降一档到次级灰
 
