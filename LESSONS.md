@@ -4,6 +4,33 @@ Project-level lessons log for the dsh-model-flatmap plugin. Append-only: new
 entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
+## LES-038 — 2026-11-17 — 用真实源码复现，别用自己想象的机制复现
+
+排查「本插件与 acp 插件冲突」时，前几轮都在自己写的模拟槽上跑，得出的结论是「优先级冲突
+会让 acp 抛错，所以它没注册上」。换成**从 `dsh-web-frontend` 里抠出来的真 `SlotCore`** 后，
+结论翻了一半：静态 bundle 行**不经过**动态 runner 的优先级改写（`guardedSlots` 只作用于
+动态 Cordis 包），所以 acp 是带着默认 priority 0 进来的，和 shipped 撞格、**真抛错**。
+
+教训不是「要测得真」，而是**模拟层的假设要写出来并单独验证**：
+
+- 我以为「动态插件都会被重写 priority」→ 去 `dsh-cordis-client-runner` 读
+  `guardedSlots`，确认它只挂在 `DynamicCordisPackageRunner` 的 `load()` 上；两个插件都是
+  静态 bundle 行，根本不走那条路。这一条如果没查，修复方向会完全错（会去调 priority 数值）。
+- 我以为「别的 entry 在 = 原生选择器在」→ 读渲染器 `renderSlot`，发现它读的是
+  `entry.children[key]`，**子槽由被选中的 entry 挂载**。于是「有没有人」和「是不是原生
+  选择器」是两个问题，混成一个就交出了没有回程的席位。
+
+另一个反复踩的点：**测试夹具太干净反而掩盖 bug**。夹具里「shipped 竞争者」只是一个裸组件，
+没声明 `.label`/`.options`，而真实的 `ModelSelect` 两个都声明。旧断言因此永远绿。改成默认
+带上真实子槽声明后，6 条既有测试立刻变红——它们红得对，因为夹具在说谎。修夹具时要问一句：
+**这个夹具的形状，和运行时真实对象的形状，差在哪？** 差的那部分如果正好是新判定的依据，
+那测试就是在测夹具而不是测产品。
+
+还有一个值得记住的坑：`slots.inject` 只在 `declarationEpoch` **变化**时重建。所以一次注册
+失败（撞 priority 抛错）之后，即使肇事插件被卸载、格子空了，**它也不会自动重试**——用户
+看到的「禁用两个插件后选择器彻底没了」就是这场碰撞留下的永久残骸，只能靠刷新恢复。凡是
+「注册可能抛错」的注入点，都要意识到**失败不是可重试的**，最好在成功路径上就避免撞格。
+
 
 ## LES-037 — 2026-11-18 — 把自己的渲染结果换成第三方的，就要回头数一遍「哪些规则假设它是我的」
 

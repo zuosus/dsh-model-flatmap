@@ -3475,6 +3475,17 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
     const LABEL_SLOT = 'conversation.input.model.label'
 
     /**
+     * The list child slot the native picker declares for its trailing rows.
+     *
+     * `NativeMenuRow` registers here so the way BACK from native mode lives
+     * inside the host's own panel. It is a child of the model seat, which means
+     * only the ELECTED seat's registration can declare it — so this constant is
+     * also how the seat proves that the entry underneath it is a real native
+     * picker rather than another plugin's replacement control.
+     */
+    const NATIVE_MENU_SLOT = 'conversation.input.model.options'
+
+    /**
      * Read the entry that currently OWNS the label cell, or undefined.
      *
      * `entriesOfSlot` is the documented "winner per cell" accessor (the same
@@ -6145,9 +6156,11 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         }
 
         /**
-         * Every OTHER live registration in the model seat.
+         * Every OTHER live registration in the model seat, lowest priority
+         * first — i.e. in election order, so `[0]` is who wins the cell once
+         * our own entry is gone.
          *
-         * A `single` slot keeps every registration and elects the highest
+         * A `single` slot keeps every registration and elects the LOWEST
          * priority; this plugin only owns the cell because it registers at a
          * negative priority. Disposing our own entry therefore hands the cell to
          * whatever is underneath — normally the shipped `ModelSelect` — with no
@@ -6162,31 +6175,83 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
             if (typeof slots.entries !== 'function') return undefined
             const all = slots.entries('conversation.input.model')
             if (!Array.isArray(all)) return undefined
-            return all.filter(entry => entry?.component !== Seat)
+            const others = all.filter(entry => entry?.component !== Seat)
+            // The Host already sorts by priority, but a foreign entry list is
+            // not worth trusting: sort again so `[0]` is provably the winner.
+            return others.sort((left, right) =>
+              (left?.options?.priority ?? 0) - (right?.options?.priority ?? 0))
           } catch {
             return undefined
           }
         }
         /**
-         * May the panel hand the seat over? Only when another live entry exists
-         * to inherit it. Deliberately does NOT require the shipped package name:
-         * a composed profile may legitimately elect another plugin's seat, and
-         * that is exactly what the user asked to see.
-         * @returns whether disposing this entry leaves a model control behind.
+         * Does this entry declare the child slot our way-back row rides?
+         *
+         * `NativeMenuRow` lives in `conversation.input.model.options`, a list
+         * child that only the ELECTED seat's own registration can declare (the
+         * renderer mounts a slot's children from the winning entry). An entry
+         * that never declared it cannot render our row, so stepping aside to it
+         * is a one-way trip with no control that brings the panel back.
+         * @param entry - a live StoredEntry.
+         * @returns whether that entry can host the native-mode return row.
          */
-        const canStepAside = () => {
-          const others = otherEntries()
-          return others !== undefined && others.length > 0
+        const declaresReturnRow = entry => {
+          try {
+            // A StoredEntry carries its declarations as `children`; accept the
+            // raw registration shape too, so a Host that exposes the original
+            // options object instead does not read as "declares nothing".
+            const declared = entry?.children ?? entry?.options?.children
+            if (declared === undefined || declared === null) return false
+            return declared[NATIVE_MENU_SLOT] !== undefined
+          } catch {
+            return false
+          }
         }
+        /**
+         * The entry that would inherit the seat if we stepped aside, or
+         * undefined when handing the cell over is not actually safe.
+         *
+         * Deliberately does NOT require the shipped package name: a composed
+         * profile may legitimately elect another plugin's seat. It DOES require
+         * that the inheritor can host the return row — "some other entry is
+         * there" is not the same promise as "the default style is there". A
+         * third-party plugin that merely shadows the seat (the `dsh-acp-agents`
+         * collision) has no such child slot, so switching to it would show a
+         * foreign control and strand the user with no way back.
+         * @returns the winning competing entry, when stepping aside is safe.
+         */
+        const nativeInheritor = () => {
+          const others = otherEntries()
+          if (others === undefined || others.length === 0) return undefined
+          const winner = others[0]
+          return declaresReturnRow(winner) ? winner : undefined
+        }
+        /**
+         * May the panel hand the seat over?
+         * @returns whether disposing this entry lands on the native picker.
+         */
+        const canStepAside = () => nativeInheritor() !== undefined
         /** Report the inheriting entry once, so a support log names the target. */
         let inheritReported = false
         const reportInherit = () => {
           if (inheritReported) return
           inheritReported = true
           try {
-            const others = otherEntries()
-            const names = (others ?? []).map(entry => entry?.registrant ?? entry?.options?.id ?? 'unknown')
-            console.info(`dsh-model-flatmap: the model seat is handed to ${names.join(', ') || 'no entry'}`)
+            const winner = nativeInheritor()
+            const name = winner?.registrant ?? winner?.options?.id ?? 'no entry'
+            console.info(`dsh-model-flatmap: the model seat is handed to ${name}`)
+            // Name the blocker, not just the absence: "nothing underneath" and
+            // "something underneath that is not the native picker" need very
+            // different answers from the user.
+            if (winner === undefined) {
+              const others = otherEntries()
+              const blocked = (others ?? []).map(entry => entry?.registrant ?? entry?.options?.id ?? 'unknown')
+              if (blocked.length > 0) {
+                console.warn('dsh-model-flatmap: the default style is unavailable because the entry underneath '
+                  + `cannot host its return control (${blocked.join(', ')}) — another plugin is occupying the `
+                  + 'model seat; disable it to get the native picker back')
+              }
+            }
           } catch {
             /* diagnostics only */
           }

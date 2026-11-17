@@ -4,6 +4,55 @@ Project-level decision log for the dsh-model-flatmap plugin. Append-only: new
 entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
+## DEC-049 — 2026-11-17 — 「下面有人」不等于「原生选择器在」：交出席位前必须验它声明了回程槽
+
+**Context.** 用户报告与 `github:lilinfangrelax/dsh-acp-agents` 冲突，两个现象：
+1. 两个插件都 disable 后，输入框里连插件选择器都没了；
+2. acp 改动了原生 model picker，本插件的「原生」按钮点不了。
+
+在真实 `SlotCore`（从 `dsh-web-frontend` 抽出，非仿真）上复现，机制是确定的：
+`single` 槽**保留每个注册、只渲染 priority 最低的那个**，且同一 priority 第二次注册
+**直接抛错**。acp 注册 `conversation.input.model` 时**不带 priority**（默认 0），与
+shipped `ModelSelect` 撞在同一格：
+- 谁先注册谁赢，后注册者**抛错**（`already has a registration at priority 0`）；
+- 若 acp 先注册，则 **shipped `ModelSelect` 抛错**，它的 entry 与它声明的两个子槽
+  （`.label` / `.options`）一起消失 → 这正是现象 1：**两个第三方插件都关掉后，席位里
+  只剩当初那场碰撞的残骸，原生选择器没有回来**，因为 `slots.inject` 只在
+  `declarationEpoch` 变化时重建，而声明本身没变，所以它**永远不会自动重试**；
+- acp 还抢先注册 `conversation.input.model.label`（priority 0），本插件的
+  `readLabelEntry()` 按 `entriesOfSlot()[0]` 读赢家，于是标签位置显示 acp 的
+  `ACP:<agent>` —— 这是「acp 也改动了原生 picker」的可见部分。
+
+**Decision.** `canStepAside()` 不再满足于「别的 entry 存在」，而是要求**将要继承的那个
+entry 自己声明了 `conversation.input.model.options`**（新增常量 `NATIVE_MENU_SLOT`）。
+理由来自渲染器源码：`renderSlot(key)` 读的是 `entry.children[key]` —— **子槽由被选中的
+那个 entry 挂载**。本插件「回到平铺」的那一行 `NativeMenuRow` 正挂在
+`conversation.input.model.options` 上，所以一个没声明它的 entry 根本无法承载回程控件：
+交出去就是把面板换成一个陌生控件，且**没有回头路**。
+
+实现上：
+- `otherEntries()` 额外按 priority 升序排序，`[0]` 可证就是继承者；
+- 新增 `nativeInheritor()` 返回**合格**的继承者，`canStepAside()` = `nativeInheritor() !== undefined`；
+- `declaresReturnRow(entry)` 同时接受 `entry.children`（真实 `StoredEntry` 形状）与
+  `entry.options.children`（原始注册形状），避免把「Host 换了暴露方式」误判成「什么都没声明」；
+- 判定**不看包名**：任何声明了该子槽的 entry 都算原生选择器（fork、改名发行版一样成立），
+  只有「声明了回程槽」这一结构事实才作数；
+- `reportInherit()` 在拒绝时额外 `console.warn` **点名挡路的插件**，因为「下面没人」和
+  「下面有人但不是原生选择器」对用户是完全不同的两件事，日志必须分得开。
+
+**Consequences.** acp 在位时，面板照常显示（不再有交出去后卡死的一步），「默认样式」按钮
+按 `native.unavailable` 明确置灰，控制台指名 `dsh-acp-agents`。修的是**交出席位的安全性**，
+不是 acp 的 bug：两个第三方插件争同一 `single` 格在结构上就无法靠 priority 协商（动态
+runner 会把 priority 重写成 `-1,-2,…`，静态 bundle 行则完全不改写），所以「谁能安全接管」
+必须由结构判断，而不是靠排队先后。
+
+**Test note.** 测试夹具原先只塞一个裸组件当「shipped 竞争者」，既没声明 `.options` 也没声明
+`.label`，与真实 `ModelSelect` 不符——正是这种不真实的夹具让旧断言全绿。现改为默认带上
+`SHIPPED_SEAT_CHILDREN`，并新增 4 条回归：第三方占位不算原生选择器、持久化 native 遇到
+第三方时仍保持面板、有第三方压在上面时仍以结构判定、以及「按声明的子槽而非包名识别原生
+选择器」。已用「回退修复」验证这 3 条确实会红。
+
+
 
 ## DEC-048 — 2026-11-17 — 设置页模型行也画目录 badge 与倍率：与选择器同一套语法和数据
 

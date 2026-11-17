@@ -1142,6 +1142,18 @@ test('a Session listed as a subagent origin hides the seat', () => {
 // Apply-path tests: the plugin face must register the seat at a negative
 // priority even when optional services are missing.
 // ---------------------------------------------------------------------------
+/**
+ * The child slots the shipped `ModelSelect` declares on the model seat.
+ *
+ * Mirrors `@deepseek-ai/dsh-client-ui-model-selection`: the inline `label` cell
+ * and the `options` list our return row rides. A competitor that declares
+ * neither is a replacement control, not the native picker — see
+ * `NATIVE_MENU_SLOT` in the plugin.
+ */
+const SHIPPED_SEAT_CHILDREN = {
+  'conversation.input.model.label': { kind: 'single', scope: 'session', inline: true },
+  'conversation.input.model.options': { kind: 'list', scope: 'session' },
+}
 function makeCtx(options = {}) {
   const registered = []
   const dictionaryRegistrations = []
@@ -1188,10 +1200,27 @@ function makeCtx(options = {}) {
     },
   }
   // Competing entries exist BEFORE the plugin activates, as the shipped ones do.
+  //
+  // A seeded entry may be a bare component, or `{ component, children, registrant }`
+  // when a test needs a competitor that is NOT the shipped picker. The default
+  // declares the children the real `ModelSelect` declares, because the renderer
+  // mounts a slot's children from the ELECTED entry (`renderSlot` reads
+  // `entry.children[key]`): a fixture entry without them could never host the
+  // native-mode return row, so it would misrepresent the host this plugin runs on.
   for (const [key, entries] of Object.entries(options.extraEntries ?? {})) {
-    live.set(key, entries.map(component => ({
-      registration: { name: key }, component, options: { name: key }, registrant: 'shipped',
-    })))
+    live.set(key, entries.map(seed => {
+      const spec = typeof seed === 'function' ? { component: seed } : seed
+      const declares = spec.children !== undefined
+        ? spec.children
+        : SHIPPED_SEAT_CHILDREN
+      return {
+        registration: { name: key, ...(declares === null ? {} : { children: declares }) },
+        component: spec.component,
+        options: { name: key, ...(declares === null ? {} : { children: declares }) },
+        children: declares === null ? undefined : declares,
+        registrant: spec.registrant ?? 'shipped',
+      }
+    }))
   }
   const services = {
     locale: {
@@ -3405,6 +3434,106 @@ test('a degraded face still answers the mode hooks without ever stepping aside',
   const button = findAll(open, node => hasClass(node, 'dshmf-modeBtn'))[0]
   assert.ok(button, 'the footer still draws the mode button')
   assert.equal(button.props.disabled, true, 'and it refuses to step aside')
+})
+
+// ---------------------------------------------------------------------------
+// A THIRD-PARTY plugin can shadow the model seat too (the `dsh-acp-agents`
+// conflict). Such an entry is not the native picker: it declares no `options`
+// child slot, so the return row has nowhere to live. Stepping aside to it would
+// swap one panel for a foreign control and leave no way back.
+// ---------------------------------------------------------------------------
+test('a foreign plugin holding the seat does not count as the native picker', () => {
+  installModeStorage()
+  try {
+    runtime.reset()
+    const foreign = {
+      component: () => null,
+      children: null, // declares nothing: a replacement control, not a picker
+      registrant: 'dsh-acp-agents',
+    }
+    const { ctx, seat } = makeCtx({
+      extraEntries: { 'conversation.input.model': [foreign] },
+    })
+    bundle.apply(ctx)
+    const face = seat().registration.inject('session-1')
+    assert.equal(face.nativeAvailable(), false,
+      'handing the cell to a plugin that cannot host the return row strands the user')
+    const tree = runtime.render(bundle.__component, { ...face, locked: false, t: key => key })
+    findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+    const open = runtime.render(bundle.__component, { ...face, locked: false, t: key => key })
+    const button = findAll(open, node => hasClass(node, 'dshmf-modeBtn'))[0]
+    assert.equal(button.props.disabled, true, 'so the footer button refuses')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('a persisted native mode survives a foreign plugin taking the seat', async () => {
+  installModeStorage({ 'dshmf:mode': 'native' })
+  try {
+    runtime.reset()
+    const { ctx, liveOf } = makeCtx({
+      extraEntries: {
+        'conversation.input.model': [{
+          component: () => null, children: null, registrant: 'dsh-acp-agents',
+        }],
+      },
+    })
+    bundle.apply(ctx)
+    await flushMicrotasks()
+    const entries = liveOf('conversation.input.model')
+    assert.equal(entries.length, 2,
+      'the panel stays mounted: a foreign control is not the default style')
+    assert.ok(entries.some(entry => entry.registrant === 'dsh-model-flatmap'),
+      'the composer keeps a model control it can actually return from')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('the native picker underneath is still elected when a foreign plugin sits above it', () => {
+  installModeStorage()
+  try {
+    runtime.reset()
+    // Election order is by priority: the foreign entry at 0, the shipped picker
+    // further down. Our own entry is the negative-priority winner either way.
+    const { ctx, seat } = makeCtx({
+      extraEntries: {
+        'conversation.input.model': [
+          { component: () => null, children: null, registrant: 'dsh-acp-agents' },
+          { component: () => null, registrant: 'shipped' },
+        ],
+      },
+    })
+    bundle.apply(ctx)
+    const face = seat().registration.inject('session-1')
+    assert.equal(face.nativeAvailable(), false,
+      'the entry that would inherit cannot host the row, so the answer is no')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('the native picker is recognised by the child slot it declares, not by name', () => {
+  installModeStorage()
+  try {
+    runtime.reset()
+    // A fork or a differently-packaged host: not called "shipped", but it DOES
+    // declare the row's slot, so it is a genuine native picker.
+    const { ctx, seat } = makeCtx({
+      extraEntries: {
+        'conversation.input.model': [{
+          component: () => null, registrant: 'some-fork',
+        }],
+      },
+    })
+    bundle.apply(ctx)
+    const face = seat().registration.inject('session-1')
+    assert.equal(face.nativeAvailable(), true,
+      'the check is structural: declaring the return row is what makes it native')
+  } finally {
+    delete globalThis.localStorage
+  }
 })
 
 test('every native-mode key is translated in both languages', () => {
