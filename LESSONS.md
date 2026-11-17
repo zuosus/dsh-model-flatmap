@@ -5,6 +5,29 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## LES-031 — 2026-11-17 — Host 侧签名写的返回类型，往往不是客户端拿到的形状
+
+给设置页读全局模型目录时，Host 那侧的声明是
+`@Remote('modelCatalog') modelCatalog(): Promise<ModelCatalog>`，于是我照着写
+`const catalog = await session.modelCatalog(); catalog.groups`。**这是错的**：客户端拿到
+的是信封 `RemoteResult<ModelCatalog>`，即 `{ok:true,value}` / `{ok:false,error}`，
+真正的目录在 `.value` 里。
+
+`.groups` 会安静地读到 `undefined`，`Array.isArray` 一判断就变成空目录 —— 页面不报错，
+只是永远说「目录还没加载」。这种 bug 没有异常、没有日志，只有一句看起来合理的空状态，
+最难查。
+
+**规矩**：`@Remote` 标注的类型是 **Host 业务签名**，客户端一侧一律是
+`Promise<RemoteResult<T>>`。找证据要看网关构造信封的那段代码（`dsh-api-gateway` 的
+client dispatch 里 `return { ok: true, value }`），而不是看 Host 的方法签名。同仓里
+所有正确的调用点（`catalog.ts`、`settings-models/store.ts`、`subagent-model-selection-
+card-controller.ts`）都先判 `response.ok`，那就是信号。
+
+顺带一条同类经验：**「有没有可用的服务」和「调用有没有成功」是两件事**，都要降级。
+`ctx.get(name)` 在服务没挂载时返回 `undefined`（不抛），而调用本身还可能 reject
+（装配期错误）。两个分支都得吞掉，否则设置页会因为一个可选命名空间整页挂掉。
+
+
 ## LES-030 — 2026-11-15 — 按钮之间压不下去的间距，通常不在按钮上，在容器的 gap 上
 
 给「网页链接」按钮设了 `margin-right: 2px`，用户还是说间距太大。量一下才发现是 32px：

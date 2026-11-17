@@ -336,6 +336,63 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
 .dshmf-empty { grid-column: 1 / -1; padding: 10px 8px; color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; }
 .dshmf-failure { grid-column: 1 / -1; padding: 2px 6px; color: var(--dsw-alias-state-warn-label); font-size: 11px; line-height: 16px; overflow-wrap: anywhere; }
 
+/* ---------------------------------------------------------------------------
+   Settings section — "Model list".
+
+   Rendered INSIDE the settings panel's scrolling content column, which owns
+   padding, scrolling and height. This block therefore only stacks content and
+   caps its own width, exactly like the shipped sections: setting a height or an
+   overflow here would fight the shell's scroll container.
+
+   Geometry is copied from the shipped settings pages rather than invented: a
+   720px cap, 12px between blocks, a 16px/0 row with a 0.5px hairline, and the
+   host's own label/border tokens. The switch reproduces the host primitive's
+   six rules because that component is a seed word of the module table, not an
+   installed package this bundle could depend on.
+   --------------------------------------------------------------------------- */
+.dshmf-setSection { display: flex; flex-direction: column; gap: 12px; max-width: 720px; color: var(--dsw-alias-label-primary); }
+.dshmf-setTitle { margin: 0; font-size: 16px; line-height: 24px; font-weight: 500; color: var(--dsw-alias-label-primary); }
+.dshmf-setIntro { margin: 0; font-size: 14px; line-height: 22px; color: var(--dsw-alias-label-tertiary); }
+.dshmf-setEmpty { margin: 0; padding: 16px 0; font-size: 14px; line-height: 22px; color: var(--dsw-alias-label-tertiary); }
+.dshmf-setNote { margin: 0; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); }
+.dshmf-setList { display: flex; flex-direction: column; margin-top: 4px; }
+.dshmf-setProvider { border-bottom: 0.5px solid var(--dsw-alias-border-l2); }
+.dshmf-setList > .dshmf-setProvider:last-child { border-bottom: none; }
+.dshmf-setProviderRow { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0; }
+.dshmf-setDisclosure {
+  display: flex; align-items: center; justify-content: center; flex: 0 0 auto;
+  width: 20px; height: 20px; padding: 0; border: none; border-radius: var(--dsw-radius-xs);
+  background: transparent; color: var(--dsw-alias-label-secondary); cursor: pointer;
+}
+@media (hover: hover) { .dshmf-setDisclosure:hover { background: var(--dsw-alias-interactive-bg-hover); } }
+.dshmf-setDisclosure:focus-visible { outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: 1px; }
+.dshmf-setChevron { transition: transform .12s ease; }
+.dshmf-setChevronOpen { transform: rotate(180deg); }
+.dshmf-setProviderText { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
+.dshmf-setProviderName { font-size: 14px; line-height: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dshmf-setProviderMeta { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); }
+/* A switched-off provider reads as dimmed, so a long list shows at a glance
+   which rows are already out of the panel. */
+.dshmf-setProvider[data-hidden="true"] .dshmf-setProviderName,
+.dshmf-setProvider[data-hidden="true"] .dshmf-setProviderMeta { color: var(--dsw-alias-label-dimmed); }
+.dshmf-setModels { display: flex; flex-direction: column; padding: 0 0 8px 20px; }
+.dshmf-setModelRow { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 6px 0; }
+.dshmf-setModelName { font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dshmf-switch {
+  box-sizing: border-box; position: relative; flex: 0 0 auto;
+  width: 36px; height: 20px; padding: 2px; border: 0; border-radius: 999px;
+  background: var(--dsw-alias-border-l3); cursor: pointer;
+}
+.dshmf-switch[aria-checked="true"] { background: var(--dsw-alias-brand-primary); }
+.dshmf-switch:disabled { cursor: default; opacity: .45; }
+.dshmf-switch:focus-visible { outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: 2px; }
+.dshmf-switchThumb {
+  display: block; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--dsw-alias-label-primary-foreground); transition: transform .12s ease;
+}
+.dshmf-switch[aria-checked="false"] .dshmf-switchThumb { background: var(--dsw-alias-switch-thumb); }
+.dshmf-switch[aria-checked="true"] .dshmf-switchThumb { transform: translate(16px); }
+
 /* Adaptive footer: the reasoning group and the teamwork group share one line
    when BOTH fit side by side with a guaranteed 30px gap, and otherwise fall
    back to one row each (the original two-line look). The decision is pure CSS:
@@ -1529,6 +1586,198 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
     }
 
     // ---------------------------------------------------------------------
+    // Visibility — which providers and models the panel is allowed to draw.
+    //
+    // A profile with a dozen connection plugins offers far more models than
+    // anyone picks between, and the flat panel shows all of them at once. The
+    // feature therefore records what the user has SWITCHED OFF, not what they
+    // left on, and that choice is made in the Settings panel (see the
+    // `settings.section` registration in `apply`).
+    //
+    // Three properties decide the shape below:
+    //
+    // 1. **Hidden is stored, visible is implied.** A model added by a plugin
+    //    installed tomorrow must appear without anyone re-opening Settings, so
+    //    the absence of a record means visible. This also keeps the record
+    //    small: the common case stores nothing at all.
+    // 2. **The record is keyed by route, like the balance marks.** A provider
+    //    may publish the same model id under two groups, and a group may be
+    //    renamed; the key is the same `provider/model` pair the strike state
+    //    uses, plus a bare provider id for a provider-wide switch. Both live in
+    //    ONE record, so a provider switch and a per-model exception can never
+    //    disagree about which of them was written last.
+    // 3. **Storage failure degrades to "show everything".** The panel's job is
+    //    to offer the catalogue; a browser that refuses `localStorage` must
+    //    lose the memory of the choice, never the models.
+    // ---------------------------------------------------------------------
+    const HIDDEN_KEY = 'dshmf:hidden'
+
+    /** The shared empty hidden record; one instance keeps `getSnapshot` stable. */
+    const EMPTY_HIDDEN = new Set()
+
+    /**
+     * Read one stored hidden record, or an empty set when storage is missing,
+     * holds garbage, or throws.
+     *
+     * The record is a flat object of `key -> true`. Only `true` counts: a
+     * `false` is a leftover from a version that stored both states and must
+     * never resurrect a hidden model.
+     * @returns {Set<string>} the hidden provider ids and `provider/model` routes.
+     */
+    function readHidden() {
+      try {
+        if (typeof localStorage === 'undefined') return new Set()
+        const text = localStorage.getItem(HIDDEN_KEY)
+        if (text === null || text === '') return new Set()
+        const parsed = JSON.parse(text)
+        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return new Set()
+        const hidden = new Set()
+        for (const [key, value] of Object.entries(parsed)) {
+          if (typeof key !== 'string' || key === '') continue
+          if (value === true) hidden.add(key)
+        }
+        return hidden
+      } catch {
+        return new Set()
+      }
+    }
+
+    /**
+     * Persist one hidden record. A write failure is swallowed: the in-memory
+     * set still drives every open panel in this page.
+     * @param {Set<string>} hidden - the keys to persist.
+     */
+    function writeHidden(hidden) {
+      try {
+        if (typeof localStorage === 'undefined') return
+        const record = {}
+        for (const key of hidden) record[key] = true
+        localStorage.setItem(HIDDEN_KEY, JSON.stringify(record))
+      } catch {
+        /* storage unavailable — keep the in-memory choice only */
+      }
+    }
+
+    /**
+     * The provider-wide key. A provider id can never collide with a route key:
+     * routes always contain a `/`, and provider ids do not.
+     * @param {unknown} providerId - the provider's id.
+     * @returns {string} the key that hides a whole provider.
+     */
+    function providerHiddenKey(providerId) {
+      return String(providerId ?? '')
+    }
+
+    /**
+     * The per-model key, identical to the balance marks' route key so the two
+     * features agree about what "one model" means.
+     * @param {unknown} providerId - the provider's id.
+     * @param {unknown} modelId - the provider-owned model id.
+     * @returns {string} the key that hides one model.
+     */
+    function modelHiddenKey(providerId, modelId) {
+      return routeKeyOf(providerId, modelId)
+    }
+
+    /**
+     * Is one model currently allowed on screen?
+     *
+     * The provider switch wins: a hidden provider hides every model under it,
+     * whatever the per-model records say. That is what makes the provider row a
+     * single control rather than a summary of its children — switching a
+     * provider off and on again restores exactly the per-model exceptions it
+     * had, because they were never rewritten.
+     * @param {Set<string>} hidden - the hidden record.
+     * @param {unknown} providerId - the provider's id.
+     * @param {unknown} modelId - the model's id.
+     * @returns {boolean} whether the model should be drawn.
+     */
+    function modelIsVisible(hidden, providerId, modelId) {
+      if (hidden.has(providerHiddenKey(providerId))) return false
+      return !hidden.has(modelHiddenKey(providerId, modelId))
+    }
+
+    /**
+     * Filter a catalogue down to what the panel may draw.
+     *
+     * Providers that end up with no visible model are DROPPED rather than
+     * rendered as an empty heading — the panel already drops search-emptied
+     * groups, and an empty band would read as a broken provider.
+     * @param {Array<{id: string, models: Array<object>}>} groups - catalogue groups.
+     * @param {Set<string>} hidden - the hidden record.
+     * @returns {Array<object>} the surviving groups, each with its visible models.
+     */
+    function visibleGroups(groups, hidden) {
+      if (hidden === undefined || hidden.size === 0) return groups
+      const out = []
+      for (const group of groups) {
+        const models = group.models.filter(model => modelIsVisible(hidden, group.id, model.id))
+        if (models.length === 0) continue
+        out.push(models.length === group.models.length ? group : { ...group, models })
+      }
+      return out
+    }
+
+    /**
+     * The ONE visibility store per plugin generation, shared by the Settings
+     * page that writes it and every panel that reads it. Both live in the same
+     * page, so a switch flipped in Settings re-renders an open panel without a
+     * reload.
+     * @param deps - storage accessors, injected for testability.
+     * @returns the store plus an idempotent `setVisible`.
+     */
+    function createHiddenStore(deps) {
+      let hidden = new Set(typeof deps.readStored === 'function' ? deps.readStored() : [])
+      const listeners = new Set()
+      const persist = () => {
+        try {
+          if (typeof deps.writeStored === 'function') deps.writeStored(hidden)
+        } catch {
+          /* storage unavailable — the in-memory value still applies */
+        }
+      }
+      return {
+        getSnapshot: () => hidden,
+        subscribe: listener => {
+          listeners.add(listener)
+          return () => { listeners.delete(listener) }
+        },
+        /**
+         * Show or hide one key.
+         * @param {string} key - a provider id or a `provider/model` route.
+         * @param {boolean} visible - `false` to hide it.
+         */
+        setVisible: (key, visible) => {
+          if (visible === !hidden.has(key)) return
+          const next = new Set(hidden)
+          if (visible) next.delete(key)
+          else next.add(key)
+          hidden = next
+          persist()
+          for (const listener of [...listeners]) {
+            try {
+              listener()
+            } catch {
+              /* one bad subscriber must not starve the others */
+            }
+          }
+        },
+        /** Drop every subscriber (activation teardown). */
+        dispose: () => { listeners.clear() },
+      }
+    }
+
+    /**
+     * Frozen stand-in for a screen with no store (a degraded activation, or a
+     * test double): everything visible, nothing settable.
+     */
+    const ALL_VISIBLE = {
+      getSnapshot: () => EMPTY_HIDDEN,
+      subscribe: () => () => {},
+      setVisible: () => {},
+    }
+
+    // ---------------------------------------------------------------------
     // Project link: the icon button beside the display-mode button.
     //
     // The browser cannot read the checkout — no filesystem, no subprocess — so
@@ -2117,6 +2366,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         'group.aria': '模型分组方式',
         'empty.models': '暂无可用模型',
         'empty.search': '无匹配模型',
+        'empty.hidden': '所有模型已在设置中隐藏。可在「设置 → 模型列表」中重新开启。',
         'status.loading': '正在刷新模型列表…',
         'trigger.fallback': '请选择模型',
         'trigger.loading': '正在加载模型…',
@@ -2156,6 +2406,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         'group.aria': 'Group models by',
         'empty.models': 'No models available',
         'empty.search': 'No matching models',
+        'empty.hidden': 'Every model is hidden in Settings. Re-enable them under Settings → Model list.',
         'status.loading': 'Refreshing model list…',
         'trigger.fallback': 'Select model',
         'trigger.loading': 'Loading models…',
@@ -2185,6 +2436,60 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         'link.openFrom': 'Open the project web page in a new tab: {url}',
         'link.fallback': 'No usable GitHub remote was found; open this project\'s home page',
         'link.failed': 'The browser blocked the new tab. Allow pop-ups and try again.',
+      },
+    }
+
+    // ---------------------------------------------------------------------
+    // Settings-section copy — its OWN locale namespace.
+    //
+    // The panel's dictionary above is registered under the panel's per-module
+    // `NS`, which is deliberately re-minted for every module generation so an
+    // enable/disable/enable cycle cannot collide with a namespace the locale
+    // registry still holds. The Settings section needs a STABLE namespace
+    // instead: its nav label is a thunk the settings shell re-reads on every
+    // projection and on every locale revision, and the section outlives any one
+    // generation. It therefore registers under its own fixed id, and a
+    // re-registration after a reload is safe because the registry drops the
+    // previous generation's entry with its own disposer.
+    // ---------------------------------------------------------------------
+    // Minted per generation for the same reason as the panel's `NS`: the locale
+    // registry keeps a namespace's slot after its disposer runs, and
+    // re-registering the same id throws — which would cost the section its copy
+    // on the enable/disable/enable path. A stable id is NOT needed: the settings
+    // shell re-reads the label thunk from the live registration, not from a
+    // namespace name it remembers.
+    const SETTINGS_NS = `modelFlatmapSettings-${Math.random().toString(36).slice(2, 10)}`
+    const settingsDict = {
+      zh: {
+        nav: '模型列表',
+        title: '模型列表',
+        // The account provider has no catalog name of its own; `providerLabel`
+        // asks this namespace for it, exactly as the panel's own dictionary
+        // does. Without it the row would print the raw key.
+        'provider.account': 'DeepSeek 账号',
+        intro: '选择在平铺模型面板中显示哪些 Provider 和模型。隐藏的项不会出现在面板里，也不会出现在搜索结果中。',
+        empty: '模型目录尚未加载。打开一次模型面板后再回来查看。',
+        models: '{count} 个模型',
+        hiddenCount: '已隐藏 {count} 个',
+        expand: '展开',
+        collapse: '收起',
+        providerToggle: '显示 {name}',
+        modelToggle: '显示 {name}',
+        note: '新增的 Provider 和模型默认显示。',
+      },
+      en: {
+        nav: 'Model list',
+        title: 'Model list',
+        'provider.account': 'DeepSeek Account',
+        intro: 'Choose which providers and models appear in the flat model panel. Hidden entries are left out of the panel and of search results.',
+        empty: 'The model catalogue has not loaded yet. Open the model panel once, then come back.',
+        models: '{count} models',
+        hiddenCount: '{count} hidden',
+        expand: 'Expand',
+        collapse: 'Collapse',
+        providerToggle: 'Show {name}',
+        modelToggle: 'Show {name}',
+        note: 'Newly added providers and models are shown by default.',
       },
     }
 
@@ -2490,7 +2795,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         locked, sessionId, t,
         available, directory, load, select, resolveText, resolveDirectory,
         teamAvailable, setTeamMode, useProjection, useSession, useSessions,
-        insufficient, displayMode, setDisplayMode, nativeAvailable,
+        insufficient, displayMode, setDisplayMode, nativeAvailable, visibility,
       } = props
 
       // The store may arrive after the first render (the Session binds later),
@@ -2520,6 +2825,15 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       const subscribeMode = useCallback(listener => modeFace.subscribe(listener), [modeFace])
       const getMode = useCallback(() => modeFace.getSnapshot(), [modeFace])
       const mode = useSyncExternalStore(subscribeMode, getMode, getMode)
+
+      // Which providers and models Settings has switched off. Same page-wide
+      // store the Settings section writes, so a toggle flipped there re-renders
+      // an open panel immediately. `hidden` is a Set, and the store keeps its
+      // identity until a key actually changes, so this cannot loop.
+      const visibleFace = visibility ?? ALL_VISIBLE
+      const subscribeVisible = useCallback(listener => visibleFace.subscribe(listener), [visibleFace])
+      const getHidden = useCallback(() => visibleFace.getSnapshot(), [visibleFace])
+      const hidden = useSyncExternalStore(subscribeVisible, getHidden, getHidden)
       // Resolved per render: the shipped entry may register after this face was
       // built, and the button has to enable itself without a reload.
       const canGoNative = typeof nativeAvailable === 'function' && nativeAvailable() === true
@@ -2700,13 +3014,20 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       const derive = (label, run, fallback) => guarded(label, run, fallback)
 
       // Provider order matches the shipped picker: account, official, catalog order.
+      //
+      // The visibility filter is applied HERE, before grouping, search, column
+      // planning and the trigger's label resolution, so every downstream
+      // consumer sees exactly one catalogue. A hidden provider therefore cannot
+      // reach the grid, the search index, the group headings or the model count
+      // by any route — there is no second place to remember to filter.
       const groups = useMemo(() => derive('grouping providers', () => {
-        const ranked = state.groups.map((group, index) => ({ group, index }))
+        const visible = visibleGroups(state.groups, hidden)
+        const ranked = visible.map((group, index) => ({ group, index }))
         const rankOf = value => (value.group.id === 'deepseek-account' ? 0
           : value.group.id === 'deepseek-official' ? 1 : 2)
         ranked.sort((left, right) => rankOf(left) - rankOf(right) || left.index - right.index)
         return ranked.map(entry => entry.group)
-      }, []), [state.groups])
+      }, []), [state.groups, hidden])
 
       /** Provider or family sections, search-filtered; empty groups never appear. */
       const sections = useMemo(() => derive('grouping models', () => {
@@ -3306,9 +3627,16 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       }
 
       const showEmptyState = sections.length === 0 && !busy
+      // Three different reasons the grid can be empty, and they must not share
+      // one sentence: a catalogue that is still loading, a catalogue with
+      // nothing in it, a search that matched nothing, and a catalogue whose
+      // every entry the user has switched off in Settings. The last one is not
+      // a fault and the panel cannot fix it, so it says where to fix it.
       const emptyKey = state.status === 'loading' && totalModels === 0
         ? 'status.loading'
-        : totalModels === 0 ? 'empty.models' : 'empty.search'
+        : totalModels === 0
+          ? (state.groups.length > 0 ? 'empty.hidden' : 'empty.models')
+          : 'empty.search'
 
       // A group title is a marquee-able band like a model row (DEC-023): the
       // band itself is the frame and never moves, while its text sits in a
@@ -3909,6 +4237,236 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
     }
 
     // ---------------------------------------------------------------------
+    // The catalogue face the Settings section reads.
+    //
+    // The section lives in the Settings panel, which has no Session, so it
+    // cannot use `modelDirectories.directoryFor(sessionId)` the way the
+    // composer seat does. The Host's catalog is not Session-scoped though:
+    // `remote.session.modelCatalog()` answers one catalog per Host generation
+    // and every Session selector folds it. Reading it directly is therefore the
+    // same data the panel draws, without inventing a Session.
+    //
+    // Two rules keep this face from ever costing the Settings page:
+    //
+    // 1. **Resolved lazily, through `ctx.get`.** The namespace service may
+    //    still be mounting when this store is built, and `ctx.get` returns
+    //    `undefined` instead of throwing on a missing service.
+    // 2. **`ok:false` and a thrown call both mean "no catalogue".** A Remote
+    //    call resolves to `{ok, value}` / `{ok, error}`; only assembly faults
+    //    reject. Neither is an error the user can act on here, so the section
+    //    says the catalogue has not loaded rather than showing a failure.
+    // ---------------------------------------------------------------------
+    const CATALOG_EMPTY = { status: 'idle', groups: [], error: null }
+
+    /**
+     * Build the catalogue store shared by the Settings section.
+     * @param deps - `read` resolves a Client service by name.
+     * @returns a snapshot store with an idempotent `load`.
+     */
+    function createCatalogStore(deps) {
+      let snapshot = CATALOG_EMPTY
+      const listeners = new Set()
+      let inflight
+      const notify = () => {
+        for (const listener of [...listeners]) {
+          try {
+            listener()
+          } catch {
+            /* one bad subscriber must not starve the others */
+          }
+        }
+      }
+      const publish = next => {
+        snapshot = next
+        notify()
+      }
+      return {
+        getSnapshot: () => snapshot,
+        subscribe: listener => {
+          listeners.add(listener)
+          return () => { listeners.delete(listener) }
+        },
+        /**
+         * Read the Host's catalog once, sharing any in-flight read.
+         * @returns {Promise<void>} settles when the snapshot is final.
+         */
+        load: () => {
+          if (snapshot.status === 'ready') return Promise.resolve()
+          if (inflight !== undefined) return inflight
+          const service = (() => {
+            try {
+              return typeof deps.read === 'function' ? deps.read('remote.session') : undefined
+            } catch {
+              return undefined
+            }
+          })()
+          if (service === undefined || typeof service.modelCatalog !== 'function') {
+            publish({ status: 'unavailable', groups: [], error: null })
+            return Promise.resolve()
+          }
+          publish({ status: 'loading', groups: snapshot.groups, error: null })
+          inflight = Promise.resolve()
+            .then(() => service.modelCatalog())
+            .then(result => {
+              // The envelope is `RemoteResult<ModelCatalog>`, never the
+              // catalog itself: unwrapping it twice would read `.groups` off
+              // `undefined` and blank the page.
+              if (result === null || typeof result !== 'object' || result.ok !== true) {
+                publish({ status: 'unavailable', groups: [], error: null })
+                return
+              }
+              const value = result.value
+              const groups = Array.isArray(value?.groups) ? value.groups : []
+              publish({ status: 'ready', groups, error: null })
+            })
+            .catch(() => {
+              publish({ status: 'unavailable', groups: [], error: null })
+            })
+            .finally(() => { inflight = undefined })
+          return inflight
+        },
+        dispose: () => { listeners.clear() },
+      }
+    }
+
+    /** Frozen catalogue face for a degraded Settings render. */
+    const EMPTY_CATALOG = {
+      getSnapshot: () => CATALOG_EMPTY,
+      subscribe: () => () => {},
+      load: () => Promise.resolve(),
+    }
+
+    /**
+     * One switch, drawn with the settings domain's own geometry.
+     *
+     * Deliberately NOT imported from `@deepseek-ai/dsh-client-ui-primitives`:
+     * that package is a seed word of the module table, not an installed
+     * package, so requiring it would make this bundle depend on an internal
+     * host artifact that has no manifest and can change without notice. The
+     * markup and the six CSS rules below reproduce it exactly instead.
+     * @param props - `checked`, `onChange`, `label`, and an optional `disabled`.
+     */
+    function Switch(props) {
+      const { checked, onChange, label, disabled } = props
+      return h('button', {
+        type: 'button',
+        role: 'switch',
+        'aria-checked': checked === true,
+        'aria-label': label,
+        disabled: disabled === true,
+        className: 'dshmf-switch',
+        onClick: () => { if (disabled !== true) onChange(checked !== true) },
+      }, h('span', { className: 'dshmf-switchThumb' }))
+    }
+
+    /**
+     * The Settings section: every provider with a switch, and its models with
+     * one switch each.
+     *
+     * A provider row is the CONTROL, not a summary of its children: switching a
+     * provider off hides all of its models whatever their own records say (see
+     * `modelIsVisible`), and switching it back on restores exactly the
+     * per-model exceptions it had. The row also reports how many of its models
+     * are hidden, so a collapsed provider still says what it is hiding.
+     * @param props - the settings slot's props plus the injected face.
+     */
+    function SettingsSection(props) {
+      const { t, visibility, catalog } = props
+      const visibleFace = visibility ?? ALL_VISIBLE
+      const subscribeHidden = useCallback(listener => visibleFace.subscribe(listener), [visibleFace])
+      const getHidden = useCallback(() => visibleFace.getSnapshot(), [visibleFace])
+      const hidden = useSyncExternalStore(subscribeHidden, getHidden, getHidden)
+
+      const catalogFace = catalog ?? EMPTY_CATALOG
+      const subscribeCatalog = useCallback(listener => catalogFace.subscribe(listener), [catalogFace])
+      const getCatalog = useCallback(() => catalogFace.getSnapshot(), [catalogFace])
+      const catalogue = useSyncExternalStore(subscribeCatalog, getCatalog, getCatalog)
+
+      // Read the catalog when the page opens. The effect is idempotent: a
+      // second visit re-reads only when the first one never produced a
+      // catalogue, so switching sections back and forth costs nothing.
+      useEffect(() => { catalogFace.load() }, [catalogFace])
+
+      const [expanded, setExpanded] = useState(() => new Set())
+      const toggleExpanded = id => {
+        setExpanded(previous => {
+          const next = new Set(previous)
+          if (next.has(id)) next.delete(id)
+          else next.add(id)
+          return next
+        })
+      }
+
+      const translate = typeof t === 'function' ? t : key => key
+      const fillText = (key, values) => {
+        const template = String(translate(key))
+        if (values === undefined) return template
+        return template.replace(/\{(\w+)\}/g, (_, name) => String(values[name] ?? ''))
+      }
+
+      const groups = Array.isArray(catalogue.groups) ? catalogue.groups : []
+      const labelOf = group => providerLabel(group, translate, undefined)
+      const providerVisible = group => !hidden.has(providerHiddenKey(group.id))
+      const hiddenModelsOf = group => group.models
+        .filter(model => !modelIsVisible(hidden, group.id, model.id)).length
+
+      const setVisible = (key, visible) => visibleFace.setVisible(key, visible)
+
+      const rows = groups.map(group => {
+        const isOpen = expanded.has(group.id)
+        const shown = providerVisible(group)
+        const hiddenCount = hiddenModelsOf(group)
+        const models = Array.isArray(group.models) ? group.models : []
+        const title = labelOf(group)
+        return h('div', { className: 'dshmf-setProvider', key: group.id, 'data-hidden': !shown },
+          h('div', { className: 'dshmf-setProviderRow' },
+            h('button', {
+              type: 'button',
+              className: 'dshmf-setDisclosure',
+              'aria-expanded': isOpen,
+              'aria-label': `${isOpen ? translate('collapse') : translate('expand')} ${title}`,
+              onClick: () => toggleExpanded(group.id),
+            }, svg(PATH_CHEVRON, 13, { className: isOpen ? 'dshmf-setChevron dshmf-setChevronOpen' : 'dshmf-setChevron' })),
+            h('div', { className: 'dshmf-setProviderText' },
+              h('div', { className: 'dshmf-setProviderName' }, title),
+              h('div', { className: 'dshmf-setProviderMeta' },
+                fillText('models', { count: models.length }),
+                hiddenCount === 0 ? null : ` · ${fillText('hiddenCount', { count: hiddenCount })}`)),
+            h(Switch, {
+              checked: shown,
+              label: fillText('providerToggle', { name: title }),
+              onChange: next => setVisible(providerHiddenKey(group.id), next),
+            })),
+          isOpen
+            ? h('div', { className: 'dshmf-setModels' }, ...models.map(model => {
+              const modelTitle = typeof model?.name === 'string' ? model.name : String(model?.id ?? '')
+              // A model under a hidden provider is off through its parent. The
+              // switch still shows its OWN record, so the user can see what
+              // will come back when the provider is switched on again.
+              const own = !hidden.has(modelHiddenKey(group.id, model.id))
+              return h('div', { className: 'dshmf-setModelRow', key: String(model?.id ?? '') },
+                h('span', { className: 'dshmf-setModelName', title: modelTitle }, modelTitle),
+                h(Switch, {
+                  checked: own,
+                  disabled: !shown,
+                  label: fillText('modelToggle', { name: modelTitle }),
+                  onChange: next => setVisible(modelHiddenKey(group.id, model.id), next),
+                }))
+            }))
+            : null)
+      })
+
+      const nothingLoaded = groups.length === 0
+      return h('div', { className: 'dshmf-setSection' },
+        h('h2', { className: 'dshmf-setTitle' }, translate('title')),
+        h('p', { className: 'dshmf-setIntro' }, translate('intro')),
+        nothingLoaded
+          ? h('p', { className: 'dshmf-setEmpty', role: 'status' }, translate('empty'))
+          : h('div', { className: 'dshmf-setList' }, ...rows),
+        nothingLoaded ? null : h('p', { className: 'dshmf-setNote' }, translate('note')))
+    }
+
+    // ---------------------------------------------------------------------
     // Plugin
     // ---------------------------------------------------------------------
     return {
@@ -3922,10 +4480,11 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       // Pure layout and grouping derivations plus the component itself,
       // exposed for `node --test` so grouping, filtering and the column
       // algorithm are pinned without a browser. The shell never reads this key.
-      __test: { marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, readDisplayMode, writeDisplayMode, createDisplayModeStore, DISPLAY_MODE_KEY, DISPLAY_MODE_DEFAULT, FLAT_DISPLAY_MODE, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore, quantizeMetric, metricChanged, METRIC_HYSTERESIS, LabelBoundary, readLabelEntry, labelSeat, labelSlotSource, LABEL_SLOT, providerLabel, fetchProjectLink, openInNewTab, PROJECT_LINK_PATH, PROJECT_LINK_FALLBACK, PROJECT_LINK_TIMEOUT_MS },
+      __test: { marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, readDisplayMode, writeDisplayMode, createDisplayModeStore, DISPLAY_MODE_KEY, DISPLAY_MODE_DEFAULT, FLAT_DISPLAY_MODE, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore, quantizeMetric, metricChanged, METRIC_HYSTERESIS, LabelBoundary, readLabelEntry, labelSeat, labelSlotSource, LABEL_SLOT, providerLabel, fetchProjectLink, openInNewTab, PROJECT_LINK_PATH, PROJECT_LINK_FALLBACK, PROJECT_LINK_TIMEOUT_MS, HIDDEN_KEY, readHidden, writeHidden, providerHiddenKey, modelHiddenKey, modelIsVisible, visibleGroups, createHiddenStore, ALL_VISIBLE, createCatalogStore, EMPTY_CATALOG, SETTINGS_NS, settingsDict, SettingsSection, Switch },
       __component: ModelFlatMap,
       __seat: Seat,
       __nativeMenuRow: NativeMenuRow,
+      __settingsSection: SettingsSection,
       apply(ctx) {
         const read = name => {
           try {
@@ -4023,6 +4582,36 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         } catch (error) {
           console.error('dsh-model-flatmap: the display mode store failed to start', error)
           modeStore = createDisplayModeStore({ readStored: () => DISPLAY_MODE_DEFAULT })
+        }
+
+        // ---- the visibility store (which providers and models the panel draws)
+        //
+        // ONE store per activation, read by the panel and written by the
+        // Settings section below. `readHidden` already returns an empty record
+        // for a missing or unreadable store, so a persistence failure costs the
+        // memory of the choice, never the models.
+        let hiddenStore
+        try {
+          hiddenStore = createHiddenStore({ readStored: readHidden, writeStored: writeHidden })
+          ctx.effect(() => () => { hiddenStore.dispose?.() }, 'dsh-model-flatmap: visibility')
+        } catch (error) {
+          console.error('dsh-model-flatmap: the visibility store failed to start', error)
+          hiddenStore = ALL_VISIBLE
+        }
+
+        // ---- the catalogue the Settings section lists
+        //
+        // Built here (not inside the section) so both share one read: the
+        // section may be mounted, unmounted and re-mounted as the user moves
+        // between settings pages, and a per-mount read would re-ask the Host
+        // every time.
+        let catalogStore
+        try {
+          catalogStore = createCatalogStore({ read })
+          ctx.effect(() => () => { catalogStore.dispose?.() }, 'dsh-model-flatmap: settings catalogue')
+        } catch (error) {
+          console.error('dsh-model-flatmap: the settings catalogue failed to start', error)
+          catalogStore = EMPTY_CATALOG
         }
 
         /**
@@ -4165,6 +4754,11 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
             // this seat is disposed.
             displayMode: modeStore,
             setDisplayMode: value => { modeStore.set(value) },
+            // The ONE visibility store: what Settings has switched off. The
+            // panel filters its catalogue through it before grouping and
+            // search, so a toggle flipped in Settings re-renders an open panel
+            // without a reload.
+            visibility: hiddenStore,
             // Lazy for the same reason as `teamAvailable`: the shipped entry can
             // register AFTER this face is built, and the button has to enable
             // itself without a reload.
@@ -4230,6 +4824,9 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
               displayMode: FLAT_DISPLAY_MODE,
               setDisplayMode: () => {},
               nativeAvailable: () => false,
+              // A face this broken must not hide anything: an empty record
+              // shows the whole catalogue rather than an unexplained blank.
+              visibility: ALL_VISIBLE,
             }
           }
         }
@@ -4357,6 +4954,80 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
           // Losing the row costs the way BACK, never the way in: the panel and
           // its footer button still work, and a reload restores flat mode.
           console.error('dsh-model-flatmap: slots.inject failed for the native-mode menu row', error)
+        }
+
+        // ---- the Settings section: which providers and models are listed
+        //
+        // `settings.section` is the settings domain's own extension point: the
+        // shell renders one page per registration, with our label in its nav
+        // column. It is the right seat because the choice this page makes is a
+        // preference about the composer's model list, not a property of the
+        // plugin bundle — a bundle-config page would sit under Plugin Manager,
+        // where nobody looks for "which models do I want to see".
+        //
+        // The section needs its OWN stable locale namespace (see SETTINGS_NS),
+        // registered here rather than with the panel's dictionary. Both
+        // registrations are independent: losing either costs one surface.
+        try {
+          const locale = read('locale')
+          if (locale !== undefined && typeof locale.register === 'function') {
+            ctx.effect(() => locale.register(SETTINGS_NS, settingsDict), 'dsh-model-flatmap: settings copy')
+          }
+        } catch (error) {
+          console.error('dsh-model-flatmap: settings dictionaries were not registered', error)
+        }
+
+        try {
+          if (typeof slots.inject === 'function') {
+            slots.inject('settings.section', () => {
+              if (typeof slots.register !== 'function') return () => {}
+              try {
+                // The nav label is a thunk over a BOUND translate: the settings
+                // shell re-reads it on every projection and on every locale
+                // revision, so a plain string would freeze the active language
+                // at registration time.
+                let bound
+                const navLabel = () => {
+                  try {
+                    const locale = read('locale')
+                    if (locale !== undefined && typeof locale.bind === 'function') {
+                      bound ??= locale.bind(SETTINGS_NS)
+                      const text = String(bound('nav'))
+                      // A namespace whose registration was refused (or that a
+                      // previous generation still holds) resolves every key to
+                      // ITSELF. Printing "nav" in the nav column is worse than
+                      // printing the English fallback, so the raw key is
+                      // treated as "no translation".
+                      if (text !== '' && text !== 'nav') return text
+                    }
+                  } catch {
+                    /* fall through to the literal below */
+                  }
+                  return settingsDict.en.nav
+                }
+                return slots.register({
+                  name: 'settings.section',
+                  // An id of our own: a fresh id is added beside the shipped
+                  // sections, while reusing a shipped one would replace it.
+                  id: 'model-flatmap',
+                  order: 100,
+                  label: navLabel,
+                  locale: SETTINGS_NS,
+                  inject: () => ({
+                    visibility: hiddenStore,
+                    catalog: catalogStore,
+                  }),
+                }, SettingsSection)
+              } catch (error) {
+                console.error('dsh-model-flatmap: the settings section was not registered', error)
+                return () => {}
+              }
+            })
+          }
+        } catch (error) {
+          // Losing the page costs the CONTROLS, never the picker: the panel
+          // still works, and the hidden record is untouched.
+          console.error('dsh-model-flatmap: slots.inject failed for the settings section', error)
         }
       },
     }

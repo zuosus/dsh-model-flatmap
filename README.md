@@ -35,9 +35,10 @@ new one. The heartbeat is `void`-ed and every failure is swallowed, so the picke
 never waits for it and never fails because of it. It exists because npm download
 counts cannot answer "how many machines actually run this, and how many ran it
 today" (installs, CI and mirrors all count), and a Client-side counter cannot
-either (a tab nobody reloads reports nothing). There is no toggle: the bundle
-ships no settings page, so a switch nobody can reach would only dress a default
-up as a user choice; disabling the bundle stops the heartbeat with the UI.
+either (a tab nobody reloads reports nothing). There is no toggle. The bundle
+does ship a settings page — the model list — but the heartbeat gets no switch
+there either: a toggle added only to make a default look like a user choice is
+not a choice. Disabling the bundle stops the heartbeat with the UI.
 
 ## Screenshot
 
@@ -110,6 +111,23 @@ levels, and the agent-teamwork switch on one surface:
   plain. Observations are ordered by that same time, so the newest one wins and
   replaying older history cannot resurrect a strike that has already ended —
   by a later call or by age.
+- **Provider and model visibility.** A profile with many connection plugins offers
+  far more models than anyone picks between, so the panel can be narrowed down.
+  **Settings → Model list** (`settings.section`, so it sits in the app's own
+  settings panel beside the shipped pages) lists every provider with a switch,
+  and expanding a provider lists its models with one switch each. A hidden
+  provider hides all of its models; switching it back on restores exactly the
+  per-model exceptions it had. The choice applies to the panel's grid, its
+  search index, its group headings and its model count at once, because the
+  filter runs on the single catalogue every one of them derives from. The
+  record stores what is **hidden**, not what is shown, so a provider or model
+  added by a plugin installed later appears without re-opening Settings. It is
+  kept in `localStorage` (`dshmf:hidden`) and shared by the settings page and
+  every panel in the page, so a switch flipped in Settings re-renders an open
+  panel immediately, with no reload. Hiding the model a conversation currently
+  uses is allowed: the grid obeys the switch, and the trigger still names the
+  current model. If everything is hidden the panel says so and points back at
+  Settings instead of claiming no models are available.
 - **Theme-aware.** Styled with host theme tokens only; looks correct in both
   light and dark themes.
 - **Project link.** Immediately left of the `Default style` button sits a link
@@ -170,7 +188,7 @@ is touched when the bundle is off.
 | -------------------- | -------------------------------------------------------- |
 | `index.js`           | Host half — bundle entry; starts the anonymous daily heartbeat. |
 | `telemetry.js`       | The heartbeat itself: pure day/decision functions, plus an injectable reporter. |
-| `client.js`          | Browser half — the entire flat picker UI.                |
+| `client.js`          | Browser half — the entire flat picker UI, plus the Settings → Model list section. |
 | `cordis.patch.yml`   | Cordis patch applied by the `dsh` bundle loader.         |
 | `locale/en.json`     | English copy and metadata.                               |
 | `locale/zh.json`     | Simplified-Chinese copy and metadata.                    |

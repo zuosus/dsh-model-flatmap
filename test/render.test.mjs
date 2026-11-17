@@ -34,7 +34,12 @@ function createRuntime() {
     },
     useState: initial => {
       const slot = cursor++
-      if (hooks[slot] === undefined) hooks[slot] = { value: initial }
+      // React treats a function initializer as a LAZY one and calls it on the
+      // first render only. Mirroring that keeps a component's lazy state
+      // (a Set, a Map) usable here instead of storing the factory itself.
+      if (hooks[slot] === undefined) {
+        hooks[slot] = { value: typeof initial === 'function' ? initial() : initial }
+      }
       const box = hooks[slot]
       return [box.value, next => {
         box.value = typeof next === 'function' ? next(box.value) : next
@@ -1249,9 +1254,21 @@ test('apply registers the seat at a negative priority so it shadows the native p
   runtime.reset()
   const { ctx, dictionaryRegistrations, seat } = makeCtx()
   bundle.apply(ctx)
-  assert.equal(dictionaryRegistrations.length, 1)
+  // TWO dictionaries by design: the panel's own (a per-generation namespace)
+  // and the Settings section's (a fixed namespace, because the settings shell
+  // re-reads its nav label thunk across generations).
+  assert.equal(dictionaryRegistrations.length, 2)
+  const panelDict = dictionaryRegistrations.find(entry => /^modelFlatmap-/.test(entry.ns))
+  assert.ok(panelDict, 'the panel dictionary is registered')
   // The namespace is minted per generation so re-registration cannot collide.
-  assert.match(dictionaryRegistrations[0].ns, /^modelFlatmap-/)
+  assert.match(panelDict.ns, /^modelFlatmap-/)
+  // The settings dictionary is minted per generation too, for the same
+  // re-registration reason as the panel's: a fixed id would throw on reload.
+  const settingsDict = dictionaryRegistrations.find(entry => /^modelFlatmapSettings-/.test(entry.ns))
+  assert.ok(settingsDict, 'the settings dictionary has its own namespace')
+  assert.notEqual(settingsDict.ns, panelDict.ns, 'and it is not the panel namespace')
+  assert.equal(typeof settingsDict.dicts.zh.nav, 'string')
+  assert.equal(typeof settingsDict.dicts.en.nav, 'string')
   const registeredSeat = seat()
   assert.ok(registeredSeat, 'the seat registration happened')
   assert.equal(registeredSeat.registration.priority, -1)
@@ -3886,4 +3903,318 @@ test('the rendered tooltip never leaks a raw placeholder', () => {
   // Before the prefetch lands the title is the plain action text; whatever it
   // is, it must never be a half-substituted template.
   assert.doesNotMatch(String(button.props.title), /\{\w+\}/u)
+})
+
+// ---------------------------------------------------------------------------
+// Visibility: which providers and models the panel is allowed to draw.
+//
+// The choice is made in the Settings panel and read by the composer panel, so
+// these tests cover three things separately: the pure record semantics, the
+// store that both surfaces share, and the filter's effect on the rendered grid.
+// ---------------------------------------------------------------------------
+test('the hidden record stores only switched-off keys', () => {
+  installStorage({ [bundle.__test.HIDDEN_KEY]: JSON.stringify({ 'third-party': true, 'third-party/grok-4': true, 'other/x': false }) })
+  try {
+    const hidden = bundle.__test.readHidden()
+    assert.equal(hidden.has('third-party'), true, 'a hidden provider is read back')
+    assert.equal(hidden.has('third-party/grok-4'), true, 'a hidden model is read back')
+    assert.equal(hidden.has('other/x'), false, 'a `false` never resurrects a hidden model')
+    assert.equal(hidden.size, 2)
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('a missing, empty or malformed hidden record means everything is visible', () => {
+  for (const stored of [undefined, '', 'not json', '[]', 'null', '"text"', '{"a":1}']) {
+    const entries = stored === undefined ? {} : { [bundle.__test.HIDDEN_KEY]: stored }
+    installStorage(entries)
+    try {
+      assert.equal(bundle.__test.readHidden().size, 0, `stored ${JSON.stringify(stored)} degrades to visible`)
+    } finally {
+      delete globalThis.localStorage
+    }
+  }
+})
+
+test('writing the hidden record round-trips through storage', () => {
+  const store = installStorage()
+  try {
+    bundle.__test.writeHidden(new Set(['p', 'p/m']))
+    assert.equal(store.has(bundle.__test.HIDDEN_KEY), true, 'the record is written')
+    assert.deepEqual([...bundle.__test.readHidden()].sort(), ['p', 'p/m'], 'both keys come back')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('the provider switch wins over a per-model record', () => {
+  const { modelIsVisible, providerHiddenKey, modelHiddenKey } = bundle.__test
+  const hidden = new Set([providerHiddenKey('p')])
+  assert.equal(modelIsVisible(hidden, 'p', 'm'), false, 'a hidden provider hides its models')
+  // A provider id never collides with a route: routes carry a `/`.
+  assert.notEqual(providerHiddenKey('p'), modelHiddenKey('p', 'm'))
+  assert.equal(modelIsVisible(new Set([modelHiddenKey('p', 'm')]), 'p', 'm'), false, 'the model itself is hidden')
+  assert.equal(modelIsVisible(new Set([modelHiddenKey('p', 'm')]), 'p', 'other'), true, 'its siblings are untouched')
+  assert.equal(modelIsVisible(new Set(), 'p', 'm'), true, 'nothing hidden means visible')
+})
+
+test('a provider whose models are all hidden is dropped, not drawn empty', () => {
+  const groups = [
+    { id: 'a', models: [{ id: '1' }, { id: '2' }] },
+    { id: 'b', models: [{ id: '3' }] },
+  ]
+  const { visibleGroups, modelHiddenKey } = bundle.__test
+  assert.equal(visibleGroups(groups, new Set()), groups, 'an empty record returns the input untouched')
+  const oneGone = visibleGroups(groups, new Set([modelHiddenKey('a', '1')]))
+  assert.deepEqual(oneGone.map(g => [g.id, g.models.map(m => m.id)]), [['a', ['2']], ['b', ['3']]], 'the surviving model stays')
+  const allGone = visibleGroups(groups, new Set([modelHiddenKey('a', '1'), modelHiddenKey('a', '2')]))
+  assert.deepEqual(allGone.map(g => g.id), ['b'], 'the emptied provider disappears')
+  assert.equal(groups[0].models.length, 2, 'the input catalogue is never mutated')
+})
+
+test('the hidden store notifies once per real change and persists', () => {
+  const store = installStorage()
+  try {
+    const face = bundle.__test.createHiddenStore({ readStored: bundle.__test.readHidden, writeStored: bundle.__test.writeHidden })
+    let notified = 0
+    const off = face.subscribe(() => { notified += 1 })
+    assert.equal(face.getSnapshot().size, 0, 'it starts empty')
+    face.setVisible('p', false)
+    assert.equal(notified, 1, 'hiding notifies')
+    assert.equal(face.getSnapshot().has('p'), true)
+    assert.deepEqual([...bundle.__test.readHidden()], ['p'], 'the change is persisted')
+    face.setVisible('p', false)
+    assert.equal(notified, 1, 'a no-op change notifies nobody')
+    face.setVisible('p', true)
+    assert.equal(notified, 2, 'showing notifies')
+    assert.equal(face.getSnapshot().size, 0)
+    off()
+    face.setVisible('q', false)
+    assert.equal(notified, 2, 'an unsubscribed listener is not called')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('the catalogue store unwraps the Remote envelope and degrades on failure', async () => {
+  const { createCatalogStore } = bundle.__test
+  const groups = [{ id: 'p', name: 'P', models: [{ id: 'm', name: 'M' }] }]
+
+  // A well-formed envelope.
+  const ok = createCatalogStore({ read: () => ({ modelCatalog: async () => ({ ok: true, value: { groups } }) }) })
+  await ok.load()
+  assert.equal(ok.getSnapshot().status, 'ready')
+  assert.deepEqual(ok.getSnapshot().groups, groups)
+
+  // `ok:false` is not an error the settings page can act on.
+  const failed = createCatalogStore({ read: () => ({ modelCatalog: async () => ({ ok: false, error: { code: 'gateway/internal' } }) }) })
+  await failed.load()
+  assert.equal(failed.getSnapshot().status, 'unavailable')
+  assert.deepEqual(failed.getSnapshot().groups, [])
+
+  // A rejected call is swallowed the same way.
+  const thrown = createCatalogStore({ read: () => ({ modelCatalog: async () => { throw new Error('nope') } }) })
+  await thrown.load()
+  assert.equal(thrown.getSnapshot().status, 'unavailable')
+
+  // No namespace at all: the section says "not loaded", nothing throws.
+  const missing = createCatalogStore({ read: () => undefined })
+  await missing.load()
+  assert.equal(missing.getSnapshot().status, 'unavailable')
+
+  // A malformed value must not be trusted into a render.
+  const malformed = createCatalogStore({ read: () => ({ modelCatalog: async () => ({ ok: true, value: {} }) }) })
+  await malformed.load()
+  assert.deepEqual(malformed.getSnapshot().groups, [])
+})
+
+test('the settings section lists every provider and model with a switch each', async () => {
+  runtime.reset()
+  const face = bundle.__test.createHiddenStore({ readStored: () => new Set() })
+  const catalog = bundle.__test.createCatalogStore({
+    read: () => ({ modelCatalog: async () => ({ ok: true, value: { groups: catalogState().groups } }) }),
+  })
+  await catalog.load()
+  const props = { t: key => key, visibility: face, catalog }
+  let tree
+  runtime.setRerender(() => { tree = runtime.render(bundle.__test.SettingsSection, props) })
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  // The hook runtime does not invoke child function components, so a switch is
+  // counted as the component NODE it is, not as its rendered button.
+  const switchNodes = node => findAll(node, child => child?.type === bundle.__test.Switch)
+  assert.equal(findAll(tree, node => hasClass(node, 'dshmf-setProvider')).length, 2, 'one row per provider')
+  // Collapsed by default: every provider has its own switch, and no model row
+  // is drawn until the provider is expanded.
+  assert.equal(switchNodes(tree).length, 2, 'one switch per provider while collapsed')
+  assert.equal(findAll(tree, node => hasClass(node, 'dshmf-setModelRow')).length, 0, 'no model rows before expanding')
+
+  // Expanding the FIRST provider reveals exactly that provider's models.
+  findAll(tree, node => hasClass(node, 'dshmf-setDisclosure'))[0].props.onClick()
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  const modelRows = findAll(tree, node => hasClass(node, 'dshmf-setModelRow'))
+  assert.equal(modelRows.length, 2, 'the expanded provider draws its own models only')
+  assert.equal(switchNodes(tree).length, 2 + 2, 'each model gains a switch')
+  // Collapsing it again removes them, so the disclosure is a real toggle.
+  findAll(tree, node => hasClass(node, 'dshmf-setDisclosure'))[0].props.onClick()
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  assert.equal(findAll(tree, node => hasClass(node, 'dshmf-setModelRow')).length, 0, 'collapsing hides them again')
+})
+
+test('the settings section draws a provider as switched off, with its models disabled', async () => {
+  runtime.reset()
+  const hidden = new Set([bundle.__test.providerHiddenKey('third-party')])
+  const face = bundle.__test.createHiddenStore({ readStored: () => new Set(hidden) })
+  const catalog = bundle.__test.createCatalogStore({
+    read: () => ({ modelCatalog: async () => ({ ok: true, value: { groups: catalogState().groups } }) }),
+  })
+  await catalog.load()
+  const tree = runtime.render(bundle.__test.SettingsSection, { t: key => key, visibility: face, catalog })
+  const providerRows = findAll(tree, node => hasClass(node, 'dshmf-setProvider'))
+  assert.equal(providerRows[1].props['data-hidden'], true, 'the hidden provider is marked')
+  assert.equal(providerRows[0].props['data-hidden'], false, 'the visible one is not')
+})
+
+test('the panel drops hidden models from the grid and from the count', () => {
+  const hidden = new Set([bundle.__test.modelHiddenKey('third-party', 'grok-4')])
+  const { tree } = openPanel(catalogState(), {
+    inject: { visibility: bundle.__test.createHiddenStore({ readStored: () => new Set(hidden) }) },
+  })
+  const rows = gridRows(tree)
+  assert.equal(rows.length, 5, 'six catalogue models minus the hidden one')
+  const names = rows.map(textOf).join(' ')
+  assert.equal(names.includes('Grok 4'), false, 'the hidden model is gone')
+  assert.ok(names.includes('GLM 4.6'), 'its siblings remain')
+})
+
+test('hiding a whole provider removes its heading as well as its models', () => {
+  const hidden = new Set([bundle.__test.providerHiddenKey('third-party')])
+  const { tree } = openPanel(catalogState(), {
+    inject: { visibility: bundle.__test.createHiddenStore({ readStored: () => new Set(hidden) }) },
+  })
+  const titles = gridTitles(tree).map(textOf)
+  assert.equal(titles.includes('Third Party'), false, 'the emptied heading is not drawn')
+  // The account provider has no catalog name of its own: its heading is the
+  // localized 'provider.account' wording, which the test stub returns verbatim.
+  assert.ok(titles.includes('provider.account'), 'the other provider keeps its heading')
+  assert.equal(gridRows(tree).length, 2, 'only the account provider\'s models remain')
+})
+
+test('hiding everything says so and points at Settings', () => {
+  const hidden = new Set(catalogState().groups.map(group => bundle.__test.providerHiddenKey(group.id)))
+  const { tree } = openPanel(catalogState(), {
+    inject: { visibility: bundle.__test.createHiddenStore({ readStored: () => new Set(hidden) }) },
+  })
+  const empty = findAll(tree, node => hasClass(node, 'dshmf-empty'))
+  assert.equal(empty.length, 1, 'the empty state is drawn')
+  assert.equal(textOf(empty[0]), 'empty.hidden', 'and it is the "everything is hidden" wording, not "no models available"')
+})
+
+test('a toggle in Settings re-renders an open panel without a reload', () => {
+  // ONE store, exactly as `apply` builds it: the Settings page and the composer
+  // panel are two surfaces over the same record, so a switch flipped on one must
+  // change the other with no reload and no second source of truth.
+  const face = bundle.__test.createHiddenStore({ readStored: () => new Set() })
+  runtime.reset()
+  const made = makeProps(catalogState(), { inject: { visibility: face } })
+  let tree
+  runtime.setRerender(() => { tree = runtime.render(bundle.__component, made.props) })
+  tree = runtime.render(bundle.__component, made.props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, made.props)
+  assert.equal(gridRows(tree).length, 6, 'the whole catalogue is listed first')
+
+  // Settings hides one model through the SAME face.
+  face.setVisible(bundle.__test.modelHiddenKey('third-party', 'kimi-k2'), false)
+  tree = runtime.render(bundle.__component, made.props)
+  assert.equal(gridRows(tree).length, 5, 'the panel follows the toggle immediately')
+  assert.equal(gridRows(tree).map(textOf).join(' ').includes('Kimi K2'), false)
+
+  // And showing it again restores it.
+  face.setVisible(bundle.__test.modelHiddenKey('third-party', 'kimi-k2'), true)
+  tree = runtime.render(bundle.__component, made.props)
+  assert.equal(gridRows(tree).length, 6, 'showing it again brings the row back')
+})
+
+test('every copy key the settings section renders exists in both languages', () => {
+  // The section is translated through its OWN namespace, so a key that lives
+  // only in the panel dictionary would render as the raw key. This walks the
+  // section's rendered tree and fails on any `translate` result that is still a
+  // dotted identifier.
+  const dict = bundle.__test.settingsDict
+  for (const locale of ['zh', 'en']) {
+    for (const key of ['nav', 'title', 'intro', 'empty', 'models', 'hiddenCount', 'expand', 'collapse', 'providerToggle', 'modelToggle', 'note', 'provider.account']) {
+      assert.equal(typeof dict[locale][key], 'string', `${locale} declares ${key}`)
+      assert.notEqual(dict[locale][key], '', `${locale} ${key} is not empty`)
+    }
+    // The two fill-templates must declare exactly the placeholder the call site fills.
+    for (const [key, name] of [['models', 'count'], ['hiddenCount', 'count'], ['providerToggle', 'name'], ['modelToggle', 'name']]) {
+      const declared = [...String(dict[locale][key]).matchAll(/\{(\w+)\}/gu)].map(m => m[1])
+      assert.deepEqual(declared, [name], `${locale} ${key} declares {${name}}`)
+    }
+  }
+})
+
+test('the settings section renders no raw translation keys', async () => {
+  runtime.reset()
+  const face = bundle.__test.createHiddenStore({ readStored: () => new Set() })
+  const catalog = bundle.__test.createCatalogStore({
+    read: () => ({ modelCatalog: async () => ({ ok: true, value: { groups: catalogState().groups } }) }),
+  })
+  await catalog.load()
+  // A translate that RESOLVES against the real dictionary, and reports the raw
+  // key when a key is missing — exactly what the locale service does.
+  const dict = bundle.__test.settingsDict.en
+  const t = (key, values) => {
+    const template = dict[key] ?? key
+    if (values === undefined) return template
+    return template.replace(/\{(\w+)\}/gu, (_, name) => String(values[name] ?? ''))
+  }
+  const props = { t, visibility: face, catalog }
+  let tree
+  runtime.setRerender(() => { tree = runtime.render(bundle.__test.SettingsSection, props) })
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  findAll(tree, node => hasClass(node, 'dshmf-setDisclosure'))[0].props.onClick()
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  const text = textOf(tree)
+  assert.doesNotMatch(text, /\{\w+\}/u, 'no unfilled placeholder is drawn')
+  for (const key of ['nav', 'title', 'intro', 'note', 'provider.account']) {
+    assert.equal(text.includes(` ${key}`) || text.startsWith(key), false, `the raw key ${key} is not drawn`)
+  }
+  assert.ok(text.includes('DeepSeek Account'), 'the account provider is named, not keyed')
+})
+
+test('apply registers a Settings section with its own id, label and face', () => {
+  runtime.reset()
+  const { ctx, registered } = makeCtx()
+  bundle.apply(ctx)
+  const entry = registered.find(item => item.registration?.name === 'settings.section')
+  assert.ok(entry, 'the settings section is registered')
+  const registration = entry.registration
+  // An id of our own: reusing a shipped id would REPLACE that section.
+  assert.equal(registration.id, 'model-flatmap')
+  assert.notEqual(['agent-presets', 'account', 'general', 'models', 'plugins'].includes(registration.id), true,
+    'the id does not collide with a shipped section')
+  // A thunk, not a string: the shell re-reads it on every locale revision.
+  assert.equal(typeof registration.label, 'function')
+  assert.equal(typeof registration.label(), 'string')
+  assert.notEqual(registration.label(), '')
+  // The section is a LEAF: no children table, so no renderSlot is bound.
+  assert.equal(registration.children, undefined)
+  // The face carries the two stores the component reads.
+  const face = registration.inject()
+  assert.equal(typeof face.visibility.setVisible, 'function', 'the section can write the visibility record')
+  assert.equal(typeof face.catalog.load, 'function', 'the section can read the catalogue')
+  assert.equal(typeof entry.component, 'function')
+})
+
+test('a broken locale service never costs the settings section', () => {
+  runtime.reset()
+  const { ctx, registered } = makeCtx({ localeThrows: true })
+  bundle.apply(ctx)
+  const entry = registered.find(item => item.registration?.name === 'settings.section')
+  assert.ok(entry, 'the section is still registered without its copy')
+  // With no usable locale service the label falls back to the literal English
+  // nav text rather than rendering a raw key or throwing.
+  assert.equal(entry.registration.label(), 'Model list')
 })

@@ -407,6 +407,86 @@ Everything goes through public Client APIs:
 
 No host component, stylesheet, or DOM is read or restyled.
 
+## Provider and model visibility
+
+A profile with many connection plugins offers more models than anyone picks
+between, so the panel can be narrowed down. The controls live in the app's own
+settings panel, as the **Model list** section.
+
+### Where it lives
+
+The section occupies `settings.section`, the settings domain's own extension
+point: one page per registration, with the registration's `label` in the
+settings nav column. It registers with an id of its own (`model-flatmap`), so it
+is added **beside** the shipped sections rather than replacing one, and it
+declares no `children`, so it is a leaf.
+
+It is deliberately not a `plugins.bundle.config` page. That seat renders inside
+the **Plugin Manager's** bundle detail page, which answers "how is this package
+configured"; "which models do I want to see" is a preference about the composer,
+and belongs where the app's other preferences are.
+
+### What it shows
+
+Every provider is one row: a disclosure button, the provider's name, how many
+models it has (and how many of those are hidden), and a switch. Expanding the
+row lists that provider's models, each with its own switch. A provider that is
+switched off dims, and its model switches render disabled — they keep showing
+each model's **own** record, so it is visible what will come back when the
+provider is switched on again.
+
+The section reads the catalogue from `remote.session.modelCatalog()`, which is
+the Host-generation catalog shared by every Session. It is not Session-scoped,
+which matters because the settings panel has no Session and
+`modelDirectories.directoryFor(sessionId)` requires one. The call resolves to
+`RemoteResult<ModelCatalog>` — `{ok:true,value}` or `{ok:false,error}` — so the
+value is unwrapped once; a rejected call and an `ok:false` result both mean "no
+catalogue", which the section states plainly rather than treating as a failure
+the user must fix.
+
+### What it stores
+
+The record holds what is **hidden**; absence means visible. That is what lets a
+provider or model added by a plugin installed tomorrow appear without anyone
+re-opening Settings, and it keeps the common record empty.
+
+Keys are route keys, the same `provider/model` pair the insufficient-balance
+marks use, plus a bare provider id for a provider-wide switch. Both live in one
+record, so a provider switch and a per-model exception can never disagree about
+which was written last. The two key shapes cannot collide: provider ids contain
+no `/`, and routes always do.
+
+A provider switch is a parent switch, not a summary of its children: hiding a
+provider hides every model under it whatever their own records say, and showing
+it again restores exactly the exceptions it had, because they were never
+rewritten.
+
+### Where the filter applies
+
+The filter runs on the single catalogue the panel derives everything from —
+before grouping, before search, before column planning, and before the trigger's
+label is resolved. A hidden entry therefore cannot reach the grid, the search
+index, a group heading, or the model count by any route; there is no second
+place that has to remember to filter. A provider left with no visible model is
+dropped rather than drawn as an empty heading.
+
+### Persistence and reactivity
+
+The record is kept in `localStorage` under `dshmf:hidden`, like this plugin's
+other preferences, and a read or write failure degrades to "everything is
+visible": a browser that refuses storage loses the memory of the choice, never
+the models. One store per activation is shared by the settings section and every
+panel in the page, so a switch flipped in Settings re-renders an open panel
+immediately, with no reload.
+
+Hiding the model a conversation currently uses is allowed. The grid obeys the
+switch, and the trigger still names the current model, because the trigger reads
+the Session's selection rather than the catalogue. If every model is hidden the
+panel says so and points back at Settings, instead of claiming that no models
+are available.
+
+Newly added providers and models are shown by default; the section says so.
+
 ## Layout behaviour
 
 - Window resize, a grouping switch, and search input all re-plan the columns,
@@ -479,15 +559,24 @@ the measured overflow, and the duration is that distance divided by 50 px/s
   contributions stay valid either way.
 - The Host half sends one anonymous heartbeat per local day (DEC-031). It is
   the only network request this plugin ever makes on its own, and it is
-  deliberately not switchable: the bundle ships no settings page, so a toggle
-  nobody can reach would only make a default look like a user choice. What
-  bounds it is the payload's shape — installation id, plugin id, version,
-  platform, architecture, event kind, nothing else — and its rate. Opting out
-  means disabling the bundle, which stops the heartbeat with everything else.
+  deliberately not switchable. The bundle now ships a settings page, but that
+  page exists for the model list, and the heartbeat still gets no toggle there:
+  a switch added only to make the default look like a user choice is not a
+  choice. What bounds the request is the payload's shape — installation id,
+  plugin id, version, platform, architecture, event kind, nothing else — and
+  its rate. Opting out means disabling the bundle, which stops the heartbeat
+  with everything else.
 - The trigger's label cell renders ANOTHER PLUGIN'S component. It is written
   against the documented `ModelLabelOwner` props, but nothing guarantees every
   future contributor stays compatible; `LabelBoundary` degrades a crash to the
   catalog name, which is the same fallback the host uses for an empty cell.
 - Addressed subagent sessions hide the seat, matching the shipped selector.
+- The visibility record is per-browser-origin (`localStorage`), so it does not
+  follow an account to another machine or another browser profile. It narrows
+  the **flat panel** only: the shipped `/model` popup and the Host's own picker
+  (native mode) still list the whole catalogue, because neither reads this
+  record. Hiding is presentation, not access control — a hidden provider is
+  still configured, still billed, and still selectable through those other
+  surfaces.
 - The badge comes from the catalog entry, so a provider that publishes no badge
   shows none.

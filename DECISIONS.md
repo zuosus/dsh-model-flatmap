@@ -5,6 +5,77 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-034 — 2026-11-17 — Provider/模型可见性：设置页放在 `settings.section`，记录「隐藏了什么」，键用 route
+
+**Context.** 用户反馈「面板里 provider 和模型太多了」，要求新增一个设置项：列出所有
+provider 和模型，可以选择显示/隐藏一部分。
+
+**Findings.**
+
+- 客户端的模型目录有两个入口，差别很关键：
+  - `modelDirectories.directoryFor(sessionId)` 是**按会话**的，`service.ts:67-91`
+    在没有活动会话时直接抛错，而设置页没有会话；
+  - `remote.session.modelCatalog()` 是**按 Host 世代**的全局目录，所有会话共用同一份
+    （`catalog.ts:47-82` 把 `response.value.groups` 存进共享 store）。设置页该读这个。
+- 它的返回**不是** `ModelCatalog`，而是 `RemoteResult<ModelCatalog>`，即
+  `{ok:true,value}` / `{ok:false,error}`（`dsh-api-gateway/src/client/index.ts:458-465`
+  构造信封；`types.ts:123-132` 明说「no consumer wraps a call to recover one」）。
+  Host 侧签名写的 `Promise<ModelCatalog>` 是业务签名，不是客户端形状 —— 照它写会把
+  `.groups` 读到 `undefined` 上。
+- 设置面板有**自己的**扩展点 `settings.section`（`slot-catalog.ts:3803-3858`），
+  kind `list`、注册项 `{id, order, label}`、owner props 只有 `{close}`。它是
+  「每个注册一个设置页」，导航列里出现我们的标签。而 `plugins.bundle.config` 是
+  **Plugin Manager 的 bundle 详情页**里的一节（`PluginManagerPage.tsx:819-825`），
+  不是设置面板 —— 「我想看哪些模型」不属于「这个插件包怎么配」。
+- 注册没有所有者白名单：`SlotCore.register` 只校验目标已声明、list 必须有 id、
+  同 priority 下 id 不重复。第三方 bundle 的注册与内置的同权。
+
+**Decision.**
+
+1. **设置页挂在 `settings.section`**，`id: 'model-flatmap'`（自有 id：复用内置 id 会
+   **替换**那个内置页），`order: 100` 排在最后。叶子节点，不声明 `children`。
+2. **存「隐藏了什么」，不存「显示什么」。** 明天新装的插件带来的模型必须在没人重开
+   设置的情况下自动出现，所以**没有记录 = 显示**。记录也因此很小：常见情况下是空的。
+3. **键沿用 route key。** 模型用 `provider/model`（和余额删除线 `routeKeyOf` 完全同
+   一个函数），provider 用裸 id。二者共用**一个**记录，所以 provider 开关和逐模型例外
+   不可能对「谁后写」产生分歧。provider id 不含 `/`，route 一定含，因此两类键不会撞。
+4. **provider 开关是父级开关，不是子项汇总**：provider 隐藏则其下全部隐藏，不管逐模型
+   记录说什么；重新打开时那些例外原样回来（因为从来没被改写）。这让 provider 行是一个
+   真正的控件，而不是一个需要猜的汇总。
+5. **过滤放在唯一入口。** `visibleGroups` 在组件里 `state.groups` 之后、分组/搜索/列
+   规划/触发器标签之前执行，下游拿到的就是唯一一份目录 —— 隐藏项无法从任何别的路径
+   进入网格、搜索索引、分组标题或模型计数，不存在「第二处要记得过滤」。
+6. **存储用 `localStorage`（`dshmf:hidden`）**，和 `dshmf:grouping` / `dshmf:mode`
+   一致。设置页与面板同页，共享**一个** store 实例，所以在设置里拨动开关会立刻重渲
+   已打开的面板，无需刷新。读写失败一律降级为「全部显示」——宁可丢记忆，不可丢模型。
+7. **用户选择了「隐藏当前模型也照常隐藏，但触发器仍显示其名字」**。因此不拦截隐藏、
+   也不强制保留当前行；触发器本来就直接读 `state.current` 的名字，不经过目录。
+
+**Rejected.**（1）`plugins.bundle.config`：位置在 Plugin Manager 的包详情页，与
+「模型列表」的语义不符。（2）`ctx.configForms` 写入插件配置：需要 Host 设置服务，
+且会写进 profile 的插件配置；用户明确选择 `localStorage`。（3）只存「显示列表」：
+新模型默认不出现，用户每装一个连接插件都要回来勾一次。（4）只做 provider 级开关：
+粒度不够，用户要能关掉单个贵模型。（5）把过滤放在渲染循环里逐行判断：会漏掉搜索
+索引和计数两条路径。
+
+**Consequences.**
+
+- 新增 `HIDDEN_KEY`、`readHidden`/`writeHidden`、`providerHiddenKey`/`modelHiddenKey`、
+  `modelIsVisible`、`visibleGroups`、`createHiddenStore`、`ALL_VISIBLE`、
+  `createCatalogStore`、`EMPTY_CATALOG`、`SettingsSection`、`Switch`，以及独立的
+  `settingsDict` / `SETTINGS_NS`。
+- 组件新增 `visibility` 这个 inject 面；`safeFace` 的降级脸也补上 `ALL_VISIBLE`，
+  保持 hook 形状不变。
+- 空状态多出一种：目录非空但全被隐藏时用 `empty.hidden`，并指向设置页，而不是
+  误报「暂无可用模型」。
+- 设置页字典必须**同时**声明 `provider.account`：`providerLabel` 会向当前字典要这个
+  键，缺了就画出原始 key。
+- `SETTINGS_NS` 与面板的 `NS` 一样**按世代重新铸造**：locale 注册表在 disposer 跑完
+  后仍占着 namespace，同 id 重注册会抛错，禁用/启用一次就会丢文案。稳定 id 并不需要
+  —— 设置外壳每次投影都重读 label thunk，不记 namespace 名。
+- 测试 216 → 233。
+
+
 ## DEC-033 — 2026-11-15 — 链接按钮与切换按钮的间距：从 32px 压到 2px，靠分组而不是调 margin
 
 **Context.** 用户反馈「和切换按钮的 gap/margin 太大了，要让 gap 极小」。
