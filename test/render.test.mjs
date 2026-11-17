@@ -4474,10 +4474,17 @@ test('a provider row is bold in the UI face while a model row stays regular', ()
   assert.equal(prop(provider, 'letter-spacing'), undefined,
     'no tracking — the family is untouched, so the spacing is too')
 
-  // The model name is explicitly the opposite: regular weight in the same face.
-  assert.match(prop(model, 'font-family'), /inherit/,
-    'the model name stays in the inherited UI face')
+  // The model name is the opposite in FACE as well as weight: a model name is
+  // an identifier, so it takes the shell's code face, from the host token.
+  assert.match(prop(model, 'font-family'), /var\(--ds-font-family-code\)/,
+    'the model name uses the host code-face token')
+  assert.doesNotMatch(prop(model, 'font-family'), /inherit|Montserrat|monospace|sans-serif|serif/i,
+    'the family comes from the token, not inheritance and not a hard-coded stack')
   assert.equal(prop(model, 'font-weight'), '400', 'the model name stays regular')
+  // The provider stays in the UI face, so the two rows differ by FACE, not just
+  // by weight — the whole reason the model row went monospace.
+  assert.notEqual(prop(provider, 'font-family'), prop(model, 'font-family'),
+    'provider and model rows are set in different faces')
 
   // Hierarchy is carried by weight AND tone, not by size alone.
   assert.match(prop(provider, 'color'), /label-primary/, 'the provider name is the primary label tone')

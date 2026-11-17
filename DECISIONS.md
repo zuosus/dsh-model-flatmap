@@ -5,6 +5,32 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-040 — 2026-11-17 — 模型名改用等宽字体，provider 名留在 UI 字体
+
+**Context.** DEC-039 之后 provider 行靠字重（600）与模型行（400）区分。用户进一步要求
+「use fixed-width font for model row title」——让模型名用等宽字体。
+
+**Findings.**
+
+- 模型名本质是**标识符**（grok-4、claude-sonnet-5.5、deepseek-v4.1-flash-1017），
+  不是散文，等宽字体在语义上是对的。
+- 等宽还带来实际收益：版本号和小数位在行与行之间对齐，一列名字可以「扫」而不是「读」。
+- Host 已定义 `--ds-font-family-code`，其值指向 `--dsh-font-family-code-default`
+  （SF Mono / JetBrains Mono / Fira Code / Consolas，带 PingFang SC / Microsoft YaHei
+  中文回退），所以等宽字体是**已存在**的 token，不是新增字体栈。
+
+**Decision.** `.dshmf-setModelName` 用 `font-family: var(--ds-font-family-code)`，
+字号 13px、字重 400、色调 secondary 均不变。provider 名继续 `font-family: inherit`
++ 600 + primary。两行现在同时由**字体族 + 字重 + 色调**三重区分。
+
+**Rejected.**（1）硬编码 `monospace` 或自写字体栈：会脱离 Host 的字体选择，且中文回退
+不可控。（2）provider 也改等宽：provider 是名称不是标识符，且会丢掉与设置页其余文本的
+一致性（正是 DEC-039 撤回品牌字体的原因）。
+
+**Consequences.** 模型名在等宽下比 UI 字体略宽，长名字会更早触发省略号——这是可接受的，
+因为 `title` 属性仍带全名。render 测试钉住 code token、非 inherit、非硬编码栈，并断言
+provider 与模型行的 `font-family` 必须不同。
+
 ## DEC-039 — 2026-11-17 — 撤回品牌字体：provider 行回到 UI 字体，只保留加粗
 
 **Context.** DEC-038 给 provider 名换上 `--dsw-font-family-brand`（Montserrat）来和模型行

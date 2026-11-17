@@ -399,11 +399,20 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
    under the provider name it belongs to. */
 .dshmf-setModels { display: flex; flex-direction: column; padding: 0 0 8px 23px; }
 .dshmf-setModelRow { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 6px 0; }
-/* The item face, stated explicitly rather than inherited: the provider name
-   above is deliberately heavier, and a model name must stay regular so the two
-   rows never collapse back into the same look. */
+/* The item face is MONOSPACE, and that is the point: a model name is an
+   IDENTIFIER (grok-4, claude-sonnet-5.5, deepseek-v4.1-flash-1017), not
+   prose, so it is set in the shell's own code face rather than the UI face.
+   Fixed-width also does real work here: version numbers and rate suffixes line
+   up between rows, so a column of names can be scanned instead of read.
+   The family comes from the host token --ds-font-family-code, which the shell
+   already defines (SF Mono / JetBrains Mono / Fira Code / Consolas, with a CJK
+   fallback) — never a hard-coded stack, so it follows the shell's own choice.
+   Weight stays 400 and the tone stays secondary: the provider row above is the
+   heading (UI face, 600, primary tone), so the two rows are now separated by
+   FACE, WEIGHT and TONE at once instead of by 1px of size. */
 .dshmf-setModelName {
-  font-family: inherit; font-size: 13px; line-height: 20px; font-weight: 400;
+  font-family: var(--ds-font-family-code);
+  font-size: 13px; line-height: 20px; font-weight: 400;
   color: var(--dsw-alias-label-secondary);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
