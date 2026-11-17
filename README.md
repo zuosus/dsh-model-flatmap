@@ -138,6 +138,19 @@ levels, and the agent-teamwork switch on one surface:
   uses is allowed: the grid obeys the switch, and the trigger still names the
   current model. If everything is hidden the panel says so and points back at
   Settings instead of claiming no models are available.
+- **Provider names you choose.** The same page renames a provider: use the
+  pencil on a provider row, type the name and press Enter (Escape or the cross
+  cancels).
+  The name is an **alias**, keyed by the provider's stable id — routing,
+  visibility and the currently selected model are untouched. One label
+  derivation feeds every face of the picker: *By provider* headings, the
+  provider text on *By family* rows, row tooltips and provider-wide search.
+  Search still matches the catalog's original name, and the original stays
+  visible beside the alias in Settings and as the editor's placeholder, with a
+  one-click restore. Aliases
+  live in `localStorage` (`dshmf:aliases`), shared by Settings and every open
+  panel, so a save re-renders the picker with no reload. The `Default style`
+  picker is the host's own and keeps the catalog's names.
 - **Theme-aware.** Styled with host theme tokens only; looks correct in both
   light and dark themes.
 - **Project link.** Immediately left of the `Default style` button sits a link

@@ -5,6 +5,21 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## LES-035 — 2026-11-17 — 给 Provider 改名，改的是标签，不是身份
+
+需求看起来是「在设置里改个名字，让 picker 也显示」。把它当一次字符串替换会在三处翻车：
+
+1. **显示名有多个出口**：*By provider* 标题、*By family* 行主文本、行 tooltip、Provider 搜索、失败条。漏掉任何一个，同一个 Provider 就会在同一屏上出现两种拼写。
+2. **模型名往往带着目录原名。** 家族行尾标要剥离目录原名，否则 `豆包 2.1 Turbo` 会把 Provider 重复一遍。但也**不能顺手剥离别名**：别名是用户标签，`Pro` 可能正是模型名的一部分，把 `Claude 3.5 Pro Sonnet` 剥成 `3.5 Sonnet` 就改坏了模型名。
+3. **用名字做 key**。改名会顺手改掉「这是哪个 Provider」，路由、可见性记录、当前选择都会跟着晃。
+4. **失焦提交 + 行内按钮 = 触屏上的「取消变成保存」**。`pointerdown` 先把焦点从输入框移走，`blur` 抢先提交，随后按钮自己的 click 再去取消一个已经关掉的编辑器。按钮用一次性 `suppressBlur` 标记，其余区域 `preventDefault` 保住焦点；`Escape` 挂容器（按钮上也要能用），`Enter` 只挂输入框（在「取消」上按 Enter 必须取消）。
+5. **`maxLength` 按 UTF-16 计数**，emoji 名字会被切半；改按码点裁剪时还要回写 DOM 值——state 没变时 React 直接跳过渲染，屏幕上就会留着比实际保存更长的名字。
+6. **临时插入的 live region 不会被播报**。`role="status"` 必须和编辑器同时存在、空时裁剪隐藏（不能 `display:none`），否则警告在出现的那一帧才进入无障碍树。
+
+正确的切法：别名按 provider id 存；显示名只从 `providerLabel` 一处推导；搜索同时保留原名与别名；尾标只剥离目录原名，不剥用户别名。另一个容易误判的点：宿主 catalog 的 `provider.name` 不是选择器能写的字段，宿主 Settings 的 `displayName` 也不会流到 catalog——所以这个需求只能做成本地显示层，不要为了「顺便同步原生模式」去改宿主数据。
+
+**教训**：给一个实体改名之前，先分清「身份」和「标签」；然后找出标签的所有出口，只留一个推导函数。
+
 ## LES-033 — 2026-11-17 — 只改 CSS 的提交，在已经打开的窗口里可能「看起来没生效」
 
 把模型开关改成另一种颜色后，用户说「it's still the same」。代码、测试、合并都没问题；

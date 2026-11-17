@@ -359,6 +359,9 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
 .dshmf-setProvider { border-bottom: 0.5px solid var(--dsw-alias-border-l2); }
 .dshmf-setList > .dshmf-setProvider:last-child { border-bottom: none; }
 .dshmf-setProviderRow { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0; }
+/* The pencil and the switch are one trailing group, so the row's 16px gap
+   applies once at the end of the name instead of once around each control. */
+.dshmf-setActions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 /* The whole text side of the row is the disclosure, so the button stretches
    from the row's left edge to the switch instead of hugging the chevron. */
 .dshmf-setDisclosure {
@@ -390,7 +393,14 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
   font-size: 14px; line-height: 20px; font-weight: 600;
   color: var(--dsw-alias-label-primary);
 }
-.dshmf-setProviderMeta { display: block; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); }
+.dshmf-setProviderMeta {
+  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary);
+}
+/* A renamed row keeps its original name on the quiet line: the chosen name is
+   the row's identity, but the catalog's spelling must stay recoverable without
+   opening an editor. */
+.dshmf-setProviderOriginal { color: var(--dsw-alias-label-tertiary); }
 /* A switched-off row must stay READABLE: the title drops at most ONE label
    step (primary → secondary) instead of falling to the dimmed placeholder
    tone, which sits below the readable threshold in BOTH themes — the
@@ -400,6 +410,106 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
    line, not by an unreadable name. */
 .dshmf-setProvider[data-hidden="true"] .dshmf-setProviderName { color: var(--dsw-alias-label-secondary); }
 .dshmf-setProvider[data-hidden="true"] .dshmf-setProviderMeta { color: var(--dsw-alias-label-dimmed); }
+/* The original name rides the same dimming as the rest of the meta line. */
+.dshmf-setProvider[data-hidden="true"] .dshmf-setProviderOriginal { color: var(--dsw-alias-label-dimmed); }
+.dshmf-setProviderMeta {
+  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary);
+}
+/* A renamed row keeps its original name on the quiet line: the chosen name is
+   the row's identity, but the catalog's spelling must stay recoverable without
+   opening an editor. */
+.dshmf-setProviderOriginal { color: var(--dsw-alias-label-tertiary); }
+/* A switched-off provider reads as dimmed, so a long list shows at a glance
+   which rows are already out of the panel. */
+.dshmf-setProvider[data-hidden="true"] .dshmf-setProviderName,
+.dshmf-setProvider[data-hidden="true"] .dshmf-setProviderMeta,
+.dshmf-setProvider[data-hidden="true"] .dshmf-setProviderOriginal { color: var(--dsw-alias-label-dimmed); }
+/* Rename: a quiet pencil, not a permanent toolbar. It appears when the row is
+   hovered or focused, and stays visible on a row that already carries a
+   user-chosen name so "this one was renamed" is legible without a badge. The
+   tint comes from host tokens only; no accent colour is invented here. */
+.dshmf-setRenameBtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 auto; width: 24px; height: 24px; padding: 0;
+  border: 0; border-radius: var(--dsw-radius-xs);
+  background: transparent; color: var(--dsw-alias-label-caption);
+  cursor: pointer; opacity: 0;
+  transition: opacity .12s ease, background .12s ease, color .12s ease;
+}
+@media (hover: hover) {
+  .dshmf-setProviderRow:hover .dshmf-setRenameBtn,
+  .dshmf-setProviderRow:focus-within .dshmf-setRenameBtn { opacity: 1; }
+}
+.dshmf-setRenameBtn[data-renamed="true"] { opacity: 1; color: var(--dsw-alias-label-secondary); }
+.dshmf-setRenameBtn:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.dshmf-setRenameBtn:focus-visible {
+  opacity: 1;
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 1px;
+}
+@media (hover: none) { .dshmf-setRenameBtn { opacity: 1; } }
+/* The inline editor. Geometry is copied from the shipped Models page field
+   (32 px, a .5 px border-l4, radius-md, bg-layer-1, 14 px) so renaming looks
+   like every other editable name in Settings instead of a new control family.
+   The ghost chevron keeps the input aligned with the collapsed name; the
+   switch stays top-aligned so the row does not jump around it. */
+.dshmf-setProviderRow[data-editing="true"] { align-items: flex-start; }
+.dshmf-setProviderRow[data-editing="true"] .dshmf-switch { margin-top: 6px; }
+.dshmf-setEditorWrap { display: flex; flex-direction: column; gap: 4px; flex: 1 1 auto; min-width: 0; }
+.dshmf-setEditor { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.dshmf-setEditorChevron { flex: 0 0 auto; margin-right: 4px; color: var(--dsw-alias-label-caption); opacity: .55; }
+.dshmf-setField { position: relative; display: block; flex: 1 1 auto; min-width: 0; }
+.dshmf-setInput {
+  box-sizing: border-box; width: 100%; height: 32px;
+  border: .5px solid var(--dsw-alias-border-l4); border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary);
+  font: inherit; font-size: 14px; line-height: 22px; padding: 0 34px 0 10px;
+}
+.dshmf-setInput:focus { border-color: var(--dsw-alias-state-business-primary); outline: none; }
+.dshmf-setInput::placeholder { color: var(--dsw-alias-label-dimmed); }
+.dshmf-setAliasReset {
+  position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 0; border-radius: var(--dsw-radius-xs);
+  background: transparent; color: var(--dsw-alias-label-tertiary); cursor: pointer;
+}
+.dshmf-setAliasReset:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.dshmf-setAliasReset:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 1px;
+}
+.dshmf-setEditBtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 auto; width: 26px; height: 26px; padding: 0;
+  border: 0; border-radius: var(--dsw-radius-xs);
+  background: transparent; color: var(--dsw-alias-label-secondary); cursor: pointer;
+}
+.dshmf-setEditBtn:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.dshmf-setEditBtn:disabled { opacity: .4; cursor: default; }
+.dshmf-setEditBtn:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 1px;
+}
+.dshmf-setSaveBtn { color: var(--dsw-alias-brand-primary); }
+.dshmf-setEditHint { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 0 0 23px; min-width: 0; position: relative; }
+.dshmf-setEditOriginal {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary);
+}
+.dshmf-setEditKeys { flex: 0 0 auto; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-caption); }
+.dshmf-setEditStatus { flex: 0 0 auto; font-size: 12px; line-height: 18px; color: var(--dsw-alias-state-warn-primary); }
+/* The live region is mounted for the editor's whole life and stays in the
+   accessibility tree even while empty — a status node that appears together
+   with its text is not announced by most screen readers. It is clipped rather
+   than hidden with display:none for exactly that reason. */
+.dshmf-setEditStatus:empty {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+/* Touch has no Enter/Escape, and the visible buttons say what to do. */
+@media (hover: none) { .dshmf-setEditKeys { display: none; } }
+@media (prefers-reduced-motion: reduce) { .dshmf-setRenameBtn { transition: none; } }
 /* 23px = the chevron's 13px + the disclosure's 10px gap, so a model name sits
    under the provider name it belongs to. */
 .dshmf-setModels { display: flex; flex-direction: column; padding: 0 0 8px 23px; }
@@ -753,6 +863,13 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
        the owner is whatever repository the checkout configures and can change
        without this file. */
     const PATH_LINK = 'M5.833 7.583a2.917 2.917 0 0 0 4.398.315l1.75-1.75a2.917 2.917 0 0 0-4.124-4.124l-1.003.997M8.167 6.417a2.917 2.917 0 0 0-4.398-.315l-1.75 1.75a2.917 2.917 0 0 0 4.124 4.124l.997-.997'
+    /* A pencil, not a gear: the row's action is to change the NAME, and a
+       settings glyph would read as "configure the provider" — a different
+       action with a different meaning (routing, credentials). */
+    const PATH_PENCIL = 'M9.6 2.2a1.5 1.5 0 0 1 2.2 2.1L5.2 10.9l-2.9.7.7-2.9 6.6-6.5ZM8.6 3.5l1.9 1.9'
+    const PATH_CONFIRM = 'M3.1 7.4 5.8 10.1 11 4.6'
+    /* A circular arrow: put the catalog's own name back. */
+    const PATH_RESET = 'M3.2 6.2A3.9 3.9 0 1 1 3.4 8.7M3.2 6.2V2.9M3.2 6.2h3.3'
 
     function svg(path, size, extra) {
       return h('svg', {
@@ -780,12 +897,20 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
      * cannot drift: both hand the label slot the same `provider.name`, and a
      * heading that said "豆包(doubao)" while the trigger said "Doubao" would be
      * two spellings of one provider on one screen.
+     * The user's alias is the last input, not a replacement for the catalog
+     * lookup: it wins when present, while an absent or blank alias keeps the
+     * catalog's own label (including the localized account name). This is the
+     * ONE place a display name is derived, so a renamed provider cannot show
+     * two spellings across the picker, Settings and search.
      * @param {{id: string, name: unknown}} group - one provider entry.
      * @param {Function} t - the panel's own translate seat.
      * @param {Function|undefined} resolveText - the host's catalog-text resolver.
+     * @param {unknown} [alias] - the user's rename, when one is stored.
      * @returns {string} a display-ready label; never empty.
      */
-    function providerLabel(group, t, resolveText) {
+    function providerLabel(group, t, resolveText, alias) {
+      const renamed = sanitizeAlias(alias)
+      if (renamed !== '') return renamed
       if (group.id === 'deepseek-account') return t('provider.account')
       const resolved = resolveText === undefined ? undefined : resolveText(group.name)
       if (typeof resolved === 'string' && resolved.trim() !== '') return resolved
@@ -2152,6 +2277,205 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
     }
 
     // ---------------------------------------------------------------------
+    // Provider names the user has chosen.
+    //
+    // A catalog's provider name is authored by the connection plugin and is not
+    // a preference this picker can rewrite: the Host's model catalog carries
+    // `provider.name` from the adapter, so the name on screen has to be a local
+    // alias applied at the ONE place a label is derived.
+    //
+    // Three properties decide the shape below:
+    //
+    // 1. **The id is the identity, the alias is only a label.** Keys are
+    //    provider ids, never names, so a rename cannot move a model between
+    //    providers, change a route key, or make visibility marks disagree.
+    // 2. **Absence means the catalog's name.** Removing an alias must restore
+    //    the upstream label — including a name the plugin adds later — and an
+    //    alias equal to the current label is stored as absence, not as a copy
+    //    that would freeze the old spelling.
+    // 3. **Storage failure degrades to the catalog name.** Like the hidden
+    //    record, a browser that refuses storage loses the alias, never a model.
+    // ---------------------------------------------------------------------
+    const ALIAS_KEY = 'dshmf:aliases'
+
+    /**
+     * Longest accepted alias, in Unicode code points.
+     *
+     * A provider heading occupies a narrow grid column and marquees only on
+     * hover, so a paragraph there would be a tooltip with extra steps. 48 is
+     * generous for a name and still leaves the row readable.
+     */
+    const ALIAS_MAX = 48
+
+    /** The shared empty alias record; one instance keeps `getSnapshot` stable. */
+    const EMPTY_ALIASES = new Map()
+
+    /**
+     * Normalize one user-authored provider name.
+     *
+     * Control characters become spaces, every whitespace run becomes one space,
+     * and the result is trimmed and capped by CODE POINT rather than by UTF-16
+     * unit so an emoji or a CJK extension character is never split in half.
+     * @param {unknown} value - the raw input.
+     * @returns {string} a display-safe alias, or '' when nothing remains.
+     */
+    function sanitizeAlias(value) {
+      if (typeof value !== 'string') return ''
+      const withoutControls = value.replace(/[\u0000-\u001F\u007F]/gu, ' ')
+      const collapsed = withoutControls.replace(/\s+/gu, ' ').trim()
+      if (collapsed === '') return ''
+      return [...collapsed].slice(0, ALIAS_MAX).join('')
+    }
+
+    /**
+     * The alias to STORE for one draft, or `undefined` to store nothing.
+     *
+     * Clear, whitespace-only and equal-to-original drafts all mean "use the
+     * catalog's name". Comparing against the resolved original here — rather
+     * than in the component — keeps the rule identical for the editor, the
+     * tests, and any future surface that renames a provider.
+     * @param {unknown} value - the draft.
+     * @param {unknown} original - the label the catalog currently provides.
+     * @returns {string|undefined} the alias to keep, or `undefined` for none.
+     */
+    function aliasFor(value, original) {
+      const next = sanitizeAlias(value)
+      if (next === '') return undefined
+      const baseline = sanitizeAlias(original)
+      if (baseline !== '' && next === baseline) return undefined
+      return next
+    }
+
+    /**
+     * Read the stored aliases, or an empty map when storage is missing, holds
+     * garbage, or throws. Only non-empty string values survive sanitization.
+     * @returns {Map<string, string>} provider id -> alias.
+     */
+    function readAliases() {
+      try {
+        if (typeof localStorage === 'undefined') return new Map()
+        const text = localStorage.getItem(ALIAS_KEY)
+        if (text === null || text === '') return new Map()
+        const parsed = JSON.parse(text)
+        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return new Map()
+        const aliases = new Map()
+        for (const [key, value] of Object.entries(parsed)) {
+          const id = String(key)
+          if (id === '') continue
+          const alias = sanitizeAlias(value)
+          if (alias !== '') aliases.set(id, alias)
+        }
+        return aliases
+      } catch {
+        return new Map()
+      }
+    }
+
+    /**
+     * Persist the alias record. A write failure is swallowed: the in-memory map
+     * still drives every open panel in this page.
+     * @param {Map<string, string>} aliases - provider id -> alias.
+     */
+    function writeAliases(aliases) {
+      try {
+        if (typeof localStorage === 'undefined') return
+        const record = {}
+        for (const [id, value] of aliases) {
+          const alias = sanitizeAlias(value)
+          if (alias !== '') record[String(id)] = alias
+        }
+        localStorage.setItem(ALIAS_KEY, JSON.stringify(record))
+      } catch {
+        /* storage unavailable — keep the in-memory names only */
+      }
+    }
+
+    /**
+     * The alias for one provider, or `undefined` when it still uses its
+     * catalog name. Tolerates an absent face so call sites stay simple.
+     * @param {Map<string, string>|undefined} aliases - the current record.
+     * @param {unknown} providerId - the provider's stable id.
+     * @returns {string|undefined} the stored alias.
+     */
+    function aliasOf(aliases, providerId) {
+      if (aliases === undefined || aliases === null || typeof aliases.get !== 'function') return undefined
+      const value = aliases.get(String(providerId ?? ''))
+      return typeof value === 'string' && value !== '' ? value : undefined
+    }
+
+    /**
+     * The ONE rename store per plugin generation, shared by the Settings page
+     * that writes it and every panel that reads it, so a save in Settings
+     * re-renders an open picker with no reload.
+     * @param deps - storage accessors, injected for testability.
+     * @returns the store plus an idempotent `setAlias`.
+     */
+    function createAliasStore(deps) {
+      let aliases = new Map(typeof deps.readStored === 'function' ? deps.readStored() : [])
+      const listeners = new Set()
+      const persist = () => {
+        try {
+          if (typeof deps.writeStored === 'function') deps.writeStored(aliases)
+        } catch {
+          /* storage unavailable — the in-memory value still applies */
+        }
+      }
+      /** Publish one new record: persist, then notify every surface. */
+      const commit = next => {
+        aliases = next
+        persist()
+        for (const listener of [...listeners]) {
+          try {
+            listener()
+          } catch {
+            /* one bad subscriber must not starve the others */
+          }
+        }
+      }
+      return {
+        getSnapshot: () => aliases,
+        subscribe: listener => {
+          listeners.add(listener)
+          return () => { listeners.delete(listener) }
+        },
+        /**
+         * Rename one provider, or restore its catalog name.
+         * @param {unknown} providerId - the provider's stable id.
+         * @param {unknown} value - the new name; blank restores the catalog's.
+         */
+        setAlias: (providerId, value) => {
+          const id = String(providerId ?? '')
+          if (id === '') return
+          const next = sanitizeAlias(value)
+          const current = aliases.get(id)
+          if (next === '') {
+            if (current === undefined) return
+            const map = new Map(aliases)
+            map.delete(id)
+            commit(map)
+            return
+          }
+          if (current === next) return
+          const map = new Map(aliases)
+          map.set(id, next)
+          commit(map)
+        },
+        /** Drop every subscriber (activation teardown). */
+        dispose: () => { listeners.clear() },
+      }
+    }
+
+    /**
+     * Frozen stand-in for a screen with no store (a degraded activation, or a
+     * test double): every provider keeps its catalog name.
+     */
+    const NO_ALIASES = {
+      getSnapshot: () => EMPTY_ALIASES,
+      subscribe: () => () => {},
+      setAlias: () => {},
+    }
+
+    // ---------------------------------------------------------------------
     // Project link: the icon button beside the display-mode button.
     //
     // The browser cannot read the checkout — no filesystem, no subprocess — so
@@ -2841,7 +3165,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         // asks this namespace for it, exactly as the panel's own dictionary
         // does. Without it the row would print the raw key.
         'provider.account': 'DeepSeek 账号',
-        intro: '选择在平铺模型面板中显示哪些 Provider 和模型。隐藏的项不会出现在面板里，也不会出现在搜索结果中。',
+        intro: '选择在平铺模型面板中显示哪些 Provider 和模型。隐藏的项不会出现在面板里，也不会出现在搜索结果中。点击 Provider 名称旁的铅笔图标，可以给它换一个显示名称。',
         empty: '模型目录尚未加载。打开一次模型面板后再回来查看。',
         models: '{count} 个模型',
         visibleCount: '{count} 个已开启',
@@ -2850,6 +3174,15 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         collapse: '收起',
         providerToggle: '显示 {name}',
         modelToggle: '显示 {name}',
+        'alias.editLabel': '重命名 {name}',
+        'alias.renamedLabel': '重命名 {name}，原名 {original}',
+        'alias.field': '显示名称，原名 {original}',
+        'alias.original': '原名 {original}',
+        'alias.keyboard': 'Enter 保存 · Esc 取消',
+        'alias.save': '保存名称',
+        'alias.cancel': '取消重命名',
+        'alias.reset': '恢复原名 {original}',
+        'alias.duplicate': '另一个 Provider 使用了这个名称',
         note: '新增的 Provider 和模型默认显示。',
         'telemetry.title': '匿名使用统计',
         'telemetry.desc': '每天最多一次，仅上报安装标识、插件版本、平台与架构，不含任何会话内容。默认开启。',
@@ -2859,7 +3192,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         nav: 'Model list',
         title: 'Model list',
         'provider.account': 'DeepSeek Account',
-        intro: 'Choose which providers and models appear in the flat model panel. Hidden entries are left out of the panel and of search results.',
+        intro: 'Choose which providers and models appear in the flat model panel. Hidden entries are left out of the panel and of search results. Use the pencil beside a provider name to give it a different display name.',
         empty: 'The model catalogue has not loaded yet. Open the model panel once, then come back.',
         models: '{count} models',
         visibleCount: '{count} on',
@@ -2868,6 +3201,15 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         collapse: 'Collapse',
         providerToggle: 'Show {name}',
         modelToggle: 'Show {name}',
+        'alias.editLabel': 'Rename {name}',
+        'alias.renamedLabel': 'Rename {name}, originally {original}',
+        'alias.field': 'Display name, originally {original}',
+        'alias.original': 'Original: {original}',
+        'alias.keyboard': 'Enter to save · Esc to cancel',
+        'alias.save': 'Save name',
+        'alias.cancel': 'Cancel rename',
+        'alias.reset': 'Restore {original}',
+        'alias.duplicate': 'Another provider already uses this name',
         note: 'Newly added providers and models are shown by default.',
         'telemetry.title': 'Anonymous usage statistics',
         'telemetry.desc': 'At most once a day: install id, plugin version, platform and architecture only — never any session content. On by default.',
@@ -3235,6 +3577,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         available, directory, load, select, resolveText, resolveDirectory,
         teamAvailable, setTeamMode, useProjection, useSession, useSessions,
         insufficient, displayMode, setDisplayMode, nativeAvailable, visibility,
+        aliases,
       } = props
 
       // The store may arrive after the first render (the Session binds later),
@@ -3273,6 +3616,14 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       const subscribeVisible = useCallback(listener => visibleFace.subscribe(listener), [visibleFace])
       const getHidden = useCallback(() => visibleFace.getSnapshot(), [visibleFace])
       const hidden = useSyncExternalStore(subscribeVisible, getHidden, getHidden)
+
+      // The names the user chose in Settings, from the SAME page-wide store the
+      // Settings editor writes. The map keeps its identity until a name really
+      // changes, so this subscription cannot loop.
+      const aliasFace = aliases ?? NO_ALIASES
+      const subscribeAliases = useCallback(listener => aliasFace.subscribe(listener), [aliasFace])
+      const getAliases = useCallback(() => aliasFace.getSnapshot(), [aliasFace])
+      const providerAliases = useSyncExternalStore(subscribeAliases, getAliases, getAliases)
       // Resolved per render: the shipped entry may register after this face was
       // built, and the button has to enable itself without a reload.
       const canGoNative = typeof nativeAvailable === 'function' && nativeAvailable() === true
@@ -3480,7 +3831,18 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
          * @param {{id: string, name: unknown}} group - one provider entry.
          * @returns {string} a display-ready label; never empty.
          */
-        const providerLabelOf = group => providerLabel(group, t, resolveText)
+        const providerLabelOf = group => providerLabel(group, t, resolveText, aliasOf(providerAliases, group.id))
+        /**
+         * The catalog's own name for the same provider, ignoring any alias.
+         *
+         * It is not drawn in the picker — the user chose the alias — but the
+         * family-row tail strips provider words, and a model name usually
+         * carries the ORIGINAL provider spelling (`豆包 2.1 Turbo`), so both
+         * faces have to be removed or the tail repeats the provider.
+         * @param {{id: string, name: unknown}} group - one provider entry.
+         * @returns {string} the catalog label.
+         */
+        const providerOriginalOf = group => providerLabel(group, t, resolveText)
         /**
          * A provider whose own name or id matches the query keeps its whole
          * catalog: `dou` shows the `豆包(doubao)` provider with every model it
@@ -3498,11 +3860,12 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
           for (const group of groups) {
             const providerHit = providerHitOf(group) !== null
             const providerLabel = providerLabelOf(group)
+            const providerOriginal = providerOriginalOf(group)
             const scored = []
             for (const model of group.models) {
               const score = scoreOf(model, providerHit)
               if (score !== null) {
-                scored.push({ entry: { model, providerId: group.id, providerLabel }, score })
+                scored.push({ entry: { model, providerId: group.id, providerLabel, providerOriginal }, score })
               }
             }
             if (scored.length === 0) continue
@@ -3519,6 +3882,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         for (const group of groups) {
           const providerHit = providerHitOf(group) !== null
           const providerLabel = providerLabelOf(group)
+          const providerOriginal = providerOriginalOf(group)
           for (const model of group.models) {
             const score = scoreOf(model, providerHit)
             if (score === null) continue
@@ -3528,7 +3892,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
               bucket = { key: family, title: family, scored: [] }
               buckets.set(family, bucket)
             }
-            bucket.scored.push({ entry: { model, providerId: group.id, providerLabel }, score })
+            bucket.scored.push({ entry: { model, providerId: group.id, providerLabel, providerOriginal }, score })
           }
         }
         const families = [...buckets.values()]
@@ -3553,11 +3917,14 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
             const used = new Map()
             for (const item of list) {
               // An empty tail is valid: a model whose name says nothing beyond
-              // the family and the provider draws no tail at all.
+              // the family and the provider draws no tail at all. Only the
+              // catalog spelling is stripped: the alias is a user label, not a
+              // guaranteed part of the model name — stripping a word like `Pro`
+              // from `Claude 3.5 Pro Sonnet` would mangle the model's own name.
               const variant = rowVariantOf(
                 item.entry.model,
                 family.title,
-                item.entry.providerLabel,
+                item.entry.providerOriginal,
               )
               item.entry.rowVariant = variant
               used.set(variant, (used.get(variant) ?? 0) + 1)
@@ -3576,7 +3943,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
           out.push({ key: family.key, title: family.title, models: family.scored.map(item => item.entry) })
         }
         return out
-      }, []), [grouping, groups, query, t, resolveText])
+      }, []), [grouping, groups, query, t, resolveText, providerAliases])
 
       const totalModels = useMemo(
         () => groups.reduce((sum, group) => sum + group.models.length, 0),
@@ -4150,7 +4517,8 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         key: `failure-${failure.id}`,
         role: 'status',
       }, fill(t, 'failure.group', {
-        name: failure.id === 'deepseek-account' ? t('provider.account') : failure.name,
+        name: aliasOf(providerAliases, failure.id)
+          ?? (failure.id === 'deepseek-account' ? t('provider.account') : failure.name),
         message: failure.message,
       }))
 
@@ -4816,11 +5184,18 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
      * @param props - the settings slot's props plus the injected face.
      */
     function SettingsSection(props) {
-      const { t, visibility, catalog, telemetry } = props
+      const { t, visibility, catalog, telemetry, aliases } = props
       const visibleFace = visibility ?? ALL_VISIBLE
       const subscribeHidden = useCallback(listener => visibleFace.subscribe(listener), [visibleFace])
       const getHidden = useCallback(() => visibleFace.getSnapshot(), [visibleFace])
       const hidden = useSyncExternalStore(subscribeHidden, getHidden, getHidden)
+
+      // The names the user chose, from the SAME page-wide store the picker
+      // reads. A save here re-renders an open panel with no reload.
+      const aliasFace = aliases ?? NO_ALIASES
+      const subscribeAliases = useCallback(listener => aliasFace.subscribe(listener), [aliasFace])
+      const getAliases = useCallback(() => aliasFace.getSnapshot(), [aliasFace])
+      const aliasMap = useSyncExternalStore(subscribeAliases, getAliases, getAliases)
 
       const catalogFace = catalog ?? EMPTY_CATALOG
       const subscribeCatalog = useCallback(listener => catalogFace.subscribe(listener), [catalogFace])
@@ -4866,53 +5241,318 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         return template.replace(/\{(\w+)\}/g, (_, name) => String(values[name] ?? ''))
       }
 
+      // The ONE inline editor. Only one provider is renamed at a time, which
+      // keeps focus handling honest and makes the helper line's id unique.
+      const [editing, setEditing] = useState(null)
+      const [draft, setDraft] = useState('')
+      const cancelRef = useRef(false)
+      const suppressBlurRef = useRef(false)
+      const renameRefs = useRef(new Map())
+      const renameId = group => String(group?.id ?? '')
+      /** Return focus to the pencil that opened the editor, after React commits. */
+      const focusRename = id => {
+        const run = () => { renameRefs.current.get(id)?.focus?.() }
+        if (typeof queueMicrotask === 'function') queueMicrotask(run)
+        else if (typeof setTimeout === 'function') setTimeout(run, 0)
+      }
+      const beginRename = group => {
+        const id = renameId(group)
+        cancelRef.current = false
+        setEditing(id)
+        setDraft(aliasOf(aliasMap, id) ?? '')
+      }
+      const closeRename = (id, restoreFocus = true) => {
+        setEditing(null)
+        setDraft('')
+        if (restoreFocus) focusRename(id)
+      }
+      const commitRename = (group, restoreFocus = true) => {
+        const id = renameId(group)
+        // `aliasFor` turns blank and equal-to-original drafts into "no alias",
+        // so clearing the record restores whatever the catalog says now.
+        aliasFace.setAlias(id, aliasFor(draft, providerLabel(group, translate, undefined)))
+        closeRename(id, restoreFocus)
+      }
+      const cancelRename = group => {
+        cancelRef.current = true
+        closeRename(renameId(group))
+      }
+      const resetRename = group => {
+        aliasFace.setAlias(renameId(group), undefined)
+        closeRename(renameId(group))
+      }
+
       const groups = Array.isArray(catalogue.groups) ? catalogue.groups : []
-      const labelOf = group => providerLabel(group, translate, undefined)
+      /** The catalog's own name, ignoring any alias. */
+      const originalOf = group => providerLabel(group, translate, undefined)
+      /** The name this page draws: the alias when one exists. */
+      const labelOf = group => providerLabel(group, translate, undefined, aliasOf(aliasMap, group.id))
       const setVisible = (key, visible) => visibleFace.setVisible(key, visible)
       const setGroup = (group, visible) => visibleFace.setGroupVisible(group, visible)
+
+      /**
+       * The inline editor for one provider.
+       *
+       * It replaces the disclosure rather than sitting beside it: the provider
+       * name is a button, and an input inside a button is invalid markup and
+       * unusable by keyboard. The ghost chevron keeps the field aligned with
+       * the collapsed name; the switch stays where it was, so the row does not
+       * jump around it.
+       * @param group - the provider being renamed.
+       * @returns the editor block.
+       */
+      const renderEditor = group => {
+        const id = renameId(group)
+        const original = originalOf(group)
+        const current = aliasOf(aliasMap, id)
+        const next = aliasFor(draft, original)
+        const saveDisabled = (next ?? '') === (current ?? '')
+        const folded = value => sanitizeAlias(value).toLowerCase()
+        const normalized = folded(draft)
+        let clash = false
+        if (normalized !== '' && normalized !== folded(original)) {
+          for (const other of groups) {
+            const otherId = renameId(other)
+            if (otherId === id) continue
+            // A collision is a collision whether the other provider got the
+            // name in the catalog or from an earlier rename, and `Work` vs
+            // `work` would still read as the same heading.
+            if (folded(originalOf(other)) === normalized
+              || folded(aliasOf(aliasMap, otherId)) === normalized) {
+              clash = true
+              break
+            }
+          }
+        }
+        const composing = event => event?.isComposing === true
+          || event?.nativeEvent?.isComposing === true
+          || event?.keyCode === 229
+        const onBlur = event => {
+          if (cancelRef.current) {
+            cancelRef.current = false
+            return
+          }
+          if (suppressBlurRef.current) {
+            suppressBlurRef.current = false
+            return
+          }
+          const focused = event?.relatedTarget
+          const currentTarget = event?.currentTarget
+          if (focused !== null && focused !== undefined && currentTarget !== null
+            && currentTarget !== undefined && typeof currentTarget.contains === 'function'
+            && currentTarget.contains(focused)) return
+          // Leaving the editor commits. Every mousedown inside it except the
+          // input is default-prevented, so a click on a control runs its own
+          // handler before focus can leave — never a save followed by a cancel.
+          // Focus is NOT pulled back to the pencil here: the pointer has
+          // already moved to whatever was clicked.
+          commitRename(group, false)
+        }
+        const onKeyDown = event => {
+          const key = event?.key
+          if (key !== 'Enter' && key !== 'Escape') return
+          // An IME uses Enter to accept a candidate and Escape to dismiss it;
+          // committing or cancelling then would act on half a name. 229 is the
+          // legacy keyCode some engines still report for that keypress.
+          if (composing(event)) return
+          // Both keys belong to the editor while it is open: without this the
+          // Settings panel would also treat Escape as "close the panel".
+          event?.preventDefault?.()
+          event?.stopPropagation?.()
+          if (key === 'Enter') commitRename(group)
+          else cancelRename(group)
+        }
+        // The wrapper only owns Escape. Enter must stay with the control that
+        // has focus: on the Cancel button it activates Cancel, and swallowing
+        // it here would commit the draft instead.
+        const onEditorKeyDown = event => {
+          if (event?.key !== 'Escape' || composing(event)) return
+          event?.preventDefault?.()
+          event?.stopPropagation?.()
+          cancelRename(group)
+        }
+        const onEditorMouseDown = event => {
+          const tag = String(event?.target?.tagName ?? '').toUpperCase()
+          if (tag === 'INPUT') return
+          if (tag === 'BUTTON' || tag === 'PATH' || tag === 'SVG') {
+            // A control's own click decides the outcome. Focus may move to it,
+            // but the resulting blur must not commit first (on touch, where a
+            // Cancel tap must never save the draft). The flag clears on the
+            // click or on the next tick if no click follows.
+            suppressBlurRef.current = true
+            if (typeof setTimeout === 'function') {
+              setTimeout(() => { suppressBlurRef.current = false }, 0)
+            }
+            return
+          }
+          // Padding, the ghost chevron and the helper line are not controls;
+          // keep focus in the field when they are clicked.
+          event?.preventDefault?.()
+        }
+        /** Run one editor control action after cancelling any pending blur. */
+        const act = action => {
+          suppressBlurRef.current = false
+          action()
+        }
+        return h('div', {
+          className: 'dshmf-setEditorWrap',
+          onBlur,
+          onKeyDown: onEditorKeyDown,
+          // Pointerdown fires before focus moves on mouse AND touch. Without
+          // it, a tap on Cancel could blur-commit first and cancel a closed
+          // editor, i.e. save the very draft the user rejected.
+          onPointerDown: onEditorMouseDown,
+          onMouseDown: onEditorMouseDown,
+        },
+          h('div', { className: 'dshmf-setEditor' },
+            svg(PATH_CHEVRON, 13, { className: 'dshmf-setEditorChevron' }),
+            h('span', { className: 'dshmf-setField' },
+              h('input', {
+                className: 'dshmf-setInput',
+                type: 'text',
+                value: draft,
+                placeholder: original,
+                autoFocus: true,
+                autoComplete: 'off',
+                spellCheck: false,
+                enterKeyHint: 'done',
+                dir: 'auto',
+                'aria-label': fillText('alias.field', { original }),
+                'aria-describedby': 'dshmf-alias-hint',
+                onFocus: event => event?.currentTarget?.select?.(),
+                onKeyDown,
+                onChange: event => {
+                  // Clamp by CODE POINT, not by the input's `maxLength` (which
+                  // counts UTF-16 units and would halve an emoji name). When the
+                  // clamp bites, the DOM is corrected directly: React bails out
+                  // on an unchanged state value, so without this the field would
+                  // keep showing a name longer than the one that gets saved.
+                  const target = event?.target
+                  const raw = String(target?.value ?? '')
+                  const clamped = [...raw].slice(0, ALIAS_MAX).join('')
+                  if (clamped !== raw && target) target.value = clamped
+                  setDraft(clamped)
+                },
+              }),
+              current === undefined
+                ? null
+                : h('button', {
+                  type: 'button',
+                  className: 'dshmf-setAliasReset',
+                  title: fillText('alias.reset', { original }),
+                  'aria-label': fillText('alias.reset', { original }),
+                  onClick: () => act(() => resetRename(group)),
+                }, svg(PATH_RESET, 12))),
+            h('button', {
+              type: 'button',
+              className: 'dshmf-setEditBtn dshmf-setSaveBtn',
+              title: translate('alias.save'),
+              'aria-label': translate('alias.save'),
+              disabled: saveDisabled,
+              onClick: () => act(() => commitRename(group)),
+            }, svg(PATH_CONFIRM, 13)),
+            h('button', {
+              type: 'button',
+              className: 'dshmf-setEditBtn',
+              title: translate('alias.cancel'),
+              'aria-label': translate('alias.cancel'),
+              onClick: () => act(() => cancelRename(group)),
+            }, svg(PATH_CLOSE, 12))),
+          h('p', { className: 'dshmf-setEditHint', id: 'dshmf-alias-hint' },
+            h('span', { className: 'dshmf-setEditOriginal', title: original },
+              fillText('alias.original', { original })),
+            // The live region is mounted for the editor's whole life, even when
+            // empty: a `role="status"` created at the moment of the clash would
+            // not be announced by most screen readers.
+            h('span', {
+              className: 'dshmf-setEditStatus',
+              role: 'status',
+              'aria-live': 'polite',
+            }, clash ? translate('alias.duplicate') : ''),
+            clash
+              ? null
+              : h('span', { className: 'dshmf-setEditKeys' }, translate('alias.keyboard'))))
+      }
 
       const rows = groups.map(group => {
         const isOpen = expanded.has(group.id)
         const models = Array.isArray(group.models) ? group.models : []
         const state = groupVisibility(hidden, group)
         const title = labelOf(group)
+        const original = originalOf(group)
+        const id = renameId(group)
+        const alias = aliasOf(aliasMap, id)
+        const editingThis = editing === id
         return h('div', { className: 'dshmf-setProvider', key: group.id, 'data-hidden': state.allHidden },
-          h('div', { className: 'dshmf-setProviderRow' },
-            // The disclosure is the WHOLE text area, not the chevron alone:
-            // the name, the model count and the chevron are one button, so a
-            // click anywhere on that side of the row expands the provider.
-            h('button', {
-              type: 'button',
-              className: 'dshmf-setDisclosure',
-              'aria-expanded': isOpen,
-              'aria-label': `${isOpen ? translate('collapse') : translate('expand')} ${title}`,
-              onClick: () => toggleExpanded(group.id),
-            },
-              svg(PATH_CHEVRON, 13, { className: isOpen ? 'dshmf-setChevron dshmf-setChevronOpen' : 'dshmf-setChevron' }),
-              // The row's own text lives INSIDE the disclosure button (see
-              // above), so the whole text side is one click target. The meta
-              // line reports the bulk state: "all off" when nothing is on, and
-              // how many are on when the user has switched a few back on.
-              h('span', { className: 'dshmf-setProviderText' },
-                h('span', { className: 'dshmf-setProviderName' }, title),
-                h('span', { className: 'dshmf-setProviderMeta' },
-                  fillText('models', { count: models.length }),
-                  state.allHidden
-                    ? ` · ${translate('allOff')}`
-                    : state.mixed
-                      ? ` · ${fillText('visibleCount', { count: state.visible })}`
-                      : null))),
-            h(Switch, {
-              // The provider switch reports its models and writes them all; it
-              // has no state of its own. `checked` is "every model is on", and
-              // `mixed` is a provider the user has partly switched back on.
-              checked: state.allVisible,
-              mixed: state.mixed,
-              label: fillText('providerToggle', { name: title }),
-              // Switching ON from a mixed state is the useful reading of "turn
-              // this provider on": make it fully on, not toggle one model.
-              onChange: next => setGroup(group, next),
-            })),
+          h('div', {
+            className: 'dshmf-setProviderRow',
+            'data-editing': editingThis ? 'true' : undefined,
+          },
+            editingThis
+              // The editor replaces the disclosure: an input nested inside the
+              // disclosure button would be invalid and unreachable by pointer.
+              ? renderEditor(group)
+              // The disclosure is the WHOLE text area, not the chevron alone:
+              // the name, the model count and the chevron are one button, so a
+              // click anywhere on that side of the row expands the provider.
+              : h('button', {
+                type: 'button',
+                className: 'dshmf-setDisclosure',
+                'aria-expanded': isOpen,
+                'aria-label': `${isOpen ? translate('collapse') : translate('expand')} ${title}`,
+                onClick: () => toggleExpanded(group.id),
+              },
+                svg(PATH_CHEVRON, 13, { className: isOpen ? 'dshmf-setChevron dshmf-setChevronOpen' : 'dshmf-setChevron' }),
+                // The row's own text lives INSIDE the disclosure button (see
+                // above), so the whole text side is one click target. The meta
+                // line reports the bulk state: "all off" when nothing is on, and
+                // how many are on when the user has switched a few back on.
+                h('span', { className: 'dshmf-setProviderText' },
+                  h('span', { className: 'dshmf-setProviderName', title }, title),
+                  h('span', { className: 'dshmf-setProviderMeta' },
+                    fillText('models', { count: models.length }),
+                    state.allHidden
+                      ? ` · ${translate('allOff')}`
+                      : state.mixed
+                        ? ` · ${fillText('visibleCount', { count: state.visible })}`
+                        : null,
+                    alias === undefined
+                      ? null
+                      : h('span', { className: 'dshmf-setProviderOriginal' },
+                        ` · ${fillText('alias.original', { original })}`)))),
+            // Pencil and switch are ONE trailing group: the row already spaces
+            // its two sides by 16px, and letting each control be its own flex
+            // item would put 32px of air around a 22px button.
+            h('div', { className: 'dshmf-setActions' },
+              editingThis
+                ? null
+                : h('button', {
+                  type: 'button',
+                  className: 'dshmf-setRenameBtn',
+                  'data-renamed': alias === undefined ? 'false' : 'true',
+                  title: alias === undefined
+                    ? fillText('alias.editLabel', { name: original })
+                    : fillText('alias.renamedLabel', { name: alias, original }),
+                  'aria-label': alias === undefined
+                    ? fillText('alias.editLabel', { name: original })
+                    : fillText('alias.renamedLabel', { name: alias, original }),
+                  ref: node => {
+                    if (node === null || node === undefined) renameRefs.current.delete(id)
+                    else renameRefs.current.set(id, node)
+                  },
+                  onClick: () => beginRename(group),
+                }, svg(PATH_PENCIL, 13)),
+              h(Switch, {
+                // The provider switch reports its models and writes them all; it
+                // has no state of its own. `checked` is "every model is on", and
+                // `mixed` is a provider the user has partly switched back on.
+                checked: state.allVisible,
+                mixed: state.mixed,
+                label: fillText('providerToggle', { name: title }),
+                // Switching ON from a mixed state is the useful reading of "turn
+                // this provider on": make it fully on, not toggle one model.
+                onChange: next => setGroup(group, next),
+              }))),
           isOpen
             ? h('div', { className: 'dshmf-setModels' }, ...models.map(model => {
               const modelTitle = typeof model?.name === 'string' ? model.name : String(model?.id ?? '')
@@ -4971,7 +5611,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       // Pure layout and grouping derivations plus the component itself,
       // exposed for `node --test` so grouping, filtering and the column
       // algorithm are pinned without a browser. The shell never reads this key.
-      __test: { marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, readDisplayMode, writeDisplayMode, createDisplayModeStore, DISPLAY_MODE_KEY, DISPLAY_MODE_DEFAULT, FLAT_DISPLAY_MODE, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore, quantizeMetric, metricChanged, METRIC_HYSTERESIS, LabelBoundary, readLabelEntry, labelSeat, labelSlotSource, LABEL_SLOT, providerLabel, fetchProjectLink, openInNewTab, PROJECT_LINK_PATH, PROJECT_LINK_FALLBACK, PROJECT_LINK_TIMEOUT_MS, HIDDEN_KEY, readHidden, writeHidden, providerHiddenKey, modelHiddenKey, modelIsVisible, visibleGroups, createHiddenStore, ALL_VISIBLE, hiddenKeysForGroup, groupVisibility, setGroupVisible, sameKeys, migrateLegacyHidden, createCatalogStore, EMPTY_CATALOG, TELEMETRY_KEY, readTelemetryEnabled, writeTelemetryEnabled, syncTelemetryEnabled, createTelemetryStore, TELEMETRY_ON, TELEMETRY_SETTINGS_PATH, SETTINGS_NS, settingsDict, installSettingsNavIcon, SettingsSection, Switch },
+      __test: { marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, readDisplayMode, writeDisplayMode, createDisplayModeStore, DISPLAY_MODE_KEY, DISPLAY_MODE_DEFAULT, FLAT_DISPLAY_MODE, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore, quantizeMetric, metricChanged, METRIC_HYSTERESIS, LabelBoundary, readLabelEntry, labelSeat, labelSlotSource, LABEL_SLOT, providerLabel, fetchProjectLink, openInNewTab, PROJECT_LINK_PATH, PROJECT_LINK_FALLBACK, PROJECT_LINK_TIMEOUT_MS, HIDDEN_KEY, readHidden, writeHidden, providerHiddenKey, modelHiddenKey, modelIsVisible, visibleGroups, createHiddenStore, ALL_VISIBLE, hiddenKeysForGroup, groupVisibility, setGroupVisible, sameKeys, migrateLegacyHidden, NO_ALIASES, createAliasStore, aliasOf, writeAliases, readAliases, aliasFor, sanitizeAlias, ALIAS_MAX, ALIAS_KEY, createCatalogStore, EMPTY_CATALOG, TELEMETRY_KEY, readTelemetryEnabled, writeTelemetryEnabled, syncTelemetryEnabled, createTelemetryStore, TELEMETRY_ON, TELEMETRY_SETTINGS_PATH, SETTINGS_NS, settingsDict, installSettingsNavIcon, SettingsSection, Switch },
       __component: ModelFlatMap,
       __seat: Seat,
       __nativeMenuRow: NativeMenuRow,
@@ -5115,6 +5755,20 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         // never re-opens Settings. Fire-and-forget: it must never block or fail
         // the picker.
         try { void Promise.resolve(telemetryStore.syncNow()).catch(() => {}) } catch { /* never throws */ }
+        // ---- the rename store (what the picker calls each provider)
+        //
+        // ONE store per activation, written by the Settings section and read by
+        // every open picker. It is deliberately separate from the hidden record:
+        // one is a set of switched-off keys, the other is id -> label. Sharing a
+        // record would make the two features' write paths depend on each other.
+        let aliasStore
+        try {
+          aliasStore = createAliasStore({ readStored: readAliases, writeStored: writeAliases })
+          ctx.effect(() => () => { aliasStore.dispose?.() }, 'dsh-model-flatmap: provider names')
+        } catch (error) {
+          console.error('dsh-model-flatmap: the rename store failed to start', error)
+          aliasStore = NO_ALIASES
+        }
 
         // ---- the catalogue the Settings section lists
         //
@@ -5276,6 +5930,10 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
             // search, so a toggle flipped in Settings re-renders an open panel
             // without a reload.
             visibility: hiddenStore,
+            // The ONE rename store: provider id -> display name. Same page-wide
+            // store the Settings editor writes, so a rename re-labels an open
+            // panel without a reload.
+            aliases: aliasStore,
             // Lazy for the same reason as `teamAvailable`: the shipped entry can
             // register AFTER this face is built, and the button has to enable
             // itself without a reload.
@@ -5543,6 +6201,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
                     visibility: hiddenStore,
                     catalog: catalogStore,
                     telemetry: telemetryStore,
+                    aliases: aliasStore,
                   }),
                 }, SettingsSection)
               } catch (error) {

@@ -1565,6 +1565,25 @@ test('the selected-row CSS is a deep blue band with white bold text', () => {
 })
 
 // ---------------------------------------------------------------------------
+// The rename editor copies the shipped Settings field, not a new control look.
+// ---------------------------------------------------------------------------
+test('the rename field reuses the host field geometry and theme tokens', () => {
+  const css = source.match(/const CSS = `([\s\S]*?)`/)[1]
+  const rule = css.match(/\.dshmf-setInput \{([\s\S]*?)\}/)[1]
+  assert.match(rule, /height: 32px/, 'the host field height')
+  assert.match(rule, /border: \.5px solid var\(--dsw-alias-border-l4\)/, 'the host hairline and token')
+  assert.match(rule, /border-radius: var\(--dsw-radius-md\)/, 'the host radius token')
+  assert.match(rule, /background: var\(--dsw-alias-bg-layer-1\)/, 'the host raised-surface token')
+  assert.doesNotMatch(rule, /#[0-9a-f]{3,8}\b/i, 'no literal colour in the field')
+
+  // Quiet until the row is hovered/focused; a renamed row keeps it visible.
+  const btn = css.match(/\.dshmf-setRenameBtn \{([\s\S]*?)\}/)[1]
+  assert.match(btn, /opacity: 0/, 'the pencil is not permanent chrome')
+  assert.match(css, /\.dshmf-setRenameBtn\[data-renamed="true"\] \{ opacity: 1;/, 'a renamed row keeps it visible')
+  assert.doesNotMatch(btn, /#[0-9a-f]{3,8}\b/i, 'the pencil takes its colour from tokens')
+})
+
+// ---------------------------------------------------------------------------
 // The teamwork switch sits immediately right of its title, both left-aligned.
 // `space-between` used to push the switch to the far edge of the panel.
 // ---------------------------------------------------------------------------
@@ -3999,6 +4018,138 @@ test('the hidden store notifies once per real change and persists', () => {
   }
 })
 
+// ---------------------------------------------------------------------------
+// Provider aliases: a user-authored display name, kept by provider id.
+//
+// These cover the pure record first, then the one label derivation every
+// surface must share. The Settings editor and the picker's reaction are below,
+// beside the other Settings tests.
+// ---------------------------------------------------------------------------
+test('the alias record is sanitized, capped and round-trips through storage', () => {
+  const store = installStorage()
+  try {
+    const aliases = new Map([
+      ['p', '  Work   Place  '],
+      ['q', 'x'.repeat(80)],
+      ['control', 'a\u0007b'],
+      ['empty', '   '],
+      ['', 'nope'],
+    ])
+    bundle.__test.writeAliases(aliases)
+    const read = bundle.__test.readAliases()
+    assert.equal(read.get('p'), 'Work Place', 'whitespace runs collapse and trim')
+    assert.equal([...read.get('q')].length, bundle.__test.ALIAS_MAX, 'the cap counts code points')
+    assert.equal(read.get('control'), 'a b', 'a control character becomes a space')
+    assert.equal(read.has('empty'), false, 'an empty name is absence, not a rename')
+    assert.equal(read.has(''), false, 'an empty provider id is ignored')
+    assert.equal(store.has(bundle.__test.ALIAS_KEY), true, 'the record is written')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('the alias cap never splits a surrogate pair', () => {
+  installStorage()
+  try {
+    const alias = '😀'.repeat(bundle.__test.ALIAS_MAX + 10)
+    bundle.__test.writeAliases(new Map([['p', alias]]))
+    const stored = bundle.__test.readAliases().get('p')
+    assert.equal([...stored].length, bundle.__test.ALIAS_MAX, 'exactly the code-point cap')
+    assert.equal(stored, '😀'.repeat(bundle.__test.ALIAS_MAX), 'whole emoji survive')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('a missing, empty or malformed alias record means every provider keeps its name', () => {
+  for (const stored of [undefined, '', 'not json', '[]', 'null', '"text"', '{"a":1}']) {
+    const entries = stored === undefined ? {} : { [bundle.__test.ALIAS_KEY]: stored }
+    installStorage(entries)
+    try {
+      assert.equal(bundle.__test.readAliases().size, 0, `stored ${JSON.stringify(stored)} degrades to the catalog name`)
+    } finally {
+      delete globalThis.localStorage
+    }
+  }
+})
+
+test('aliasFor stores nothing for a blank, unchanged or whitespace-different draft', () => {
+  const { aliasFor } = bundle.__test
+  assert.equal(aliasFor('', 'Third Party'), undefined, 'blank restores the catalog name')
+  assert.equal(aliasFor('   ', 'Third Party'), undefined, 'whitespace is blank')
+  assert.equal(aliasFor('Third Party', 'Third Party'), undefined, 'an identical draft is not an override')
+  assert.equal(aliasFor('Third  Party', 'Third Party'), undefined, 'normalization makes it identical')
+  assert.equal(aliasFor(' Work Place ', 'Third Party'), 'Work Place', 'a real rename is normalized and kept')
+  assert.equal(aliasFor('third party', 'Third Party'), 'third party', 'case is the user’s choice, not redundancy')
+})
+
+test('the alias store notifies once per real change and persists', () => {
+  installStorage()
+  try {
+    const face = bundle.__test.createAliasStore({
+      readStored: bundle.__test.readAliases,
+      writeStored: bundle.__test.writeAliases,
+    })
+    let notified = 0
+    const off = face.subscribe(() => { notified += 1 })
+    assert.equal(face.getSnapshot().size, 0, 'it starts empty')
+    face.setAlias('p', ' Work ')
+    assert.equal(notified, 1, 'a rename notifies')
+    assert.equal(face.getSnapshot().get('p'), 'Work', 'the name is normalized')
+    assert.equal(bundle.__test.readAliases().get('p'), 'Work', 'the change is persisted')
+    face.setAlias('p', ' Work ')
+    assert.equal(notified, 1, 'a no-op rename notifies nobody')
+    face.setAlias('p', '')
+    assert.equal(notified, 2, 'restoring the catalog name notifies')
+    assert.equal(face.getSnapshot().has('p'), false, 'and removes the key')
+    face.setAlias('', 'x')
+    assert.equal(notified, 2, 'an empty provider id is ignored')
+    off()
+    face.setAlias('q', 'Q')
+    assert.equal(notified, 2, 'an unsubscribed listener is not called')
+    face.dispose()
+    face.setAlias('r', 'R')
+    assert.equal(notified, 2, 'a disposed store notifies nobody')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('providerLabel prefers the alias, then the catalog name', () => {
+  const t = key => (key === 'provider.account' ? 'DeepSeek Account' : key)
+  const { providerLabel } = bundle.__test
+  assert.equal(providerLabel({ id: 'p', name: 'Third Party' }, t, undefined, 'Work Place'),
+    'Work Place', 'the alias wins over the catalog name')
+  assert.equal(providerLabel({ id: 'p', name: 'Third Party' }, t, undefined, '   '),
+    'Third Party', 'a blank alias falls back')
+  assert.equal(providerLabel({ id: 'deepseek-account', name: 'ignored' }, t, undefined, '我的账号'),
+    '我的账号', 'the account provider can be renamed too')
+  assert.equal(providerLabel({ id: 'deepseek-account', name: 'ignored' }, t, undefined),
+    'DeepSeek Account', 'without an alias it keeps its localized wording')
+})
+
+test('a provider-wide search matches the alias AND the original name', () => {
+  const { providerScore } = bundle.__test
+  const group = { id: 'p', name: 'Third Party' }
+  assert.equal(providerScore(group, 'work', 'Work Place'), 0, 'the alias is a prefix hit')
+  assert.equal(providerScore(group, 'place', 'Work Place'), 1, 'the alias is a substring hit')
+  assert.equal(providerScore(group, 'third', 'Work Place'), 0, 'the original name still matches')
+  assert.equal(providerScore(group, 'work party', 'Work Place'), 1,
+    'tokens may land in different faces of the same provider')
+  assert.equal(providerScore(group, 'zzz', 'Work Place'), null, 'an unrelated query still misses')
+})
+
+test('a renamed provider strips the catalog spelling, never the user’s alias', () => {
+  const { familyVariant } = bundle.__test
+  // The model name carries the catalog's spelling, so that is what the tail
+  // must remove to avoid repeating the provider.
+  assert.equal(familyVariant({ id: 'm', name: 'Doubao 2.1 Turbo' }, 'Doubao', 'Doubao(豆包)'), '2.1 Turbo')
+  // The alias is an arbitrary label. `Pro` is a perfectly good provider name
+  // and a perfectly bad thing to remove from a model called `Claude 3.5 Pro`.
+  assert.equal(familyVariant({ id: 'm2', name: 'Claude 3.5 Pro Sonnet' }, 'Claude', 'Doubao(豆包)'),
+    '3.5 Pro Sonnet')
+})
+
 test('the catalogue store unwraps the Remote envelope and degrades on failure', async () => {
   const { createCatalogStore } = bundle.__test
   const groups = [{ id: 'p', name: 'P', models: [{ id: 'm', name: 'M' }] }]
@@ -4147,6 +4298,332 @@ test('a toggle in Settings re-renders an open panel without a reload', () => {
   assert.equal(gridRows(tree).length, 6, 'showing it again brings the row back')
 })
 
+test('a renamed provider is used by headings and family rows', () => {
+  const face = bundle.__test.createAliasStore({
+    readStored: () => new Map([['third-party', 'Work Place']]),
+  })
+  const opened = openPanel(catalogState(), { inject: { aliases: face } })
+  const { tree } = opened
+  assert.deepEqual(gridTitles(tree).map(textOf), ['provider.account', 'Work Place'],
+    'the heading is the alias, not the catalog name')
+  const familyTree = switchToFamily(tree, opened.made.props)
+  const rows = gridRows(familyTree)
+  const providerText = rows.map(row => {
+    const name = findAll(row, node => hasClass(node, 'dshmf-rowName'))[0]
+    return textOf(name)
+  })
+  assert.ok(providerText.includes('Work Place'), 'a family row’s primary text is the alias')
+  assert.equal(providerText.includes('Third Party'), false, 'the original name is not drawn beside it')
+})
+
+test('search accepts the alias and still accepts the original provider name', () => {
+  const face = bundle.__test.createAliasStore({
+    readStored: () => new Map([['third-party', 'Work Place']]),
+  })
+  const search = query => {
+    runtime.reset()
+    const made = makeProps(catalogState(), { inject: { aliases: face } })
+    let tree = runtime.render(bundle.__component, made.props)
+    findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+    tree = runtime.render(bundle.__component, made.props)
+    findAll(tree, node => node.props?.role === 'searchbox')[0]
+      .props.onChange({ target: { value: query } })
+    tree = runtime.render(bundle.__component, made.props)
+    return tree
+  }
+  const byAlias = search('work')
+  assert.deepEqual(gridTitles(byAlias).map(textOf), ['Work Place'], 'the alias selects its provider')
+  assert.equal(gridRows(byAlias).length, 4, 'and keeps that provider’s whole catalog')
+  const byOriginal = search('third')
+  assert.deepEqual(gridTitles(byOriginal).map(textOf), ['Work Place'], 'the original still selects it')
+  assert.equal(gridRows(byOriginal).length, 4, 'with the whole catalog too')
+})
+
+test('renaming a provider re-renders an open panel without a reload', () => {
+  const face = bundle.__test.createAliasStore({ readStored: () => new Map() })
+  runtime.reset()
+  const made = makeProps(catalogState(), { inject: { aliases: face } })
+  let tree
+  runtime.setRerender(() => { tree = runtime.render(bundle.__component, made.props) })
+  tree = runtime.render(bundle.__component, made.props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, made.props)
+  assert.ok(gridTitles(tree).map(textOf).includes('Third Party'), 'the catalog name is drawn first')
+
+  face.setAlias('third-party', 'Work Place')
+  tree = runtime.render(bundle.__component, made.props)
+  assert.ok(gridTitles(tree).map(textOf).includes('Work Place'), 'the open panel follows the rename')
+  assert.equal(gridTitles(tree).map(textOf).includes('Third Party'), false)
+
+  face.setAlias('third-party', undefined)
+  tree = runtime.render(bundle.__component, made.props)
+  assert.ok(gridTitles(tree).map(textOf).includes('Third Party'), 'restoring the name restores the heading')
+})
+
+test('the settings row renames a provider and restores its catalog name', async () => {
+  runtime.reset()
+  const face = bundle.__test.createAliasStore({ readStored: () => new Map() })
+  const hidden = bundle.__test.createHiddenStore({ readStored: () => new Set() })
+  const catalog = bundle.__test.createCatalogStore({
+    read: () => ({ modelCatalog: async () => ({ ok: true, value: { groups: catalogState().groups } }) }),
+  })
+  await catalog.load()
+  const props = { t: key => key, visibility: hidden, catalog, aliases: face }
+  let tree
+  runtime.setRerender(() => { tree = runtime.render(bundle.__test.SettingsSection, props) })
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+
+  const pencils = findAll(tree, node => hasClass(node, 'dshmf-setRenameBtn'))
+  assert.equal(pencils.length, 2, 'every provider has a rename action')
+  assert.equal(pencils[1].props['data-renamed'], 'false', 'a catalog name is not marked as renamed')
+  pencils[1].props.onClick()
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+
+  const input = findAll(tree, node => hasClass(node, 'dshmf-setInput'))[0]
+  assert.equal(input.props.value, '', 'the editor starts from the alias, which is absent')
+  assert.equal(input.props.placeholder, 'Third Party', 'the original is the placeholder')
+  assert.equal(input.props.autoFocus, true, 'the field takes focus')
+  assert.equal(input.props['aria-label'], 'alias.field', 'the field is labelled through the section copy')
+  let save = findAll(tree, node => hasClass(node, 'dshmf-setSaveBtn'))[0]
+  assert.equal(save.props.disabled, true, 'saving a blank, unchanged name does nothing')
+
+  input.props.onChange({ target: { value: 'Work Place' } })
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  save = findAll(tree, node => hasClass(node, 'dshmf-setSaveBtn'))[0]
+  assert.equal(save.props.disabled, false, 'a real change enables saving')
+  save.props.onClick()
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  assert.equal(face.getSnapshot().get('third-party'), 'Work Place', 'the alias is written to the shared store')
+
+  const names = findAll(tree, node => hasClass(node, 'dshmf-setProviderName')).map(textOf)
+  assert.deepEqual(names, ['provider.account', 'Work Place'], 'the row draws the alias')
+  const meta = findAll(tree, node => hasClass(node, 'dshmf-setProviderMeta'))[1]
+  assert.ok(textOf(meta).includes('alias.original'), 'the original name stays visible beside the alias')
+  const renamed = findAll(tree, node => hasClass(node, 'dshmf-setRenameBtn'))[1]
+  assert.equal(renamed.props['data-renamed'], 'true', 'a renamed row keeps its pencil visible')
+  assert.equal(renamed.props.title, 'alias.renamedLabel', 'the tooltip names the original through copy')
+
+  renamed.props.onClick()
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  const reset = findAll(tree, node => hasClass(node, 'dshmf-setAliasReset'))[0]
+  assert.ok(reset, 'a renamed provider offers a one-click restore')
+  reset.props.onClick()
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  assert.equal(face.getSnapshot().has('third-party'), false, 'restoring removes the alias')
+  assert.deepEqual(findAll(tree, node => hasClass(node, 'dshmf-setProviderName')).map(textOf),
+    ['provider.account', 'Third Party'], 'the catalog name is back')
+})
+
+test('the rename editor cancels, restores, and survives IME composition', async () => {
+  runtime.reset()
+  const face = bundle.__test.createAliasStore({ readStored: () => new Map() })
+  const hidden = bundle.__test.createHiddenStore({ readStored: () => new Set() })
+  const catalog = bundle.__test.createCatalogStore({
+    read: () => ({ modelCatalog: async () => ({ ok: true, value: { groups: catalogState().groups } }) }),
+  })
+  await catalog.load()
+  const props = { t: key => key, visibility: hidden, catalog, aliases: face }
+  let tree
+  runtime.setRerender(() => { tree = runtime.render(bundle.__test.SettingsSection, props) })
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  const openEditor = () => {
+    findAll(tree, node => hasClass(node, 'dshmf-setRenameBtn'))[1].props.onClick()
+    tree = runtime.render(bundle.__test.SettingsSection, props)
+    return findAll(tree, node => hasClass(node, 'dshmf-setInput'))[0]
+  }
+  const editorNode = () => findAll(tree, node => hasClass(node, 'dshmf-setEditorWrap'))[0]
+
+  // Cancel drops the draft and writes nothing.
+  let input = openEditor()
+  input.props.onChange({ target: { value: 'Draft Name' } })
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  findAll(tree, node => hasClass(node, 'dshmf-setEditBtn'))[1].props.onClick()
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  assert.equal(face.getSnapshot().size, 0, 'cancel writes nothing')
+  assert.equal(findAll(tree, node => hasClass(node, 'dshmf-setInput')).length, 0, 'the editor closes')
+
+  // Escape is the editor's own; it must not reach the Settings panel.
+  input = openEditor()
+  input.props.onChange({ target: { value: 'Draft Name' } })
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  let stopped = false
+  let prevented = false
+  findAll(tree, node => hasClass(node, 'dshmf-setInput'))[0].props.onKeyDown({
+    key: 'Escape',
+    preventDefault: () => { prevented = true },
+    stopPropagation: () => { stopped = true },
+  })
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  assert.equal(prevented, true, 'Escape is consumed')
+  assert.equal(stopped, true, 'and does not bubble to the panel')
+  assert.equal(face.getSnapshot().size, 0, 'Escape cancels the rename')
+
+  // Escape also works after Tab moves focus to Save or Cancel: the handler sits
+  // on the editor, not only on the input.
+  input = openEditor()
+  input.props.onChange({ target: { value: 'Draft Name' } })
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  editorNode().props.onKeyDown({ key: 'Escape', preventDefault: () => {}, stopPropagation: () => {} })
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  assert.equal(face.getSnapshot().size, 0, 'Escape from an editor control also cancels')
+
+  // Composing Escape dismisses the candidate window, not the rename.
+  input = openEditor()
+  input.props.onChange({ target: { value: 'Draft Name' } })
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  findAll(tree, node => hasClass(node, 'dshmf-setInput'))[0].props.onKeyDown({
+    key: 'Escape',
+    isComposing: true,
+  })
+  editorNode().props.onKeyDown({ key: 'Escape', isComposing: true })
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  assert.equal(face.getSnapshot().size, 0, 'a composing Escape saves nothing')
+  assert.equal(findAll(tree, node => hasClass(node, 'dshmf-setInput')).length, 1, 'and keeps the editor open')
+
+  // The field clamps by code point, so a long emoji paste cannot produce a lone
+  // surrogate or a name longer than the documented cap. The clamp also rewrites
+  // the DOM value: React bails out on an unchanged state, and the saved name
+  // must never be shorter than what the field shows.
+  const clampedInput = findAll(tree, node => hasClass(node, 'dshmf-setInput'))[0]
+  const domTarget = { value: '😀'.repeat(60) }
+  clampedInput.props.onChange({ target: domTarget })
+  assert.equal([...domTarget.value].length, bundle.__test.ALIAS_MAX, 'the DOM value is corrected in place')
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  const clamped = findAll(tree, node => hasClass(node, 'dshmf-setInput'))[0]
+  assert.equal([...clamped.props.value].length, bundle.__test.ALIAS_MAX, 'the input caps at 48 code points')
+  assert.equal(clamped.props.value, domTarget.value, 'what the field shows is what gets saved')
+  findAll(tree, node => hasClass(node, 'dshmf-setEditBtn'))[1].props.onClick()
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+
+  // Enter during IME composition belongs to the input method, not to us.
+  input = openEditor()
+  input.props.onChange({ target: { value: '构词中' } })
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  findAll(tree, node => hasClass(node, 'dshmf-setInput'))[0].props.onKeyDown({ key: 'Enter', isComposing: true })
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  assert.equal(face.getSnapshot().size, 0, 'a composing Enter saves nothing')
+  assert.equal(findAll(tree, node => hasClass(node, 'dshmf-setInput')).length, 1, 'and leaves the editor open')
+
+  // Leaving the editor commits, but does not pull focus back.
+  editorNode().props.onBlur({ currentTarget: { contains: () => false }, relatedTarget: null })
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  assert.equal(face.getSnapshot().get('third-party'), '构词中', 'blur commits the draft')
+})
+
+test('a pointer on an editor control never turns a cancel into a save', async () => {
+  runtime.reset()
+  const face = bundle.__test.createAliasStore({ readStored: () => new Map() })
+  const hidden = bundle.__test.createHiddenStore({ readStored: () => new Set() })
+  const catalog = bundle.__test.createCatalogStore({
+    read: () => ({ modelCatalog: async () => ({ ok: true, value: { groups: catalogState().groups } }) }),
+  })
+  await catalog.load()
+  const props = { t: key => key, visibility: hidden, catalog, aliases: face }
+  let tree
+  runtime.setRerender(() => { tree = runtime.render(bundle.__test.SettingsSection, props) })
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  const editorNode = () => findAll(tree, node => hasClass(node, 'dshmf-setEditorWrap'))[0]
+  const openEditor = () => {
+    findAll(tree, node => hasClass(node, 'dshmf-setRenameBtn'))[1].props.onClick()
+    tree = runtime.render(bundle.__test.SettingsSection, props)
+    return findAll(tree, node => hasClass(node, 'dshmf-setInput'))[0]
+  }
+
+  // A tap on Cancel: pointerdown moves focus out of the field, so a blur that
+  // committed unconditionally would save the draft the user just rejected.
+  let input = openEditor()
+  input.props.onChange({ target: { value: 'Draft Name' } })
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  let prevented = 0
+  editorNode().props.onPointerDown({
+    target: { tagName: 'BUTTON' },
+    preventDefault: () => { prevented += 1 },
+  })
+  editorNode().props.onBlur({ currentTarget: { contains: () => false }, relatedTarget: null })
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  assert.equal(face.getSnapshot().size, 0, 'the suppressed blur saves nothing')
+  assert.equal(prevented, 0, 'a real control keeps its own activation')
+  findAll(tree, node => hasClass(node, 'dshmf-setEditBtn'))[1].props.onClick()
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  assert.equal(face.getSnapshot().size, 0, 'and the cancel handler is what writes')
+
+  // Padding and the ghost chevron are not controls: their mousedown keeps the
+  // caret in the field instead of starting a blur.
+  input = openEditor()
+  editorNode().props.onMouseDown({
+    target: { tagName: 'DIV' },
+    preventDefault: () => { prevented += 1 },
+  })
+  assert.equal(prevented, 1, 'a non-control mousedown is default-prevented')
+  findAll(tree, node => hasClass(node, 'dshmf-setEditBtn'))[1].props.onClick()
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+
+  // The suppression is one-shot: a later genuine blur still commits.
+  input = openEditor()
+  input.props.onChange({ target: { value: 'Second Try' } })
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  editorNode().props.onPointerDown({ target: { tagName: 'BUTTON' }, preventDefault: () => {} })
+  editorNode().props.onBlur({ currentTarget: { contains: () => false }, relatedTarget: null })
+  editorNode().props.onBlur({ currentTarget: { contains: () => false }, relatedTarget: null })
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  assert.equal(face.getSnapshot().get('third-party'), 'Second Try', 'the next blur commits normally')
+})
+
+test('a blank name restores the original, and a duplicate name warns without blocking', async () => {
+  runtime.reset()
+  const face = bundle.__test.createAliasStore({ readStored: () => new Map([['third-party', 'Work Place']]) })
+  const hidden = bundle.__test.createHiddenStore({ readStored: () => new Set() })
+  const catalog = bundle.__test.createCatalogStore({
+    read: () => ({ modelCatalog: async () => ({ ok: true, value: { groups: catalogState().groups } }) }),
+  })
+  await catalog.load()
+  const props = { t: key => key, visibility: hidden, catalog, aliases: face }
+  let tree
+  runtime.setRerender(() => { tree = runtime.render(bundle.__test.SettingsSection, props) })
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+
+  // Clear the account provider's name field: an existing alias plus a blank
+  // draft is a valid "restore", so save is enabled.
+  findAll(tree, node => hasClass(node, 'dshmf-setRenameBtn'))[0].props.onClick()
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  const live = findAll(tree, node => hasClass(node, 'dshmf-setEditStatus'))[0]
+  assert.ok(live, 'the live region is mounted before there is anything to announce')
+  assert.equal(textOf(live), '', 'and starts empty')
+  const input = findAll(tree, node => hasClass(node, 'dshmf-setInput'))[0]
+  input.props.onChange({ target: { value: 'Work Place' } })
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  const text = textOf(tree)
+  assert.ok(text.includes('alias.duplicate'), 'the duplicate name is called out')
+  const warned = findAll(tree, node => hasClass(node, 'dshmf-setEditStatus'))[0]
+  assert.equal(textOf(warned), 'alias.duplicate', 'the pre-existing status node carries the warning')
+  const save = findAll(tree, node => hasClass(node, 'dshmf-setSaveBtn'))[0]
+  assert.equal(save.props.disabled, false, 'the warning never blocks saving')
+
+  // A catalog name counts as taken too, and the comparison ignores case.
+  findAll(tree, node => hasClass(node, 'dshmf-setEditBtn'))[1].props.onClick()
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  findAll(tree, node => hasClass(node, 'dshmf-setRenameBtn'))[0].props.onClick()
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  findAll(tree, node => hasClass(node, 'dshmf-setInput'))[0]
+    .props.onChange({ target: { value: 'THIRD PARTY' } })
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  assert.ok(textOf(tree).includes('alias.duplicate'), 'another provider’s catalog name is called out too')
+  findAll(tree, node => hasClass(node, 'dshmf-setEditBtn'))[1].props.onClick()
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+
+  // The same text on the RENAMED provider clears its alias.
+  findAll(tree, node => hasClass(node, 'dshmf-setRenameBtn'))[1].props.onClick()
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  const renamedInput = findAll(tree, node => hasClass(node, 'dshmf-setInput'))[0]
+  assert.equal(renamedInput.props.value, 'Work Place', 'the field starts at the current alias')
+  renamedInput.props.onChange({ target: { value: '' } })
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  findAll(tree, node => hasClass(node, 'dshmf-setSaveBtn'))[0].props.onClick()
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  assert.equal(face.getSnapshot().has('third-party'), false, 'an empty draft is a restore')
+})
+
+
 test('every copy key the settings section renders exists in both languages', () => {
   // The section is translated through its OWN namespace, so a key that lives
   // only in the panel dictionary would render as the raw key. This walks the
@@ -4154,14 +4631,19 @@ test('every copy key the settings section renders exists in both languages', () 
   // dotted identifier.
   const dict = bundle.__test.settingsDict
   for (const locale of ['zh', 'en']) {
-    for (const key of ['nav', 'title', 'intro', 'empty', 'models', 'visibleCount', 'allOff', 'expand', 'collapse', 'providerToggle', 'modelToggle', 'note', 'provider.account']) {
+    for (const key of ['nav', 'title', 'intro', 'empty', 'models', 'visibleCount', 'allOff', 'expand', 'collapse', 'providerToggle', 'modelToggle', 'note', 'provider.account', 'alias.editLabel', 'alias.renamedLabel', 'alias.field', 'alias.original', 'alias.keyboard', 'alias.save', 'alias.cancel', 'alias.reset', 'alias.duplicate']) {
       assert.equal(typeof dict[locale][key], 'string', `${locale} declares ${key}`)
       assert.notEqual(dict[locale][key], '', `${locale} ${key} is not empty`)
     }
-    // The two fill-templates must declare exactly the placeholder the call site fills.
-    for (const [key, name] of [['models', 'count'], ['visibleCount', 'count'], ['providerToggle', 'name'], ['modelToggle', 'name']]) {
+    // Fill-templates declare exactly the placeholders their call sites fill.
+    for (const [key, name] of [['models', 'count'], ['visibleCount', 'count'], ['providerToggle', 'name'], ['modelToggle', 'name'], ['alias.editLabel', 'name'], ['alias.field', 'original'], ['alias.original', 'original'], ['alias.reset', 'original']]) {
       const declared = [...String(dict[locale][key]).matchAll(/\{(\w+)\}/gu)].map(m => m[1])
       assert.deepEqual(declared, [name], `${locale} ${key} declares {${name}}`)
+    }
+    const renamed = [...String(dict[locale]['alias.renamedLabel']).matchAll(/\{(\w+)\}/gu)].map(m => m[1])
+    assert.deepEqual(renamed, ['name', 'original'], `${locale} alias.renamedLabel declares both names`)
+    for (const key of ['alias.keyboard', 'alias.save', 'alias.cancel', 'alias.duplicate']) {
+      assert.equal(/\{\w+\}/u.test(dict[locale][key]), false, `${locale} ${key} takes no placeholder`)
     }
   }
 })
@@ -4326,6 +4808,22 @@ test('the settings section renders no raw translation keys', async () => {
     assert.equal(text.includes(` ${key}`) || text.startsWith(key), false, `the raw key ${key} is not drawn`)
   }
   assert.ok(text.includes('DeepSeek Account'), 'the account provider is named, not keyed')
+
+  // The rename editor resolves through the same namespace; a key that only
+  // exists in the panel dictionary would show up raw here.
+  findAll(tree, node => hasClass(node, 'dshmf-setRenameBtn'))[0].props.onClick()
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  const input = findAll(tree, node => hasClass(node, 'dshmf-setInput'))[0]
+  assert.equal(input.props.placeholder, 'DeepSeek Account', 'the original is the placeholder')
+  assert.equal(input.props['aria-label'], 'Display name, originally DeepSeek Account')
+  const editorText = textOf(tree)
+  assert.doesNotMatch(editorText, /\{\w+\}/u, 'the editor draws no unfilled placeholder')
+  assert.ok(editorText.includes('Original: DeepSeek Account'), 'the original name is shown in the helper line')
+  assert.ok(editorText.includes('Enter to save'), 'the keyboard hint is copy, not a key')
+  for (const key of ['alias.field', 'alias.original', 'alias.keyboard', 'alias.save', 'alias.cancel']) {
+    assert.equal(editorText.includes(` ${key}`) || editorText.startsWith(key), false,
+      `the raw key ${key} is not drawn`)
+  }
 })
 
 test('apply registers a Settings section with its own id, label and face', () => {
@@ -4349,6 +4847,7 @@ test('apply registers a Settings section with its own id, label and face', () =>
   const face = registration.inject()
   assert.equal(typeof face.visibility.setVisible, 'function', 'the section can write the visibility record')
   assert.equal(typeof face.catalog.load, 'function', 'the section can read the catalogue')
+  assert.equal(typeof face.aliases.setAlias, 'function', 'the section can write a provider name')
   assert.equal(typeof entry.component, 'function')
 })
 

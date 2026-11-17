@@ -157,6 +157,41 @@ provider。（3）默认 OFF：那就成了 opt-in，会静默抹掉所有老机
 - 已知取舍：宿主半边不存在（Desktop 自带文件服务）时镜像不落地，选择只存在浏览器本地；该机器
   的心跳照旧（等于 opt-out 默认），开关仍渲染且可用，只是这一台的关闭只在本地生效。
 
+## DEC-045 — 2026-11-17 — Provider 改名是本地别名，走同一条显示名推导
+
+**编号更正.** 合入 `main` 时先与遥测开关的 DEC-041 撞号、又与该分支自己的
+DEC-042/043/044 撞号，最终改为 DEC-045；本分支内提交信息里仍称 DEC-041。
+
+**Context.** 用户要在本插件自己的「设置 → 模型列表」里给 Provider 改名，并要求输入框的模型选择器也显示新名字；设计上要求 modern and elegant。
+
+**Findings.**
+
+- 宿主目录里的 `provider.name` 来自连接插件的 adapter（`buildModelCatalog` 直接读 `ctx.llm.listProviders()` 的 name），不是模型选择器可以改写的字段；宿主 Settings → Models 的 `displayName` 也到不了 catalog。因此改名只能是本插件自己的显示层。
+- 显示名散落在：*By provider* 分组标题、*By family* 行主文本、行 tooltip、Provider 搜索、失败条；任何一处单独处理都会漂移。
+- 现有 `providerLabel` 已经是唯一出口，扩展第四个参数即可，不需要第二套命名逻辑。
+- 设置页输入框应复用宿主 Models 页的字段几何（32px、`.5px` border-l4、radius-md、bg-layer-1），否则会像另一套控件。
+
+**Decision.**
+
+- 新增 `dshmf:aliases`（provider id → 字符串），独立于 `dshmf:hidden`；缺省表示目录原名；与原名归一化后相同则不落盘。
+- `providerLabel(group, t, resolveText, alias)` 先取别名；标题、家族行、tooltip、失败条、搜索 title 都调用它。
+- 搜索继续同时认目录原名与别名；家族行尾标只剥离目录原名，别名是用户标签，可能是模型名里的词（`Pro`），误剥会改坏模型名。
+- 设置行加铅笔（24px，常驻；有别名时着色）+ 行内编辑器：Enter/对勾保存，Esc/叉号取消，失焦提交；空值或等于原名保存即恢复；已有别名时提供一键恢复；重名只提示不阻止。
+- 编辑器里除输入框以外的 mousedown 全部接管：按钮走一次性 `suppressBlur` 标记，其余 `preventDefault`。否则触屏点「取消」会先失焦提交、再取消一个已经保存的编辑器。
+- `Escape` 挂在编辑器容器上（按钮获得焦点时也生效），`Enter` 只挂在输入框上——在「取消」上按 Enter 必须是取消。
+- 重名比较同时看其它 provider 的目录名与别名，用 `toLowerCase`（不用 `toLocaleLowerCase`，避免土耳其语 I/i 规则）。
+- 输入清洗：控制字符转空格、空白折叠、trim、48 个码点上限；`maxLength` 不用（按 UTF-16 计会切坏 emoji），改在 `onChange` 里按码点裁剪并回写 DOM 值，否则 React 因 state 未变而跳过渲染，显示比实际保存的长。
+- 重名提示走常驻 `role="status"`（空时裁剪隐藏而非 `display:none`），临时插入的 live region 不会被读屏播报。
+- 所有样式只用宿主 token，复制宿主设置字段的尺寸/边框/圆角/底色。
+
+**Rejected.**（1）写宿主 `displayName`：到不了 catalog，且不是所有 provider 可配置。（2）用 provider 名做 key：改名会改变身份、路由或可见性记录。（3）只在设置页替换文本：输入框面板是另一个组件、另一个 store。（4）弹窗或独立编辑页：行内编辑更轻，且不打断长列表的上下文。（5）允许空别名覆盖为空字符串：会让「恢复原名」变成不可逆的空白标题。
+
+**Consequences.**
+
+- 面板与设置共享一个 store，保存即重渲，无需刷新；别名按 id 保留，provider 暂时消失再回来仍生效。
+- 原生 `默认样式` picker 仍显示目录名（宿主组件，不改）。
+- 测试新增 16 项：记录清洗/读写/store、`providerLabel`/搜索/尾标、面板标题/家族行/即时重渲、设置编辑器保存/取消/Esc/IME/失焦/恢复/重名（含目录名与大小写）/空值/码点裁剪/指针与失焦竞争、复制键完整性、字段样式 token。
+
 ## DEC-040 — 2026-11-17 — 模型名改用等宽字体，provider 名留在 UI 字体
 
 **Context.** DEC-039 之后 provider 行靠字重（600）与模型行（400）区分。用户进一步要求

@@ -481,6 +481,62 @@ settings page folds it into per-model keys as soon as the catalogue names the
 models it covered. A provider key whose provider is no longer in the catalogue
 is left alone rather than guessed at.
 
+### Provider names
+
+Each provider row also offers a rename action: the pencil between the
+disclosure and the switch is always present, and is tinted once a provider
+carries a name. Clicking it replaces the disclosure with an inline editor,
+using the shipped Models page's own field
+geometry (32 px, a `.5 px` `border-l4`, `--dsw-radius-md`, `bg-layer-1`). The
+input is prefilled with the current alias; the original catalog name is shown
+as the placeholder, in the helper line and on the collapsed row's quiet meta
+line. The chevron is drawn as a non-interactive ghost so the field starts
+exactly where the name did. `Enter` or the check
+saves; `Escape` or the cross cancels; moving focus out of the editor commits.
+The circular-arrow suffix restores the catalog name in one click. Enter
+during IME composition is ignored. A name already used by another provider —
+in the catalog or as an alias, compared case-insensitively — is reported but
+never blocked, through a live region that exists for the editor's whole life so
+the warning is actually announced.
+
+Two details keep the editor from fighting the pointer. The wrapper's blur is
+the commit boundary, but every mousedown inside it except the field itself is
+either default-prevented (padding, ghost chevron, helper line — focus stays in
+the field) or flagged one-shot (the check, cross and reset buttons) so their own
+handler decides the outcome; without that, a tap on Cancel on touch would
+blur-commit first and then cancel an editor that had already saved. `Escape` is
+handled on the wrapper so it works from the buttons too, while `Enter` stays
+with the focused control — `Enter` on Cancel must cancel, not save.
+
+The alias is a **display label only**. It is keyed by the provider's stable id,
+so it cannot change routing, the hidden record's keys, the current selection or
+the order of providers, and a rename survives a provider disappearing and
+returning. It is stored in `localStorage` under `dshmf:aliases`; absence means
+"use the catalog name", and a draft that normalizes to the original stores
+nothing, so a future upstream rename still flows through. A read or write
+failure degrades to the catalog names, exactly as the hidden record degrades to
+"visible".
+
+One function, `providerLabel(group, t, resolveText, alias)`, resolves the label
+for every surface: the *By provider* heading, the provider primary text of a
+*By family* row, its tooltip, the failure strip, and the provider face of
+search. That is why there is no second place to update and why the panel and
+Settings cannot disagree. Search still matches the catalog's name, the alias,
+and a mix of both across a multi-token query; a provider hit still keeps its
+whole catalogue. Family-row tails strip the **catalog spelling** only, because a
+model name usually carries it; the alias is deliberately not stripped — it is a
+user label and may be a word the model name legitimately uses (`Pro` in
+`Claude 3.5 Pro Sonnet`).
+
+Aliases are sanitized on the way in and out: control characters become spaces,
+whitespace runs collapse, the value is trimmed, and it is capped at 48 Unicode
+code points so an emoji is never split. They are literal, language-neutral
+strings — the user typed one name, and both UI languages show it. Renaming the
+provider a conversation is using is allowed; the trigger still names the model
+and is unaffected. The shipped picker reached through `Default style` is the
+host's own component and therefore keeps the catalog's names; a provider's
+catalog name cannot be rewritten from this plugin.
+
 ### Where the filter applies
 
 The filter runs on the single catalogue the panel derives everything from —
