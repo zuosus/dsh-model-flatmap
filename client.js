@@ -300,6 +300,14 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
    multiplier reads as an aside without disturbing the row's text rhythm
    (see renderRow's nameRuns). */
 .dshmf-rowNameMark { font-size: 11px; line-height: 18px; font-weight: 700; letter-spacing: normal; }
+/* The row's own fallback when the picker's render view is hosted but its
+   occupant crashed (DEC-046). It replaces the decorated cell with the plain
+   catalog name, so it carries the row's text metrics rather than the occupant's
+   and never wraps: the window around it already clips. */
+.dshmf-rowLabelFallback {
+  display: inline-block; min-width: 0; white-space: nowrap;
+  font-size: 13px; line-height: 18px; font-weight: 400;
+}
 /* The model-specific tail of a family-grouped row, e.g. "3.8-Flash-Next",
    "V4.1-Flash · x0.01", "2.1 Turbo". The primary text is the provider and the
    heading names the family, so this is what is LEFT after both are removed —
@@ -3865,7 +3873,19 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
             for (const model of group.models) {
               const score = scoreOf(model, providerHit)
               if (score !== null) {
-                scored.push({ entry: { model, providerId: group.id, providerLabel, providerOriginal }, score })
+                // `providerOriginal` is the catalog's name with no alias (the
+                // family-row tail strips provider words from a model name, and
+                // that name usually carries the original spelling).
+                // `providerName` is the same name carried UNRESOLVED for a
+                // different reader: the row hands it to the model-label cell,
+                // which resolves it with its own locale seat exactly as it does
+                // inside the shipped picker (DEC-046).
+                scored.push({
+                  entry: {
+                    model, providerId: group.id, providerLabel, providerOriginal, providerName: group.name,
+                  },
+                  score,
+                })
               }
             }
             if (scored.length === 0) continue
@@ -3892,7 +3912,12 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
               bucket = { key: family, title: family, scored: [] }
               buckets.set(family, bucket)
             }
-            bucket.scored.push({ entry: { model, providerId: group.id, providerLabel, providerOriginal }, score })
+            bucket.scored.push({
+              entry: {
+                model, providerId: group.id, providerLabel, providerOriginal, providerName: group.name,
+              },
+              score,
+            })
           }
         }
         const families = [...buckets.values()]
@@ -4282,30 +4307,42 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         }
       }, [currentModel, t])
       /**
-       * The occupant's props, assembled once per (entry, model, label text).
+       * The halves of the occupant's props that are the SAME for every cell it
+       * decorates: its business inject (built once per entry) and its own
+       * locale seat.
+       *
+       * Split out of `labelNode` when the model ROWS started hosting the same
+       * cell (DEC-046). The face depends on the Session, not on the row, so a
+       * panel of twenty rows builds one face rather than twenty —
+       * `entry.inject(sessionId)` reads services and assembles an object, and
+       * the native picker likewise builds it once per picker, not per row.
+       */
+      const labelFaceValue = useMemo(() => (labelEntry === undefined || typeof props.labelFace !== 'function'
+        ? EMPTY_LABEL_FACE
+        : derive('building the model label face', () => props.labelFace(labelEntry), {})),
+      [labelEntry, props.labelFace])
+      const labelTranslate = useMemo(() => (labelEntry === undefined || typeof props.labelSeatFor !== 'function'
+        ? identityTranslate
+        : derive('binding the model label locale', () => props.labelSeatFor(labelEntry.locale), identityTranslate)),
+      [labelEntry, props.labelSeatFor])
+
+      /**
+       * The occupant's props for the TRIGGER, assembled once per (entry, model).
        *
        * The identity has to be stable across renders: the occupant is an
        * ordinary React component, and a fresh props object on every paint makes
-       * a memoized one re-render forever. `entry.inject(sessionId)` is the
-       * expensive half (it reads services and builds a face), so it is part of
-       * the same memo rather than a separate call per render.
+       * a memoized one re-render forever.
        */
       const labelNode = useMemo(() => {
         if (labelEntry === undefined || labelOwnerProps === undefined) return undefined
         const Occupant = labelEntry.component
-        const face = typeof props.labelFace === 'function'
-          ? derive('building the model label face', () => props.labelFace(labelEntry), {})
-          : EMPTY_LABEL_FACE
-        const translate = typeof props.labelSeatFor === 'function'
-          ? derive('binding the model label locale', () => props.labelSeatFor(labelEntry.locale), identityTranslate)
-          : identityTranslate
         return h(LabelBoundary, {
           // Keyed by the winner, so a change of occupant remounts rather than
           // handing one plugin's component another plugin's state.
           key: `label-${labelEntry.options?.id ?? labelEntry.registrant ?? 'entry'}`,
           fallback: undefined,
-        }, h(Occupant, { ...face, t: translate, ...labelOwnerProps }))
-      }, [labelEntry, labelOwnerProps, props.labelFace, props.labelSeatFor])
+        }, h(Occupant, { ...labelFaceValue, t: labelTranslate, ...labelOwnerProps }))
+      }, [labelEntry, labelOwnerProps, labelFaceValue, labelTranslate])
 
       /**
        * What the trigger draws when no label occupant answered: the catalog
@@ -4355,6 +4392,66 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         return out
       }
 
+      /**
+       * One row's cell, drawn by the picker's own render view (DEC-046).
+       *
+       * The shipped `ModelSelect` renders every selectable model through the
+       * `conversation.input.model.label` cell — the catalog name plus whatever
+       * the winning connection plugin decorates it with: its live rate
+       * multiplier, a promotion chip, and its load mark. This plugin shadows
+       * that picker, so the cell's DECLARATION survives while its renderer does
+       * not run. Reading the winning entry and rendering the occupant here is
+       * exactly what `ModelSelect` does with its `renderModelLabel` helper —
+       * same props (`provider`/`model`/`placement`/`selected`), same roles, so
+       * a row shows what the native row shows instead of a second, poorer
+       * approximation of it.
+       *
+       * NOTHING IS GUESSED FROM THE OCCUPANT. Its output is opaque: this plugin
+       * cannot split "the name" from "the decorations", so hosting the cell
+       * means hosting all of it — which is why a row that hosts it does NOT
+       * also draw the catalog badge (the occupant draws that badge itself on a
+       * foreign row, and a second chip beside it would read as two models) or
+       * this plugin's `xN` lift (the occupant draws its own rate span).
+       *
+       * @param entry - the row's `{ model, providerId, providerLabel, providerName }`.
+       * @param primary - the row's primary text, used only by the fallback.
+       * @param selected - whether this row is the current selection.
+       * @returns the boundary-wrapped occupant, or null when no occupant wins.
+       */
+      const renderRowLabel = (entry, primary, selected) => {
+        if (labelEntry === undefined) return null
+        const { model, providerId, providerLabel, providerName } = entry
+        const Occupant = labelEntry.component
+        return h(LabelBoundary, {
+          // Keyed by the route, so a change of occupant (or of the model a row
+          // stands for) remounts rather than handing one plugin's component
+          // another row's state.
+          key: `row-label-${providerId}/${model?.id}`,
+          // A crashing occupant costs the DECORATION, never the row: the
+          // boundary falls back to exactly what this row drew before it hosted
+          // the cell — the catalog name with its multiplier markers lifted.
+          fallback: h('span', { className: 'dshmf-rowLabelFallback' }, ...nameRuns(primary)),
+        }, h(Occupant, {
+          ...labelFaceValue,
+          t: labelTranslate,
+          provider: {
+            id: providerId,
+            // The catalog's own name, unresolved, except for the one provider
+            // the shipped picker localizes on the occupant's behalf.
+            name: providerId === 'deepseek-account'
+              ? t('provider.account')
+              : (typeof providerName === 'string' && providerName !== '' ? providerName : providerLabel),
+          },
+          model,
+          // `option` is the placement a selectable model row has in the shipped
+          // picker (`trigger` is the composer chip, `menu` the root menu's
+          // current-value cell). It is also what makes an occupant render its
+          // COMPACT decoration, which is what a row has room for.
+          placement: 'option',
+          selected,
+        }))
+      }
+
       const renderRow = entry => {
         const { model, providerId, providerLabel, rowVariant } = entry
         const selected = state.current?.provider === providerId && state.current.model === model.id
@@ -4373,6 +4470,14 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         const primary = familyMode && typeof providerLabel === 'string' && providerLabel !== ''
           ? providerLabel : String(model.name ?? '')
         const showVariant = familyMode && typeof rowVariant === 'string' && rowVariant !== ''
+        // The picker's own render view for a model row (DEC-046), or null when
+        // no occupant wins the cell. Under FAMILY grouping the row's primary
+        // text is the provider, not the model, so the cell's output (a model
+        // name plus its decorations) is not what that row is about: the cell is
+        // hosted only where the row stands for a MODEL, which is provider
+        // grouping. The tail below then carries what the occupant would have
+        // said anyway — the model's own variant and its rate multiplier.
+        const nativeCell = familyMode ? null : renderRowLabel(entry, primary, selected)
         const rowTitle = model.description === undefined
           ? `${model.name}\n${providerLabel}`
           : `${model.name}\n${model.description}\n${providerLabel}`
@@ -4408,11 +4513,24 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
           // provider name under family grouping. Only the track (inside the
           // clipped window) moves; the variant tail, the badge and the spinner
           // are siblings AFTER the window and stay put on the right.
-          h('span', { className: 'dshmf-rowNameWindow' },
-            running
-              ? renderNameTrack({ shift: marquee.shift, duration: marquee.duration, children: nameRuns(primary) })
-              : h('span', { className: 'dshmf-rowNameTrack dshmf-rowName' }, ...nameRuns(primary)),
-          ),
+          //
+          // A row that hosts the picker's own render view draws THAT as its
+          // primary text instead (DEC-046): the occupant already spells the
+          // name, lifts the rate and adds its chips, so re-applying `nameRuns`
+          // to it would decorate the same characters twice. The window and the
+          // one-pass marquee still wrap it — a decorated row can be wider than
+          // its column like any other.
+          nativeCell !== null
+            ? h('span', { className: 'dshmf-rowNameWindow' },
+              running
+                ? renderNameTrack({ shift: marquee.shift, duration: marquee.duration, children: nativeCell })
+                : h('span', { className: 'dshmf-rowNameTrack dshmf-rowName' }, nativeCell),
+            )
+            : h('span', { className: 'dshmf-rowNameWindow' },
+              running
+                ? renderNameTrack({ shift: marquee.shift, duration: marquee.duration, children: nameRuns(primary) })
+                : h('span', { className: 'dshmf-rowNameTrack dshmf-rowName' }, ...nameRuns(primary)),
+            ),
           // The model-specific tail sits at the END of the row, after the
           // primary text: the heading already names the family, and the
           // provider is the primary text, so what is LEFT is the型号 and the
@@ -4424,7 +4542,12 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
             className: 'dshmf-rowProvider',
             title: rowVariant,
           }, ...nameRuns(rowVariant)) : null,
-          badge === null ? null : h('span', {
+          // The catalog badge is the FALLBACK's decoration. The shipped picker
+          // draws it only when no label occupant answered (its `renderSlot`
+          // fallback), and an occupant that holds the cell draws the host's own
+          // `model.badge` itself — so a row hosting the cell must NOT also draw
+          // this chip, or a badged model shows two.
+          nativeCell !== null || badge === null ? null : h('span', {
             className: 'dshmf-badge',
             'data-tone': badge.tone,
           }, badge.label),

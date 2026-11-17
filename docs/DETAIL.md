@@ -98,10 +98,15 @@ and the agent teamwork switch are all visible at once.
   `--dsw-static-neutral-bluish-00`, both from the theme-invariant static
   palette, so the band looks the same in light and dark themes. Hover skips the
   selected row so the neutral hover wash never covers the highlight.
-- **Badges.** A model's catalog badge (for example a third-party rate
-  multiplier such as `×0.1`) renders inside its row. A model with no badge
-  renders no empty slot. On the selected row the badge switches to a
-  translucent white chip so it stays legible on the blue fill.
+- **Badges — and the picker's own label cell, on every row.** Under *By
+  provider* each row renders the shipped picker's own
+  `conversation.input.model.label` winner (`placement: 'option'`), so a
+  connection plugin's rate multiplier (`x0.01`), load mark and promotion chip
+  (`限时免费`) appear on the row exactly as in the native menu (DEC-046). A model
+  with no occupant falls back to the catalog name plus its own `model.badge` —
+  a badge-less model renders no empty slot, and on the selected row that
+  fallback badge switches to a translucent white chip so it stays legible on
+  the blue fill.
 - **Out-of-balance models are struck through.** When a model call fails because
   the account has no usable balance, credit, or quota left, that model's row
   text is drawn with a `line-through` decoration. The strike stays until a
@@ -244,6 +249,35 @@ read and never notifies.
 Because native mode (below) hands the seat to the Host, which renders the same
 slot, the trigger is now *one* implementation in both modes — the consistency
 this feature exists for.
+
+### The model rows host the same cell (DEC-046)
+
+The shipped picker renders **every** row through the label cell winner, with
+`placement: 'option'`; the catalog badge is only its fallback when nobody
+answers. Since DEC-028 the trigger already had that cell, so the rows were the
+half still drawing a hand-rolled name plus badge — and losing the rate, the load
+mark and the promotion chip entirely. Under *By provider* the grid now hosts the
+same winner on every selectable row, `placement: 'option'`, which is also what
+triggers an occupant's compact rendering.
+
+The cell's props are the same shape the trigger passes, plus the row's own
+`model` and `selected`. Its business face and locale seat are built **once per
+panel**, not once per row: `entry.inject(sessionId)` reads services and assembles
+an object, and the native picker likewise builds one face for the whole picker, so
+a twenty-row panel builds one face rather than twenty.
+
+A row that hosts the cell does **not** also draw the catalog `dshmf-badge`, and
+its name is not lifted for a rate — the occupant draws the host badge and its own
+rate span, so doubling would show the same figure twice (the exact defect
+workbuddy's `splitCatalogRate` documents). Because an occupant's output is opaque,
+the whole cell is hosted rather than an attempt to split name from decoration; the
+`LabelBoundary` fallback is the plain catalog name at the row's own text metrics,
+so a crash costs the decoration and never the row.
+
+Under *By family* the rows do **not** host the cell: there the row's primary text
+is the *provider*, and a model's label cell decorating a provider name would be
+wrong. Family rows keep the quieter model tail of DEC-024, and the slot stays on
+the trigger.
 
 ## Native mode
 
@@ -627,10 +661,15 @@ the measured overflow, and the duration is that distance divided by 50 px/s
 ## Limitations
 
 - The panel replaces the composer seat only; the `/model` popup is untouched.
-- The panel's GRID does not host the `conversation.input.model.label` child
-  slot: rows draw the catalog name plus `model.badge`. Only the TRIGGER renders
-  that slot's winner, because that is what the native trigger does. The
-  `conversation.input.model.options` slot is not drawn anywhere in the panel.
+- Under *By provider* the panel's GRID hosts the same
+  `conversation.input.model.label` child slot the trigger does, with
+  `placement: 'option'` (DEC-046), so a connection plugin's rate, load mark and
+  promotion chip appear on every selectable row exactly as in the native menu;
+  a row that hosts the cell suppresses its own catalog badge, which the occupant
+  draws itself. Under *By family* the rows do NOT host it — there the row's
+  primary text is the provider, so decorating it with a model's label cell would
+  be wrong, and the rows keep the quieter model tail instead.
+- The `conversation.input.model.options` slot is not drawn anywhere in the panel.
   The shipped registration keeps both declarations alive, so other plugins'
   contributions stay valid either way.
 - The Host half sends one anonymous heartbeat per local day (DEC-031). It is

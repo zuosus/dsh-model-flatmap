@@ -26,6 +26,56 @@ primary 或 secondary：ON/OFF 重新同色，回到「不可辨」。（3）OFF
 （14 vs 13）** 承担，色调不再区分 provider 与 model（两者 ON 态同为 primary，这是有意的）。
 render 测试改为断言「ON 模型名 = primary、OFF = tertiary 且不等于 primary」，
 并把「ON/OFF 由色调区分」的注释更新为「由族/字重/字号区分」。测试数不变（256）。
+## DEC-046 — 2026-11-18 — 模型行也渲染 picker 自带的 label 槽：倍数、负载、促销角标与原生一致
+
+**Context.** 用户要求模型行在模型名后带上和原生 picker 一样的信息——`x0.01` 倍数、忙碌
+标记、`Free Now` 之类的促销角标——并建议直接复用原生 picker 的渲染视图。此前 DEC-028 只在
+**触发器**上渲染了 `conversation.input.model.label` 槽的胜者；网格里的模型行画的是目录名
+加自绘的 `model.badge` 芯片，连接插件的倍数/负载/促销信息全部丢失。
+
+**Findings.**
+
+- 原生 `ModelSelect` 的**每一行**都经 label cell 胜者渲染（`placement: 'option'`），目录
+  badge 只是它「无人应答」时的回退。即槽系统本来就是为行设计的，DEC-028 的触发器只是同一
+  机制的一个 placement。
+- 行持有行所需的全部 owner props：`provider`、`model`、`placement: 'option'`、
+  `selected`，与触发器同源，无需新数据。
+- 占用者输出不透明（一个组件返回一整棵树），无法把名字与装饰拆开，因此整格 host；名字/
+  倍数/角标的排版由占用者负责，与触发器、原生菜单天然一致。
+- 真实占用者（workbuddy）在 `placement !== 'trigger'` 时走**紧凑**渲染——行里正好需要紧凑。
+
+**Decision.**
+
+1. 在**按 provider 分组**下，每个可选择的模型行渲染同一 label cell 胜者，`placement: 'option'`；
+   触发器保持 `placement: 'trigger'` 不变。
+2. 行格与触发器共用**每次面板一份**的 `labelFaceValue`（`entry.inject(sessionId)`）与
+   `labelTranslate`（locale seat），不做每行重建——否则 20 行 = 20 次 inject，而原生
+   picker 本就是每次 picker 一份。
+3. 行条目额外携带**未解析的** `providerName`（目录名）。label cell 胜者用自己的 locale
+   seat 解析它；本插件只预先解析 `deepseek-account` 一个 provider 名，其余留原样。
+4. host 了 cell 的行**不再**自绘目录 `dshmf-badge`、名字也不再套 `nameRuns` 的倍数提升——
+   否则同一个倍数出现两次（workbuddy 的 `splitCatalogRate` 注释里记录的正是这个缺陷）。
+5. cell 外包 `LabelBoundary`，回退到 `.dshmf-rowLabelFallback`（纯目录名，沿用行的 13px/
+   18px 文本度量、不换行）。占用者崩溃只损失装饰，不损失行本身。
+6. **按 family 分组下不 host**：此时行的主文本是 **provider** 而非模型，把模型 label cell
+   放进去会让 cell 装饰的是 provider 名；family 行继续用 DEC-024 的「更安静的尾巴」
+   （模型型号 + 更小更粗的倍数）。
+
+**Rejected.**
+
+- 自绘倍数/忙碌/促销角标：重复实现第三方装饰，且与原生永远差一拍（促销文案、配色、紧凑
+  规则都在占用者里）。用户明确要求「用原生 picker 的渲染视图」。
+- 在 family 分组下也 host：cell 会装饰 provider 名（上文 Decision 6）。
+- 每行重建 inject face：N× 服务读取与对象装配；原生 picker 亦为每次一份。
+- 把 `LabelBoundary` 去掉、让行自己兜住崩溃：占用者是第三方代码，崩溃必须止于装饰
+  （与 DEC-028 同一 containment 结论）。
+
+**Consequences.** 行条目增加一个 `providerName` 字段；新增 `renderRowLabel` 与
+`labelFaceValue`/`labelTranslate` 两个 memo；`renderRow` 在 cell 命中时改画 `nativeCell`
+并抑制目录 badge。CSS 增加一条 `.dshmf-rowLabelFallback`。测试新增 6 条
+（cell owner props、无双重装饰、无占用者回退不变、崩溃只损装饰、family 不 host、每面板
+一份 face）；测试总数 256 → 262。
+
 
 ## DEC-043 — 2026-11-17 — 关闭态标题降一档改为 tertiary：ON/OFF 一眼可辨且仍可读（修订 DEC-042）
 

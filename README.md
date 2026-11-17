@@ -58,13 +58,16 @@ levels, and the agent-teamwork switch on one surface:
 
 - **One surface.** The trigger opens one panel capped at 320 px. The header, the
   reasoning row, and the teamwork row stay fixed; only the model grid scrolls.
-- **The trigger shows what the native one shows.** Its name is not a string: the
-  shipped picker renders the `conversation.input.model.label` slot there, and
-  connection plugins use it for a promotion chip (`夜间折扣`), a rate, or a load
-  mark (queued people / a rocket when idle). This plugin renders that slot's
-  winning component on its own trigger — with the seats it needs — so the two
-  modes show the same content. A missing or crashing occupant falls back to the
-  catalog name plus the model's own `model.badge`.
+- **The trigger *and every model row* show what the native one shows.** Their
+  names are not strings: the shipped picker renders the
+  `conversation.input.model.label` slot there, and connection plugins use it for
+  a promotion chip (`夜间折扣`), a rate, or a load mark (queued people / a rocket
+  when idle). This plugin renders that slot's winning component on its own
+  trigger **and on every selectable row** under *By provider* — with the seats
+  they need — so the two modes show the same content row for row. A missing or
+  crashing occupant falls back to the catalog name plus the model's own
+  `model.badge`. Under *By family* the row's primary text is the provider, so
+  the rows keep the quieter model tail and the slot stays on the trigger only.
 - **Global search.** Filters across every provider and every family. Groups that
   end up empty are dropped, so no stray headings remain. Prefix matches rank
   first, then substring matches, then ordered character matches.

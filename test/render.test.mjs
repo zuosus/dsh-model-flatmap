@@ -5178,3 +5178,140 @@ test('a disabled row keeps its title in a readable tone instead of the dimmed on
   // switch, so the meta keeps the dimmed tone even though the title does not.
   assert.match(colorOf(hiddenProviderMeta), /label-dimmed/, 'the meta line keeps the dimmed tone')
 })
+
+// ---------------------------------------------------------------------------
+// The picker's own render view on the model ROWS (DEC-046)
+//
+// `conversation.input.model.label` is a `single` slot: the shipped picker
+// renders EVERY selectable model through its winner, so a row shows the
+// catalog name decorated by the connection plugin that owns the cell (a live
+// rate multiplier, a promotion chip, a load mark). This plugin shadows the
+// picker, not the declaration, so it can host the same cell on its own rows —
+// with the same props the native picker passes: provider, model, placement
+// `option`, and whether the row is the current selection.
+// ---------------------------------------------------------------------------
+/** The open panel's grid, after clicking the trigger. */
+function openGrid(state, overrides = {}) {
+  const { props } = makeProps(state, overrides)
+  findAll(runtime.render(bundle.__component, props), node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  return { tree: runtime.render(bundle.__component, props), props }
+}
+
+test('a model row hosts the picker label cell with the native owner props', () => {
+  runtime.reset()
+  const Occupant = () => null
+  const { tree } = openGrid(catalogState(), {
+    inject: labelProps({ component: Occupant, locale: 'test-ns' }),
+  })
+  const rows = gridRows(tree)
+  // The trigger hosts the cell too (DEC-028), so the rows are everything after
+  // it: one occupant per selectable model.
+  const occupants = findAll(tree, node => node.type === Occupant)
+  assert.equal(occupants.length, rows.length + 1, 'the trigger plus every selectable row hosts the cell')
+  const first = occupants[1]
+  assert.equal(occupants[0].props.placement, 'trigger', 'the first cell is the trigger')
+  // The shipped picker's own owner share for a row, field by field.
+  assert.equal(first.props.placement, 'option', 'a selectable row is an `option` placement')
+  assert.equal(first.props.provider.id, 'deepseek-account')
+  // The shipped picker localizes exactly one provider name for the occupant
+  // (`deepseek-account`); every other name is the catalog's own, unresolved.
+  assert.equal(first.props.provider.name, 'provider.account',
+    'the one provider the picker localizes, resolved through its own seat')
+  const thirdParty = occupants.find(node => node.props.provider.id === 'third-party')
+  assert.equal(thirdParty.props.provider.name, 'Third Party', 'the catalog name, unresolved')
+  assert.equal(first.props.model.id, 'deepseek-chat')
+  assert.equal(first.props.selected, true, 'the current model is marked selected')
+  assert.equal(first.props.t('badge.label'), 'seat:badge.label', 'its own locale seat is bound')
+  const other = occupants.find(node => node.props.model.id === 'grok-4')
+  assert.equal(other.props.selected, false, 'every other row is unselected')
+})
+
+test('a row hosting the cell does not also draw the catalog badge or lift the rate', () => {
+  // The occupant draws the host's `model.badge` itself, and spells its own
+  // rate span. Drawing either again beside it would show the same figure
+  // twice — the defect the shipped picker avoids by rendering ONE of the two.
+  runtime.reset()
+  const Occupant = () => null
+  const { tree } = openGrid(catalogState(), {
+    inject: labelProps({ component: Occupant, locale: 'test-ns' }),
+  })
+  const grid = findAll(tree, node => hasClass(node, 'dshmf-grid'))[0]
+  assert.equal(findAll(grid, node => hasClass(node, 'dshmf-badge')).length, 0,
+    'no fallback badge beside a hosted cell')
+  assert.equal(gridRowNameMarks(tree).length, 0,
+    'and no second rate lift: the occupant owns the decoration')
+})
+
+test('no label occupant leaves the row exactly as it was', () => {
+  // Without a winner the picker would draw its own fallback (name + badge);
+  // this plugin's fallback is the same thing, so the row keeps the badge and
+  // the `xN` lift it has always drawn.
+  runtime.reset()
+  const { tree } = openGrid(catalogState(), { inject: labelProps(undefined) })
+  const grid = findAll(tree, node => hasClass(node, 'dshmf-grid'))[0]
+  const badges = findAll(grid, node => hasClass(node, 'dshmf-badge'))
+  assert.equal(badges.length, 1, 'the catalog badge is drawn by the fallback')
+  assert.equal(textOf(badges[0]), '\u00d70.1')
+  assert.equal(findAll(tree, node => hasClass(node, 'dshmf-rowLabelFallback')).length, 0,
+    'the fallback label span belongs to the occupant boundary, not to this path')
+})
+
+test('a crashing row occupant costs the decoration, not the row', () => {
+  runtime.reset()
+  const Exploding = () => { throw new Error('occupant exploded') }
+  const { tree } = openGrid(catalogState(), {
+    inject: labelProps({ component: Exploding, locale: 'test-ns' }),
+  })
+  const rows = gridRows(tree)
+  assert.equal(rows.length, 6, 'every row is still drawn')
+  const trigger = findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0]
+  assert.ok(trigger !== undefined, 'and the trigger survives too')
+})
+
+test('family grouping keeps its provider rows and does not host the cell', () => {
+  // Under family grouping a row's primary text is the PROVIDER, not the model,
+  // so the cell's output (a model name plus decorations) is not what the row is
+  // about. The tail keeps carrying the model's own variant and rate instead.
+  runtime.reset()
+  const Occupant = () => null
+  const { props } = makeProps(catalogState(), {
+    inject: labelProps({ component: Occupant, locale: 'test-ns' }),
+  })
+  let tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+  tree = switchToFamily(tree, props)
+  const familyCells = findAll(tree, node => node.type === Occupant)
+  assert.equal(familyCells.filter(node => node.props.placement === 'option').length, 0,
+    'no row hosts the cell in family grouping')
+  assert.equal(familyCells.length, 1, 'only the trigger still hosts it')
+  const grid = findAll(tree, node => hasClass(node, 'dshmf-grid'))[0]
+  assert.ok(gridRowNames(tree).length > 0, 'the rows still draw their provider names')
+})
+
+test('one label face is built per panel, not one per row', () => {
+  // `entry.inject(sessionId)` reads services and assembles an object; the
+  // shipped picker builds it once per picker. Hosting the cell on twenty rows
+  // must not multiply that by twenty.
+  runtime.reset()
+  let builds = 0
+  const Occupant = () => null
+  const { props } = makeProps(catalogState(), {
+    inject: labelProps({
+      component: Occupant,
+      locale: 'test-ns',
+      inject: sessionId => {
+        builds += 1
+        return { fromInject: `face:${sessionId}` }
+      },
+    }),
+  })
+  let tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+  assert.equal(findAll(tree, node => node.type === Occupant).length, 7,
+    'the trigger plus six rows host the cell')
+  assert.equal(builds, 1, 'and the face was built exactly once')
+  const rows = findAll(tree, node => node.type === Occupant)
+  assert.equal(rows[1].props.fromInject, 'face:session-1', 'every cell receives the same face')
+})

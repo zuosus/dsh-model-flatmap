@@ -19,6 +19,19 @@ entries go below the marker, newest first; old entries are never rewritten.
 正确的切法：别名按 provider id 存；显示名只从 `providerLabel` 一处推导；搜索同时保留原名与别名；尾标只剥离目录原名，不剥用户别名。另一个容易误判的点：宿主 catalog 的 `provider.name` 不是选择器能写的字段，宿主 Settings 的 `displayName` 也不会流到 catalog——所以这个需求只能做成本地显示层，不要为了「顺便同步原生模式」去改宿主数据。
 
 **教训**：给一个实体改名之前，先分清「身份」和「标签」；然后找出标签的所有出口，只留一个推导函数。
+## LES-034 — 2026-11-18 — 复用宿主自己的渲染路径之前，先确认它到底渲染了几处
+
+给模型行补上倍数/忙碌/促销角标时，我一度准备自己画一套「紧凑版」装饰——直到重读出厂
+picker 的 `ModelSelect` 才发现：**它的每一行都是经 label cell 胜者渲染的**（`placement:
+'option'`），目录 badge 只是它无人应答时的回退。也就是说槽系统本来就把「行」当成一等
+placement，而我在 DEC-028 只把这套机制接到了**触发器**上，行这一半一直在手绘名字加
+badge，白白丢掉连接插件的信息。
+
+**教训**：要在自己插件里复现宿主的某块 UI 时，先数清宿主自己**在几个地方**渲染它、各用
+什么 props（`placement`、`selected`…）。宿主渲染 N 处，通常意味着这 N 处共享同一条
+render view 与同一份「每次面板一份」的依赖（`entry.inject(sessionId)`、locale seat）——
+照抄一处而漏掉其余，就会做出一个看起来对、实际缺一半的实现。判断「这个槽该不该出现在
+某处」的最快方法，是看宿主自己是否在那里也用了它。
 
 ## LES-033 — 2026-11-17 — 只改 CSS 的提交，在已经打开的窗口里可能「看起来没生效」
 
