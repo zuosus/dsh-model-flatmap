@@ -35,10 +35,17 @@ new one. The heartbeat is `void`-ed and every failure is swallowed, so the picke
 never waits for it and never fails because of it. It exists because npm download
 counts cannot answer "how many machines actually run this, and how many ran it
 today" (installs, CI and mirrors all count), and a Client-side counter cannot
-either (a tab nobody reloads reports nothing). There is no toggle. The bundle
-does ship a settings page — the model list — but the heartbeat gets no switch
-there either: a toggle added only to make a default look like a user choice is
-not a choice. Disabling the bundle stops the heartbeat with the UI.
+either (a tab nobody reloads reports nothing).
+
+**You can switch it off.** Settings → Model list carries an *Anonymous usage
+statistics* toggle at the bottom of the panel, **on by default**. The choice is
+opt-out, so a machine whose owner never opens Settings keeps reporting exactly as
+before — the toggle is a genuine choice, not a disguised default. It lives in the
+browser (`localStorage`) but the heartbeat sends from the Host, so flipping it
+mirrors the choice to the Host through a trust-fenced route, which re-reads it
+before every send: the next heartbeat (within the day, or on the next launch)
+honours it with no restart. See DEC-035. Disabling the bundle still stops the
+heartbeat with the UI.
 
 ## Screenshot
 

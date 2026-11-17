@@ -59,6 +59,19 @@ export const DEFAULT_ENDPOINT = 'https://dsh.zuos.us/api/e'
  */
 export const STATE_FILE = 'analytics.json'
 
+/**
+ * The user's telemetry choice, persisted by the Settings toggle (DEC-035).
+ *
+ * The toggle lives in the browser, but the heartbeat sends from the Host, so
+ * the choice has to be mirrored into a file this half can read before it
+ * decides to send. The browser writes it through the Host's own
+ * `/dsh-model-flatmap/telemetry-settings` route.
+ *
+ * Absent file means **enabled**: the collection is opt-OUT, so a machine whose
+ * browser has never opened Settings keeps reporting exactly as before.
+ */
+export const SETTINGS_FILE = 'telemetry-settings.json'
+
 /** Directory under the DSH home that holds this plugin's runtime data. */
 export const DATA_DIR_NAME = 'dsh-model-flatmap'
 
@@ -214,6 +227,68 @@ export function serializeState(state) {
 }
 
 /**
+ * Parse the telemetry-settings file. Any corruption degrades to **enabled**:
+ * the collection is opt-out, so an unreadable choice must never silently turn
+ * reporting off — that would undercount by exactly the machines whose file got
+ * damaged, which is the worst place to lose data.
+ *
+ * @param {string} text - File contents, possibly empty or damaged.
+ * @returns {{enabled: boolean}} Normalised settings.
+ */
+export function parseSettings(text) {
+  let raw = null
+  try {
+    raw = JSON.parse(String(text ?? ''))
+  } catch {
+    raw = null
+  }
+  const source = raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+  return { enabled: source.enabled !== false }
+}
+
+/**
+ * Serialise the telemetry settings. A single field, fixed order, hand-readable.
+ *
+ * @param {{enabled: boolean}} settings - A `parseSettings`-shaped object.
+ * @returns {string} JSON text with a trailing newline.
+ */
+export function serializeSettings(settings) {
+  return `${JSON.stringify({ enabled: settings?.enabled !== false }, null, 2)}\n`
+}
+
+/**
+ * Read the telemetry settings from a data directory; a missing or damaged file
+ * reads as **enabled** (opt-out, see `parseSettings`).
+ *
+ * @param {string} dir - The plugin's data directory.
+ * @returns {Promise<{enabled: boolean}>} The current settings.
+ */
+export async function readSettingsFile(dir) {
+  try {
+    return parseSettings(await readFile(join(dir, SETTINGS_FILE), 'utf8'))
+  } catch {
+    return parseSettings('')
+  }
+}
+
+/**
+ * Write the telemetry settings atomically (temp file then rename), 0600 like
+ * the state file: not secret, but nothing about a local choice should be
+ * world-readable.
+ *
+ * @param {string} dir - The plugin's data directory (created if missing).
+ * @param {{enabled: boolean}} settings - The settings to persist.
+ * @returns {Promise<void>} Resolves when the rename is done.
+ */
+export async function writeSettingsFile(dir, settings) {
+  await mkdir(dir, { recursive: true })
+  const target = join(dir, SETTINGS_FILE)
+  const tmp = `${target}.tmp`
+  await writeFile(tmp, serializeSettings(settings), { encoding: 'utf8', mode: 0o600 })
+  await rename(tmp, target)
+}
+
+/**
  * Decide whether this start reports, and as what. Pure function; the tests'
  * main entry point.
  *
@@ -323,11 +398,16 @@ export class TelemetryReporter {
   #pluginId
   #fetchImpl
   #clock
+  #enabled
   #warned = false
 
   /**
    * @param {{dir?: string, logger?: object, endpoint?: string, pluginId?: string,
-   *   fetchImpl?: Function, clock?: Function}} [options] - Dependencies.
+   *   fetchImpl?: Function, clock?: Function, enabled?: boolean}} [options] - Dependencies.
+   *
+   * `enabled: false` is the Settings toggle's off position (DEC-035): the
+   * reporter stays fully constructed but sends nothing and writes no state, so
+   * re-enabling tomorrow reports a fresh `install`/`heartbeat` cleanly.
    */
   constructor(options = {}) {
     this.#dir = options.dir ?? '.'
@@ -336,6 +416,7 @@ export class TelemetryReporter {
     this.#pluginId = normalizePluginId(options.pluginId)
     this.#fetchImpl = options.fetchImpl ?? globalThis.fetch
     this.#clock = typeof options.clock === 'function' ? options.clock : () => Date.now()
+    this.#enabled = options.enabled !== false
   }
 
   /** The endpoint in force (visible in a log line when troubleshooting). */
@@ -346,6 +427,11 @@ export class TelemetryReporter {
   /** The plugin id being reported; empty means "misconfigured, do not send". */
   get pluginId() {
     return this.#pluginId
+  }
+
+  /** Whether the Settings toggle currently allows reporting (DEC-035). */
+  get enabled() {
+    return this.#enabled
   }
 
   /** Absolute path of the state file (users inspect this file directly). */
@@ -390,6 +476,10 @@ export class TelemetryReporter {
    *   `null` when nothing should be sent.
    */
   async prepare(input = {}) {
+    // The Settings toggle (DEC-035). Checked first and silently: an opted-out
+    // machine reports nothing and records no attempt, so re-enabling starts a
+    // clean day rather than resuming a half-written one.
+    if (this.#enabled !== true) return null
     // No valid plugin id → no request. A record that cannot be attributed is
     // the one kind of dirty data that is expensive to clean up later.
     if (this.#pluginId.length === 0) return null

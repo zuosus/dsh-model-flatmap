@@ -417,6 +417,15 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .dshmf-setModelRow[data-hidden="true"] .dshmf-setModelName { color: var(--dsw-alias-label-dimmed); }
+/* The telemetry toggle is its own band at the BOTTOM of the section, divided
+   from the model list above by the same hairline the list rows use. It governs
+   the whole plugin's one network request, so it sits apart from the provider
+   and model switches rather than inside the list. */
+.dshmf-setTelemetry { margin-top: 4px; padding-top: 12px; border-top: 0.5px solid var(--dsw-alias-border-l2); }
+.dshmf-setTelemetryRow { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 4px 0; }
+.dshmf-setTelemetryText { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
+.dshmf-setTelemetryTitle { display: block; font-size: 14px; line-height: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dshmf-setTelemetryDesc { display: block; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); }
 .dshmf-switch {
   box-sizing: border-box; position: relative; flex: 0 0 auto;
   width: 36px; height: 20px; padding: 2px; border: 0; border-radius: 999px;
@@ -1979,6 +1988,156 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
     }
 
     // ---------------------------------------------------------------------
+    // Telemetry toggle (DEC-035).
+    //
+    // The daily heartbeat is anonymous and rate-bound, but it IS a network
+    // request this plugin makes on its own, so the user gets a real switch for
+    // it in Settings. It defaults to ON — the collection is opt-out, so a
+    // machine whose owner never opens Settings keeps reporting exactly as
+    // before, and the toggle is a genuine choice rather than a disguised
+    // default.
+    //
+    // The choice lives in the BROWSER (`localStorage`), but the heartbeat sends
+    // from the HOST. The two halves are bridged exactly the way the project
+    // link is: the browser mirrors its choice to a Host route, which persists it
+    // to a file the Host re-reads before every send. So one switch, one source
+    // of truth on each side, and no restart needed.
+    // ---------------------------------------------------------------------
+    const TELEMETRY_KEY = 'dshmf:telemetry'
+
+    /**
+     * The Host route the choice is mirrored to. Document-relative, like every
+     * other app-owned route this half fetches; the Host registers the same
+     * path with a leading slash. Kept in step by a test (see repo-url's).
+     */
+    const TELEMETRY_SETTINGS_PATH = 'dsh-model-flatmap/telemetry-settings'
+
+    /**
+     * Read the stored telemetry choice, or **true** when storage is missing,
+     * holds garbage, or throws. Defaulting to true is the whole point: the
+     * collection is opt-out, so an unreadable record must never silently turn
+     * reporting off for machines whose owner never touched the switch.
+     * @returns {boolean} whether reporting is enabled.
+     */
+    function readTelemetryEnabled() {
+      try {
+        if (typeof localStorage === 'undefined') return true
+        const text = localStorage.getItem(TELEMETRY_KEY)
+        if (text === null || text === '') return true
+        const parsed = JSON.parse(text)
+        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return true
+        return parsed.enabled !== false
+      } catch {
+        return true
+      }
+    }
+
+    /**
+     * Persist the telemetry choice. A write failure is swallowed: the in-memory
+     * value still drives the toggle and the mirrored Host record.
+     * @param {boolean} enabled - the choice to persist.
+     */
+    function writeTelemetryEnabled(enabled) {
+      try {
+        if (typeof localStorage === 'undefined') return
+        localStorage.setItem(TELEMETRY_KEY, JSON.stringify({ enabled: enabled !== false }))
+      } catch {
+        /* storage unavailable — keep the in-memory choice only */
+      }
+    }
+
+    /**
+     * Mirror the telemetry choice to the Host.
+     *
+     * Every failure resolves rather than rejects: an unreachable route (a build
+     * with no Host half, the Desktop app serving its own files) means the
+     * browser keeps its `localStorage` choice and the Host keeps its own file —
+     * the toggle must never look broken because a mirror did not land.
+     *
+     * @param {boolean} enabled - the choice to mirror.
+     * @param {Function} [fetchImpl] - fetch override, for tests.
+     * @returns {Promise<boolean>} whether the Host acknowledged the write.
+     */
+    async function syncTelemetryEnabled(enabled, fetchImpl) {
+      const doFetch = typeof fetchImpl === 'function'
+        ? fetchImpl
+        : (typeof fetch === 'function' ? fetch : undefined)
+      if (doFetch === undefined) return false
+      try {
+        const response = await doFetch(TELEMETRY_SETTINGS_PATH, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ enabled: enabled !== false }),
+          credentials: 'same-origin',
+          cache: 'no-store',
+        })
+        return Boolean(response?.ok)
+      } catch {
+        return false
+      }
+    }
+
+    /**
+     * The ONE telemetry store per plugin generation, shared by the Settings
+     * toggle that writes it and the mirror that reads it. Mirrors the hidden
+     * store's shape so the section treats both faces the same way.
+     * @param deps - storage accessors + an optional host mirror, injected for tests.
+     * @returns the store with an idempotent `setEnabled`.
+     */
+    function createTelemetryStore(deps) {
+      let enabled = typeof deps.readStored === 'function' ? deps.readStored() : true
+      const listeners = new Set()
+      const notify = () => {
+        for (const listener of [...listeners]) {
+          try {
+            listener()
+          } catch {
+            /* one bad subscriber must not starve the others */
+          }
+        }
+      }
+      return {
+        getSnapshot: () => enabled,
+        subscribe: listener => {
+          listeners.add(listener)
+          return () => { listeners.delete(listener) }
+        },
+        /**
+         * Set the telemetry choice, persist it locally and mirror it to the Host.
+         * The mirror is fire-and-forget: a slow or absent route must not block
+         * the toggle's own re-render.
+         * @param {boolean} next - the new choice.
+         */
+        setEnabled: next => {
+          const value = next !== false
+          if (value === enabled) return
+          enabled = value
+          try {
+            if (typeof deps.writeStored === 'function') deps.writeStored(value)
+          } catch {
+            /* storage unavailable — the in-memory value still applies */
+          }
+          if (typeof deps.sync === 'function') {
+            try { void Promise.resolve(deps.sync(value)).catch(() => {}) } catch { /* never throws */ }
+          }
+          notify()
+        },
+        /** Push the current choice to the Host without changing it. */
+        syncNow: () => (typeof deps.sync === 'function' ? deps.sync(enabled) : Promise.resolve(false)),
+        /** Drop every subscriber (activation teardown). */
+        dispose: () => { listeners.clear() },
+      }
+    }
+
+    /** Frozen stand-in for a screen with no store (a degraded activation). */
+    const TELEMETRY_ON = {
+      getSnapshot: () => true,
+      subscribe: () => () => {},
+      setEnabled: () => {},
+      syncNow: () => Promise.resolve(false),
+    }
+
+    // ---------------------------------------------------------------------
     // Project link: the icon button beside the display-mode button.
     //
     // The browser cannot read the checkout — no filesystem, no subprocess — so
@@ -2678,6 +2837,9 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         providerToggle: '显示 {name}',
         modelToggle: '显示 {name}',
         note: '新增的 Provider 和模型默认显示。',
+        'telemetry.title': '匿名使用统计',
+        'telemetry.desc': '每天最多一次，仅上报安装标识、插件版本、平台与架构，不含任何会话内容。默认开启。',
+        'telemetry.toggle': '匿名使用统计',
       },
       en: {
         nav: 'Model list',
@@ -2693,6 +2855,9 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         providerToggle: 'Show {name}',
         modelToggle: 'Show {name}',
         note: 'Newly added providers and models are shown by default.',
+        'telemetry.title': 'Anonymous usage statistics',
+        'telemetry.desc': 'At most once a day: install id, plugin version, platform and architecture only — never any session content. On by default.',
+        'telemetry.toggle': 'Anonymous usage statistics',
       },
     }
 
@@ -4637,7 +4802,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
      * @param props - the settings slot's props plus the injected face.
      */
     function SettingsSection(props) {
-      const { t, visibility, catalog } = props
+      const { t, visibility, catalog, telemetry } = props
       const visibleFace = visibility ?? ALL_VISIBLE
       const subscribeHidden = useCallback(listener => visibleFace.subscribe(listener), [visibleFace])
       const getHidden = useCallback(() => visibleFace.getSnapshot(), [visibleFace])
@@ -4647,6 +4812,13 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       const subscribeCatalog = useCallback(listener => catalogFace.subscribe(listener), [catalogFace])
       const getCatalog = useCallback(() => catalogFace.getSnapshot(), [catalogFace])
       const catalogue = useSyncExternalStore(subscribeCatalog, getCatalog, getCatalog)
+
+      // The telemetry toggle. Defaults to ON (TELEMETRY_ON) so a degraded
+      // activation still renders the row in its real, opt-out-default state.
+      const telemetryFace = telemetry ?? TELEMETRY_ON
+      const subscribeTelemetry = useCallback(listener => telemetryFace.subscribe(listener), [telemetryFace])
+      const getTelemetry = useCallback(() => telemetryFace.getSnapshot(), [telemetryFace])
+      const telemetryOn = useSyncExternalStore(subscribeTelemetry, getTelemetry, getTelemetry)
 
       // Read the catalog when the page opens. The effect is idempotent: a
       // second visit re-reads only when the first one never produced a
@@ -4753,7 +4925,22 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         nothingLoaded
           ? h('p', { className: 'dshmf-setEmpty', role: 'status' }, translate('empty'))
           : h('div', { className: 'dshmf-setList' }, ...rows),
-        nothingLoaded ? null : h('p', { className: 'dshmf-setNote' }, translate('note')))
+        nothingLoaded ? null : h('p', { className: 'dshmf-setNote' }, translate('note')),
+        // The telemetry toggle sits at the BOTTOM of the panel, after the model
+        // list, as its own divided band: it governs the whole plugin's one
+        // network request, not any single provider or model, so it does not
+        // belong inside the list.
+        h('div', { className: 'dshmf-setTelemetry' },
+          h('div', { className: 'dshmf-setTelemetryRow' },
+            h('span', { className: 'dshmf-setTelemetryText' },
+              h('span', { className: 'dshmf-setTelemetryTitle' }, translate('telemetry.title')),
+              h('span', { className: 'dshmf-setTelemetryDesc' }, translate('telemetry.desc'))),
+            h(Switch, {
+              checked: telemetryOn === true,
+              className: 'dshmf-switchTelemetry',
+              label: translate('telemetry.toggle'),
+              onChange: next => telemetryFace.setEnabled(next),
+            }))))
     }
 
     // ---------------------------------------------------------------------
@@ -4770,7 +4957,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       // Pure layout and grouping derivations plus the component itself,
       // exposed for `node --test` so grouping, filtering and the column
       // algorithm are pinned without a browser. The shell never reads this key.
-      __test: { marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, readDisplayMode, writeDisplayMode, createDisplayModeStore, DISPLAY_MODE_KEY, DISPLAY_MODE_DEFAULT, FLAT_DISPLAY_MODE, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore, quantizeMetric, metricChanged, METRIC_HYSTERESIS, LabelBoundary, readLabelEntry, labelSeat, labelSlotSource, LABEL_SLOT, providerLabel, fetchProjectLink, openInNewTab, PROJECT_LINK_PATH, PROJECT_LINK_FALLBACK, PROJECT_LINK_TIMEOUT_MS, HIDDEN_KEY, readHidden, writeHidden, providerHiddenKey, modelHiddenKey, modelIsVisible, visibleGroups, createHiddenStore, ALL_VISIBLE, hiddenKeysForGroup, groupVisibility, setGroupVisible, sameKeys, migrateLegacyHidden, createCatalogStore, EMPTY_CATALOG, SETTINGS_NS, settingsDict, installSettingsNavIcon, SettingsSection, Switch },
+      __test: { marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, readDisplayMode, writeDisplayMode, createDisplayModeStore, DISPLAY_MODE_KEY, DISPLAY_MODE_DEFAULT, FLAT_DISPLAY_MODE, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore, quantizeMetric, metricChanged, METRIC_HYSTERESIS, LabelBoundary, readLabelEntry, labelSeat, labelSlotSource, LABEL_SLOT, providerLabel, fetchProjectLink, openInNewTab, PROJECT_LINK_PATH, PROJECT_LINK_FALLBACK, PROJECT_LINK_TIMEOUT_MS, HIDDEN_KEY, readHidden, writeHidden, providerHiddenKey, modelHiddenKey, modelIsVisible, visibleGroups, createHiddenStore, ALL_VISIBLE, hiddenKeysForGroup, groupVisibility, setGroupVisible, sameKeys, migrateLegacyHidden, createCatalogStore, EMPTY_CATALOG, TELEMETRY_KEY, readTelemetryEnabled, writeTelemetryEnabled, syncTelemetryEnabled, createTelemetryStore, TELEMETRY_ON, TELEMETRY_SETTINGS_PATH, SETTINGS_NS, settingsDict, installSettingsNavIcon, SettingsSection, Switch },
       __component: ModelFlatMap,
       __seat: Seat,
       __nativeMenuRow: NativeMenuRow,
@@ -4888,6 +5075,32 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
           console.error('dsh-model-flatmap: the visibility store failed to start', error)
           hiddenStore = ALL_VISIBLE
         }
+
+        // ---- the telemetry toggle (DEC-035)
+        //
+        // ONE store per activation. The choice lives in `localStorage` and is
+        // mirrored to the Host's telemetry-settings route, which the Host
+        // re-reads before every send — so flipping the switch here takes effect
+        // without a restart. `syncTelemetryEnabled` resolves (never rejects) on
+        // an absent route, so a build with no Host half just keeps its local
+        // choice; the switch still renders and still means something.
+        let telemetryStore
+        try {
+          telemetryStore = createTelemetryStore({
+            readStored: readTelemetryEnabled,
+            writeStored: writeTelemetryEnabled,
+            sync: syncTelemetryEnabled,
+          })
+          ctx.effect(() => () => { telemetryStore.dispose?.() }, 'dsh-model-flatmap: telemetry')
+        } catch (error) {
+          console.error('dsh-model-flatmap: the telemetry store failed to start', error)
+          telemetryStore = TELEMETRY_ON
+        }
+        // Push the stored choice to the Host on activation, so a choice made in
+        // an earlier session is honoured by the next heartbeat even if the user
+        // never re-opens Settings. Fire-and-forget: it must never block or fail
+        // the picker.
+        try { void Promise.resolve(telemetryStore.syncNow()).catch(() => {}) } catch { /* never throws */ }
 
         // ---- the catalogue the Settings section lists
         //
@@ -5315,6 +5528,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
                   inject: () => ({
                     visibility: hiddenStore,
                     catalog: catalogStore,
+                    telemetry: telemetryStore,
                   }),
                 }, SettingsSection)
               } catch (error) {

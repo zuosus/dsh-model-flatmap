@@ -259,11 +259,12 @@ test('the Host entry registers the project-link route and answers JSON', async (
     effect: fn => fn(),
     logger: { warn: () => {} },
   })
-  assert.equal(routes.length, 1)
-  assert.equal(routes[0].kind, 'exact')
-  assert.equal(routes[0].path, PROJECT_LINK_PATH)
+  assert.equal(routes.length, 2, 'the Host registers the project-link and telemetry-settings routes')
+  const linkRoute = routes.find(route => route.path === PROJECT_LINK_PATH)
+  assert.equal(linkRoute.kind, 'exact')
+  assert.notEqual(linkRoute, undefined)
 
-  const answer = await invoke(routes[0], 'GET')
+  const answer = await invoke(linkRoute, 'GET')
   assert.equal(answer.status, 200)
   assert.match(String(answer.headers['content-type']), /application\/json/u)
   assert.equal(answer.headers['cache-control'], 'no-store', 'a URL that can change is never cached')
@@ -319,7 +320,7 @@ test('a Host context with no web server or no effect still applies cleanly', asy
     get: name => (name === 'webServer' ? { register: r => { routes.push(r); return () => {} } } : undefined),
     logger: { warn: () => {} },
   }))
-  assert.equal(routes.length, 1, 'the route is registered without a lifecycle helper')
+  assert.equal(routes.length, 2, 'both routes are registered without a lifecycle helper')
 })
 
 test('a registration that throws does not escape apply()', async () => {

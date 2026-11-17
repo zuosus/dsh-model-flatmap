@@ -578,14 +578,20 @@ the measured overflow, and the duration is that distance divided by 50 px/s
   The shipped registration keeps both declarations alive, so other plugins'
   contributions stay valid either way.
 - The Host half sends one anonymous heartbeat per local day (DEC-031). It is
-  the only network request this plugin ever makes on its own, and it is
-  deliberately not switchable. The bundle now ships a settings page, but that
-  page exists for the model list, and the heartbeat still gets no toggle there:
-  a switch added only to make the default look like a user choice is not a
-  choice. What bounds the request is the payload's shape — installation id,
-  plugin id, version, platform, architecture, event kind, nothing else — and
-  its rate. Opting out means disabling the bundle, which stops the heartbeat
-  with everything else.
+  the only network request this plugin ever makes on its own. Since DEC-035 the
+  user can switch it off: Settings → Model list carries an *Anonymous usage
+  statistics* toggle at the bottom of the panel, **on by default**. The choice
+  is opt-out, so a machine whose owner never opens Settings keeps reporting —
+  the toggle is a real choice, not a disguised default. What bounds the request
+  is still its shape (installation id, plugin id, version, platform,
+  architecture, event kind, nothing else) and its rate. The toggle lives in the
+  browser (`localStorage`, `dshmf:telemetry`) but the send happens in the Host,
+  so the browser mirrors the choice through the trust-fenced
+  `/dsh-model-flatmap/telemetry-settings` route, which persists it to
+  `telemetry-settings.json`; the Host re-reads that file before every send, so
+  the next heartbeat honours it with no restart. A missing or damaged file reads
+  as **enabled** — an unreadable choice must never silently silence reporting.
+  Disabling the bundle stops the heartbeat with everything else.
 - The trigger's label cell renders ANOTHER PLUGIN'S component. It is written
   against the documented `ModelLabelOwner` props, but nothing guarantees every
   future contributor stays compatible; `LabelBoundary` degrades a crash to the

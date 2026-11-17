@@ -4038,28 +4038,32 @@ test('the settings section lists every provider and model with a switch each', a
     read: () => ({ modelCatalog: async () => ({ ok: true, value: { groups: catalogState().groups } }) }),
   })
   await catalog.load()
-  const props = { t: key => key, visibility: face, catalog }
+  const props = { t: key => key, visibility: face, catalog, telemetry: bundle.__test.createTelemetryStore({ readStored: () => true }) }
   let tree
   runtime.setRerender(() => { tree = runtime.render(bundle.__test.SettingsSection, props) })
   tree = runtime.render(bundle.__test.SettingsSection, props)
   // The hook runtime does not invoke child function components, so a switch is
   // counted as the component NODE it is, not as its rendered button.
   const switchNodes = node => findAll(node, child => child?.type === bundle.__test.Switch)
+  // The telemetry toggle is its own band at the BOTTOM, outside the provider
+  // list; these counts are about the list, so the list node is the frame.
+  const listNode = findAll(tree, node => hasClass(node, 'dshmf-setList'))[0]
   assert.equal(findAll(tree, node => hasClass(node, 'dshmf-setProvider')).length, 2, 'one row per provider')
   // Collapsed by default: every provider has its own switch, and no model row
   // is drawn until the provider is expanded.
-  assert.equal(switchNodes(tree).length, 2, 'one switch per provider while collapsed')
+  assert.equal(switchNodes(listNode).length, 2, 'one switch per provider while collapsed')
   assert.equal(findAll(tree, node => hasClass(node, 'dshmf-setModelRow')).length, 0, 'no model rows before expanding')
 
   // Expanding the FIRST provider reveals exactly that provider's models.
   findAll(tree, node => hasClass(node, 'dshmf-setDisclosure'))[0].props.onClick()
   tree = runtime.render(bundle.__test.SettingsSection, props)
+  const listAfterExpand = findAll(tree, node => hasClass(node, 'dshmf-setList'))[0]
   const modelRows = findAll(tree, node => hasClass(node, 'dshmf-setModelRow'))
   assert.equal(modelRows.length, 2, 'the expanded provider draws its own models only')
-  assert.equal(switchNodes(tree).length, 2 + 2, 'each model gains a switch')
+  assert.equal(switchNodes(listAfterExpand).length, 2 + 2, 'each model gains a switch')
   // The parent and child controls are told apart by class: provider switches
   // keep the brand fill, model switches take the hue-shifted tint.
-  const switchClasses = switchNodes(tree).map(node => node.props.className)
+  const switchClasses = switchNodes(listAfterExpand).map(node => node.props.className)
   assert.equal(switchClasses.filter(name => name === undefined).length, 2, 'provider switches keep the brand fill')
   assert.equal(switchClasses.filter(name => name === 'dshmf-switchModel').length, 2, 'model switches take the hue-shifted tint')
   // Collapsing it again removes them, so the disclosure is a real toggle.
@@ -4160,6 +4164,139 @@ test('every copy key the settings section renders exists in both languages', () 
       assert.deepEqual(declared, [name], `${locale} ${key} declares {${name}}`)
     }
   }
+})
+
+// ---------------------------------------------------------------------------
+// The telemetry toggle (DEC-035). The choice lives in `localStorage`, defaults
+// to ON (the collection is opt-out), and is mirrored to the Host through a
+// route the Host re-reads before every send.
+// ---------------------------------------------------------------------------
+
+test('the telemetry choice defaults to ON and survives storage garbage', () => {
+  // No storage at all: the opt-out default keeps reporting on.
+  assert.equal(bundle.__test.readTelemetryEnabled(), true, 'default is enabled')
+  const store = installStorage()
+  try {
+    assert.equal(bundle.__test.readTelemetryEnabled(), true, 'absent key reads as enabled')
+    // Any corruption must not silently turn reporting off — that would undercount
+    // by exactly the machines whose record got damaged.
+    for (const bad of ['{', '[]', 'null', '"x"', '{"enabled":"no"}']) {
+      store.set(bundle.__test.TELEMETRY_KEY, bad)
+      assert.equal(bundle.__test.readTelemetryEnabled(), true, `garbage ${bad} reads as enabled`)
+    }
+    // Only an explicit false turns it off.
+    store.set(bundle.__test.TELEMETRY_KEY, '{"enabled":false}')
+    assert.equal(bundle.__test.readTelemetryEnabled(), false, 'an explicit opt-out is honoured')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('the telemetry store persists locally and mirrors to the Host', async () => {
+  const storage = installStorage()
+  const mirrored = []
+  const face = bundle.__test.createTelemetryStore({
+    readStored: bundle.__test.readTelemetryEnabled,
+    writeStored: bundle.__test.writeTelemetryEnabled,
+    sync: value => { mirrored.push(value); return Promise.resolve(true) },
+  })
+  try {
+    // Opt-out default: a fresh store is ON without any stored record.
+    assert.equal(face.getSnapshot(), true)
+    let seen
+    // Listeners are called with no argument (the hidden store's pattern), so a
+    // subscriber reads the new value off `getSnapshot()`.
+    face.subscribe(() => { seen = face.getSnapshot() })
+    // Switching off persists locally, mirrors to the Host, and notifies.
+    face.setEnabled(false)
+    assert.equal(face.getSnapshot(), false)
+    assert.equal(seen, false, 'subscribers are notified')
+    assert.equal(storage.get(bundle.__test.TELEMETRY_KEY), '{"enabled":false}', 'the choice is persisted')
+    assert.deepEqual(mirrored, [false], 'the choice is mirrored to the Host')
+    // Setting the SAME value again is a no-op: no re-mirror, no notify.
+    face.setEnabled(false)
+    assert.deepEqual(mirrored, [false], 'a redundant set does not re-mirror')
+    // Switching back on restores reporting.
+    face.setEnabled(true)
+    assert.equal(face.getSnapshot(), true)
+    assert.deepEqual(mirrored, [false, true])
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('mirroring the telemetry choice posts to the documented Host route', async () => {
+  const seen = []
+  const fetchImpl = async (url, options) => {
+    seen.push({ url, options })
+    return { ok: true, status: 200 }
+  }
+  const ok = await bundle.__test.syncTelemetryEnabled(false, fetchImpl)
+  assert.equal(ok, true, 'an acknowledged write reports success')
+  assert.equal(seen.length, 1)
+  assert.equal(seen[0].url, bundle.__test.TELEMETRY_SETTINGS_PATH)
+  assert.equal(seen[0].options.method, 'POST')
+  assert.deepEqual(JSON.parse(seen[0].options.body), { enabled: false })
+
+  // Every failure resolves to false rather than rejecting: an absent Host half
+  // must never make the toggle look broken or throw into the void.
+  const failing = async () => { throw new Error('offline') }
+  assert.equal(await bundle.__test.syncTelemetryEnabled(true, failing), false)
+  assert.equal(await bundle.__test.syncTelemetryEnabled(true, async () => ({ ok: false })), false)
+  // No fetch at all (a runtime without it) is simply an unmirrored choice.
+  assert.equal(await bundle.__test.syncTelemetryEnabled(true, undefined), false)
+})
+
+test('the settings section renders the telemetry toggle at the bottom, ON by default', async () => {
+  runtime.reset()
+  const storage = installStorage()
+  const face = bundle.__test.createTelemetryStore({ readStored: () => true, writeStored: () => {} })
+  const catalog = bundle.__test.createCatalogStore({
+    read: () => ({ modelCatalog: async () => ({ ok: true, value: { groups: catalogState().groups } }) }),
+  })
+  await catalog.load()
+  const props = { t: key => key, visibility: bundle.__test.createHiddenStore({ readStored: () => new Set() }), catalog, telemetry: face }
+  let tree = runtime.render(bundle.__test.SettingsSection, props)
+  try {
+    // The band exists, sits AFTER the model list, and carries exactly one switch.
+    const band = findAll(tree, node => hasClass(node, 'dshmf-setTelemetry'))
+    assert.equal(band.length, 1, 'the telemetry band renders')
+    const listIndex = tree.children.findIndex(node => hasClass(node, 'dshmf-setList'))
+    const bandIndex = tree.children.indexOf(band[0])
+    assert.ok(bandIndex > listIndex, 'the telemetry band is at the BOTTOM, after the model list')
+    // The toggle reports the opt-out default: ON. The hook runtime does not
+    // invoke child components, so the Switch NODE carries `checked` (its own
+    // prop), not the rendered `aria-checked`.
+    const toggle = findAll(band[0], node => node?.type === bundle.__test.Switch)[0]
+    assert.notEqual(toggle, undefined, 'the band carries a switch')
+    assert.equal(toggle.props.checked, true, 'the toggle is ON by default')
+    // Flipping it drives the store, which is what the Host mirror reads.
+    toggle.props.onChange(false)
+    tree = runtime.render(bundle.__test.SettingsSection, props)
+    const flipped = findAll(findAll(tree, node => hasClass(node, 'dshmf-setTelemetry'))[0], node => node?.type === bundle.__test.Switch)[0]
+    assert.equal(flipped.props.checked, false, 'the toggle turned off')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('every telemetry copy key exists in both languages', () => {
+  const dict = bundle.__test.settingsDict
+  for (const locale of ['zh', 'en']) {
+    for (const key of ['telemetry.title', 'telemetry.desc', 'telemetry.toggle']) {
+      assert.equal(typeof dict[locale][key], 'string', `${locale} declares ${key}`)
+      assert.notEqual(dict[locale][key], '', `${locale} ${key} is not empty`)
+    }
+  }
+})
+
+test('the browser telemetry route path matches the one the Host registers', () => {
+  // The two halves cannot share a module, so the path is declared twice. This
+  // is what keeps the repetition honest (same pattern as the project link).
+  const host = readFileSync(join(here, '..', 'index.js'), 'utf8')
+  const registered = /TELEMETRY_SETTINGS_PATH = '([^']+)'/u.exec(host)
+  assert.ok(registered !== null, 'the Host half declares the telemetry route path')
+  assert.equal(bundle.__test.TELEMETRY_SETTINGS_PATH, registered[1].replace(/^\//u, ''))
 })
 
 test('the settings section renders no raw translation keys', async () => {
@@ -4398,13 +4535,16 @@ test('the settings section keeps model switches interactive under a switched-off
     read: () => ({ modelCatalog: async () => ({ ok: true, value: { groups: [GROUP_FIXTURE] } }) }),
   })
   await catalog.load()
-  const props = { t: key => key, visibility: face, catalog }
+  const props = { t: key => key, visibility: face, catalog, telemetry: bundle.__test.createTelemetryStore({ readStored: () => true }) }
   let tree
   runtime.setRerender(() => { tree = runtime.render(bundle.__test.SettingsSection, props) })
   tree = runtime.render(bundle.__test.SettingsSection, props)
   findAll(tree, node => hasClass(node, 'dshmf-setDisclosure'))[0].props.onClick()
   tree = runtime.render(bundle.__test.SettingsSection, props)
-  const modelSwitches = findAll(tree, node => node?.type === bundle.__test.Switch).slice(1)
+  // Scope to the provider list: the telemetry band at the bottom carries its
+  // own switch, which is not a model switch and must not be counted here.
+  const listNode = findAll(tree, node => hasClass(node, 'dshmf-setList'))[0]
+  const modelSwitches = findAll(listNode, node => node?.type === bundle.__test.Switch).slice(1)
   assert.equal(modelSwitches.length, 3, 'one per model')
   for (const item of modelSwitches) {
     assert.equal(item.props.checked, false, 'the bulk write switched them off')
