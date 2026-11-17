@@ -412,21 +412,24 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
    The family comes from the host token --ds-font-family-code, which the shell
    already defines (SF Mono / JetBrains Mono / Fira Code / Consolas, with a CJK
    fallback) — never a hard-coded stack, so it follows the shell's own choice.
-   Weight stays 400 and the tone stays secondary: the provider row above is the
-   heading (UI face, 600, primary tone), so the two rows are now separated by
-   FACE, WEIGHT and TONE at once instead of by 1px of size. */
+   Weight stays 400. An ON title carries the PRIMARY tone (near-black in light,
+   near-white in dark): a model row you can USE should read at full strength,
+   and that is what makes the ON/OFF gap obvious. The provider row above stays
+   apart by FACE and WEIGHT (600, UI face, vs this 400 monospace), not by tone —
+   the two share the primary tone on purpose. */
 .dshmf-setModelName {
   font-family: var(--ds-font-family-code);
   font-size: 13px; line-height: 20px; font-weight: 400;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--dsw-alias-label-primary);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-/* Stated, not inherited: an OFF model title steps DOWN one designed label
-   rung (secondary → tertiary) so the ON/OFF difference is obvious at a
-   glance, while tertiary remains the shell's own readable quiet-prose tone
-   (it already carries setIntro/setEmpty here). Never the dimmed placeholder
-   tone — #e1e5ee on white / #43454a on dark measure 1.26:1 / 1.64:1, below
-   any readable threshold; tertiary measures 2.13:1 / 4.24:1. */
+/* Stated, not inherited: an OFF model title drops to the shell's own
+   quiet-prose tone (tertiary, already used for setIntro/setEmpty here) — a
+   single clear rung below the primary tone an ON title carries, so ON and OFF
+   cannot be confused at a glance yet the OFF name stays readable. Never the
+   dimmed placeholder tone — #e1e5ee on white / #43454a on dark measure
+   1.26:1 / 1.64:1, below any readable threshold. ON (primary) 18.90:1 /
+   15.03:1 vs OFF (tertiary) 2.13:1 / 4.24:1. */
 .dshmf-setModelRow[data-hidden="true"] .dshmf-setModelName { color: var(--dsw-alias-label-tertiary); }
 /* The telemetry toggle is its own band at the BOTTOM of the section, divided
    from the model list above by the same hairline the list rows use. It governs

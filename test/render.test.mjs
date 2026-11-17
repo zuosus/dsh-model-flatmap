@@ -4626,9 +4626,12 @@ test('a provider row is bold in the UI face while a model row stays regular', ()
   assert.notEqual(prop(provider, 'font-family'), prop(model, 'font-family'),
     'provider and model rows are set in different faces')
 
-  // Hierarchy is carried by weight AND tone, not by size alone.
+  // Hierarchy is carried by FACE, WEIGHT and SIZE, not tone: an ON model name
+  // now shares the provider's primary tone on purpose (a usable model reads at
+  // full strength, which is also what makes ON vs OFF obvious), so the two rows
+  // are told apart by face and weight alone.
   assert.match(prop(provider, 'color'), /label-primary/, 'the provider name is the primary label tone')
-  assert.match(prop(model, 'color'), /label-secondary/, 'the model name is the quieter secondary tone')
+  assert.match(prop(model, 'color'), /label-primary/, 'an ON model name also reads at the primary tone')
   assert.ok(Number.parseFloat(prop(provider, 'font-size'), 10) > Number.parseFloat(prop(model, 'font-size'), 10),
     'the provider name is larger than the model name')
 })
@@ -4637,10 +4640,9 @@ test('a provider row is bold in the UI face while a model row stays regular', ()
 // Settings → Model list: a switched-OFF row must stay READABLE while being
 // OBVIOUSLY different from a switched-ON one. The titles used to fall to the
 // dimmed placeholder tone (#e1e5ee on white / #43454a on dark, 1.26:1 /
-// 1.64:1 — unreadable in both themes). A same-tone rule was then tried and
-// read as no difference at all. The ladder step that fits both requirements
-// is the shell's own tertiary tone: 2.13:1 / 4.24:1, one designed rung below
-// the secondary tone an ON title carries.
+// 1.64:1 — unreadable in both themes). The step that fits both requirements is
+// the shell's own tertiary tone: 2.13:1 / 4.24:1, a clear rung below the
+// PRIMARY tone an ON model title now carries (18.90:1 / 15.03:1).
 // ---------------------------------------------------------------------------
 test('a disabled row keeps its title in a readable tone instead of the dimmed one', () => {
   const css = source.match(/const CSS = `([\s\S]*?)`/)[1]
@@ -4657,10 +4659,10 @@ test('a disabled row keeps its title in a readable tone instead of the dimmed on
   const hiddenProviderMeta = ruleOf('.dshmf-setProvider[data-hidden="true"] .dshmf-setProviderMeta {')
   const hiddenModelName = ruleOf('.dshmf-setModelRow[data-hidden="true"] .dshmf-setModelName {')
 
-  // The title drops exactly ONE label rung, never two, never zero:
-  // primary → secondary for the provider heading, secondary → tertiary for
-  // the model name. One rung = obvious at a glance AND still readable; the
-  // dimmed token must never reach a title.
+  // A title drops exactly ONE designed rung, never two, never zero:
+  // primary → secondary for the provider heading, primary → tertiary for the
+  // model name. One rung = obvious at a glance AND still readable; the dimmed
+  // token must never reach a title.
   assert.equal(colorOf(hiddenProviderName), 'var(--dsw-alias-label-secondary)',
     'the hidden provider title drops one rung, to the readable secondary tone')
   assert.doesNotMatch(colorOf(hiddenProviderName), /label-dimmed/, 'the provider title never falls to the dimmed tone')
@@ -4668,10 +4670,10 @@ test('a disabled row keeps its title in a readable tone instead of the dimmed on
     'the hidden model title drops one rung, to the readable tertiary tone')
   assert.doesNotMatch(colorOf(hiddenModelName), /label-dimmed/, 'the model title never falls to the dimmed tone')
   // And one rung is a REAL difference: the OFF tone is not the tone an ON
-  // model name carries, so ON/OFF cannot silently collapse back into the
-  // same color.
-  assert.notEqual(colorOf(hiddenModelName), 'var(--dsw-alias-label-secondary)',
-    'an OFF model title differs from an ON one (secondary)')
+  // model name carries (primary), so ON/OFF cannot silently collapse back into
+  // the same color.
+  assert.notEqual(colorOf(hiddenModelName), 'var(--dsw-alias-label-primary)',
+    'an OFF model title differs from an ON one (primary)')
 
   // The at-a-glance "this row is off" signal stays on the meta line and the
   // switch, so the meta keeps the dimmed tone even though the title does not.

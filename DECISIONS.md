@@ -4,6 +4,29 @@ Project-level decision log for the dsh-model-flatmap plugin. Append-only: new
 entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
+## DEC-044 — 2026-11-17 — ON 的模型名提到 primary（亮色近黑/暗色近白），拉大 ON/OFF 差距（修订 DEC-043）
+
+**取代：** DEC-043 中「ON 的模型名用 secondary」这一条；DEC-043 的其余结论（OFF 落 tertiary、
+标题永不落 dimmed、meta 行保留 dimmed、显式声明规则）继续有效。
+
+**Context.** DEC-043 之后用户再反馈：ON 的模型行标题应「亮色用黑、暗色用对应的亮色」，
+进一步拉大 ON/OFF 的可辨性。secondary 在亮色下 5.80:1，与 OFF 的 tertiary 2.13:1 虽是一档，
+但仍不够「黑」。
+
+**Decision.** ON 的模型名提到 `label-primary`（亮色 `#0f1115` 18.90:1、暗色 `#f9fafb`
+15.03:1）；OFF 保持 `label-tertiary`（2.13:1 / 4.24:1）。ON/OFF 差距由「secondary vs
+tertiary」拉大到「primary vs tertiary」，一眼可辨，同时 OFF 仍远在 dimmed（1.26:1 /
+1.64:1）之上，保持可读。
+
+**Rejected.**（1）ON 用 secondary（DEC-043 原案）：不够黑，即用户本轮反馈。（2）OFF 也提到
+primary 或 secondary：ON/OFF 重新同色，回到「不可辨」。（3）OFF 直接落 dimmed：回到最初
+不可读的投诉。
+
+**Consequences.** ON/OFF 的层级改由 **字体族（UI vs 等宽）+ 字重（600 vs 400）+ 字号
+（14 vs 13）** 承担，色调不再区分 provider 与 model（两者 ON 态同为 primary，这是有意的）。
+render 测试改为断言「ON 模型名 = primary、OFF = tertiary 且不等于 primary」，
+并把「ON/OFF 由色调区分」的注释更新为「由族/字重/字号区分」。测试数不变（256）。
+
 ## DEC-043 — 2026-11-17 — 关闭态标题降一档改为 tertiary：ON/OFF 一眼可辨且仍可读（修订 DEC-042）
 
 **取代：** DEC-042 中「模型名关闭时保持 secondary」这一条；DEC-042 的其余结论（标题永不落
