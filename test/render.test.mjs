@@ -19,6 +19,10 @@ function createRuntime() {
   const hooks = []
   let cursor = 0
   let rerender = null
+  // Effects are queued on every render but only run when a test explicitly
+  // flushes them. Existing tests never flush, so their behavior is unchanged;
+  // tests for mount-time reads (the Settings catalogue) can flush on demand.
+  const pendingEffects = []
   class RComponent {
     constructor(props) { this.props = props; this.state = {} }
     setState(next) { this.state = { ...this.state, ...(typeof next === 'function' ? next(this.state) : next) } }
@@ -61,7 +65,12 @@ function createRuntime() {
       hooks[slot] = { value: fn, deps }
       return fn
     },
-    useEffect: () => { cursor += 1 },
+    useEffect: (effect, deps) => {
+      const slot = cursor++
+      const previous = hooks[slot]
+      if (previous === undefined || !sameDeps(previous.deps, deps)) pendingEffects.push(() => effect())
+      hooks[slot] = { deps }
+    },
     useLayoutEffect: () => { cursor += 1 },
     useSyncExternalStore: (subscribe, getSnapshot) => getSnapshot(),
   }
@@ -79,9 +88,15 @@ function createRuntime() {
       }
     },
     setRerender(fn) { rerender = fn },
+    /** Run the effects queued by renders since the last flush. */
+    flushEffects() {
+      const queued = pendingEffects.splice(0)
+      return Promise.all(queued.map(run => run()))
+    },
     /** Drop every hook slot so each test starts from a clean component state. */
     reset() {
       hooks.length = 0
+      pendingEffects.length = 0
       cursor = 0
       rerender = null
     },
@@ -4379,6 +4394,40 @@ test('a provider that registers after the first read still reaches Settings', as
   healthy = true
   await recovering.load({ force: true })
   assert.equal(recovering.getSnapshot().status, 'ready', 'a forced read retries after a failure')
+})
+
+test('re-opening Settings forces a fresh catalogue read so deletions show up', async () => {
+  // The Settings shell unmounts the whole panel on close (`{open && <Panel>}`)
+  // and mounts only the active section, so every visit mounts a fresh
+  // SettingsSection. Its mount effect called plain `load()`, which is a no-op
+  // once a previous visit left the store `ready` — a provider deleted from the
+  // Host between visits (deletion emits none of the five invalidating events)
+  // stayed on screen until a full reload. The mount read must be forced.
+  const { SettingsSection } = bundle.__test
+  const loads = []
+  const catalog = {
+    getSnapshot: () => ({ status: 'ready', groups: [] }),
+    subscribe: () => () => {},
+    load: options => { loads.push(options); return Promise.resolve() },
+  }
+  const props = {
+    t: key => key,
+    visibility: bundle.__test.createHiddenStore({ readStored: () => new Set() }),
+    catalog,
+    telemetry: bundle.__test.createTelemetryStore({ readStored: () => true }),
+  }
+
+  runtime.reset()
+  runtime.render(SettingsSection, props)
+  await runtime.flushEffects()
+
+  assert.equal(loads.length, 1, 'the mount asks the catalogue to load once')
+  assert.deepEqual(loads[0], { force: true },
+    'the mount read is forced, so a provider deleted while Settings was closed is picked up')
+
+  // The store half (forced load re-reads the Host and replaces its groups) is
+  // pinned by the createCatalogStore test above; together the two cover the
+  // whole path from a Host deletion to the re-opened section.
 })
 
 test('apply subscribes the settings catalogue to the events that invalidate it', () => {

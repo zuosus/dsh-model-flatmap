@@ -5855,10 +5855,20 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       const getTelemetry = useCallback(() => telemetryFace.getSnapshot(), [telemetryFace])
       const telemetryOn = useSyncExternalStore(subscribeTelemetry, getTelemetry, getTelemetry)
 
-      // Read the catalog when the page opens. The effect is idempotent: a
-      // second visit re-reads only when the first one never produced a
-      // catalogue, so switching sections back and forth costs nothing.
-      useEffect(() => { catalogFace.load() }, [catalogFace])
+      // Read the catalog fresh every time this section mounts. The Settings
+      // shell unmounts the whole panel on close and mounts only the active
+      // section, so a mount IS "the user opened this page" — and the user
+      // expects the catalogue as it is now, not as it was on an earlier visit.
+      // A plain `load()` is memoised to a no-op once the store is `ready`,
+      // which pinned the section to the catalogue of the page's FIRST read:
+      // a provider deleted between visits (deletion emits none of the five
+      // invalidating events the Host forwards) stayed on screen until a full
+      // reload. Forcing the read makes every open re-ask the Host, the same
+      // way the composer's session-scoped directory always reflects the Host.
+      // The store still shares any in-flight read, so a double mount in one
+      // commit costs one request, and the `ready` snapshot is kept while the
+      // fresh read is in flight, so the page never blanks out on re-entry.
+      useEffect(() => { catalogFace.load({ force: true }) }, [catalogFace])
 
       // ---- the seat-conflict report
       //

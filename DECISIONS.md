@@ -17,6 +17,39 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 **Consequences.** 新增 `conflict.nativeUnavailable` / `conflict.nativeUnavailable.title` 两条中英文案；`seatDiagnosis` 的快照比较加入 `nativeAvailable`，继承者变化时页面即时更新。
 
+## DEC-055 — 2026-11-17 — 每次打开设置页都强制重读目录，补上「关闭期间被删除、且无事件」的分支
+
+**Context.** 用户删除了 GitHub Copilot provider，但设置页仍列出它；并明确指出「设置面板的内容不是
+每次打开去获取最新数据的」。
+
+**Findings.** DSH 的 `SettingsRoot` 是 `{open && <SettingsPanel>}`，且面板内只渲染 `only: active`
+的那一节 —— 关闭即卸载，重新打开即重新挂载 `SettingsSection`。挂载时的
+`useEffect(() => catalogFace.load(), [catalogFace])` 调的是**不带参数**的 `load()`，而
+`createCatalogStore` 在 `status === 'ready'` 时把它短路成 no-op。于是快照永久停在**首次**读取的目录。
+DEC-053 的五个 `remote.$on` 事件订阅只在「变更发生且插件在线、Host 转发了该事件」时失效；**provider
+被删除通常不发任何事件**，且用户关闭设置页期间订阅也不在 —— 两个条件都不满足，删除就直到整页刷新
+才可见。这是 LES-040「两个表面读不同源、失效策略也不同」的又一个具体分支。
+
+**Decision.** 把挂载读改成 `catalogFace.load({ force: true })`：**每次打开设置页都重新问一次 Host**。
+保留 DEC-053 的事件订阅不变 —— 它覆盖「用户停在设置页时插件中途注册」的分支，挂载读覆盖「关闭期间
+发生、且无事件的变更（删除）」分支，二者互补，缺一都有盲区。
+
+**与 DEC-053 被否方案 (2) 的关系（部分取代）。** DEC-053 曾以「只在挂载时强制重读：挂载不等于目录变化，
+且用户停在页面上时插件注册仍不会出现」为由否掉挂载读作为**唯一**手段。这一判断对「唯一」成立，本次也
+没有退回它：事件订阅仍然是中途注册的主通道。本条新增的是挂载读这条**补充**通道，理由是重新打开页面
+本身就是用户「我要看当前状态」的明确信号，其新鲜度期望高于「目录很少变、省一次请求」的节省。
+DEC-053 其余决策（五个事件、`force` 也重试失败、尽力而为订阅）全部继续有效。
+
+**Rejected.**（1）去掉 `ready` memoisation、每次 `load()` 都联网：这会连设置页在多个页面间来回切换
+都变成一次请求，且不解决「停在页面上、无事件」的场景。（2）给删除单独造一个事件：Host 不发，插件
+无法订阅不存在的信号。（3）定时轮询：低频事件付持续流量，markStore 已证明定时器是维护负担
+（DEC-053 已否，沿用）。
+
+**Consequences.** 测试 313 → 314：新测试钉住「`SettingsSection` 挂载时以 `{ force: true }` 读取」，
+并保留原测试断言「`createCatalogStore` 的强制读确实重问 Host 并用新 groups 替换快照」；两者合起来覆盖
+从 Host 删除到重开页面的整条路径。测试运行时新增 `flushEffects()` 以便按需触发挂载副作用，现有测试
+不调用它、行为不变。
+
 ## DEC-053 — 2026-11-17 — 设置页的模型目录必须随 Host 事件失效，否则永远停在首读
 
 **Context.** 用户报告：SenseNova Raccoon provider 已打开、在 model picker 里能看到，但
