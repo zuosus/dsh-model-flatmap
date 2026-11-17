@@ -4,6 +4,19 @@ Project-level decision log for the dsh-model-flatmap plugin. Append-only: new
 entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
+## DEC-054 — 2026-11-17 — 「默认样式」置灰时，在设置页说明原因
+
+**Context.** 用户报告平铺面板右下角「原生 / 默认样式」按钮又变灰，问能不能在本插件设置页写一条情况说明。根因是 DEC-049 的安全检查：`canStepAside()` 要求继承者声明 `conversation.input.model.options`，而当前 profile 里 `dsh-acp-agents` 以 priority 0 抢占席位、没有这个子槽，于是按钮被明确置灰。此前设置页的冲突提示在 `contested`（我们仍持有席位）状态下被刻意隐藏，恰好覆盖了这个案例——用户只看到灰按钮，没有任何解释。
+
+**Decision.**
+1. `diagnoseSeat()` 增加 `nativeAvailable` 字段，用与 `canStepAside()` **完全相同的规则**计算（优先继承者必须声明回程子槽）。设置页与按钮共用同一个判据，而不是各算各的。
+2. 设置页在「我们持有席位 + `nativeAvailable === false` + 有竞争者」时显示一条说明卡：标题「默认样式不可用」，正文解释交出去会落到别人的控件、没有回程入口，并点名占位插件；不提供修复按钮——这里确实没有可做的修复（DEC-050）。
+3. 普通 `contested`（有竞争者但默认样式可用）仍然沉默，避免噪音；`broken` / `unknown` 沿用原文案。
+
+**Rationale.** 灰按钮是「按钮就地无解、必须去别处解释」的典型：用户能去的、能解释的地方就是设置页。说明必须由真实判据驱动，否则会出现「按钮亮着却说不可用」或反之的假话。容量上：新增 4 个测试，241 条全绿；先在原始 client.js 上确认新断言会失败，再收修复。
+
+**Consequences.** 新增 `conflict.nativeUnavailable` / `conflict.nativeUnavailable.title` 两条中英文案；`seatDiagnosis` 的快照比较加入 `nativeAvailable`，继承者变化时页面即时更新。
+
 ## DEC-053 — 2026-11-17 — 设置页的模型目录必须随 Host 事件失效，否则永远停在首读
 
 **Context.** 用户报告：SenseNova Raccoon provider 已打开、在 model picker 里能看到，但

@@ -4,6 +4,12 @@ Project-level lessons log for the dsh-model-flatmap plugin. Append-only: new
 entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
+## LES-041 — 2026-11-17 — 「就地无解的灰按钮」要把解释放到用户能去的地方，并让解释由同一判据驱动
+
+按钮被禁用时，用户最需要的是「为什么」和「下一步去哪」。这个插件的「默认样式」灰掉是因为交出席位不安全（DEC-049），而修复动作在另一个插件那里——按钮自己既不能解释也不该假装能修。合理做法是让设置页这张「用户本来就会来配置的页面」说话，而不是在按钮旁塞一段 crowding 的提示。
+
+一个关键陷阱：如果解释卡用「severity」这种粗粒度状态判断，就会和按钮的真实可用性漂移。本次让 `diagnoseSeat` 暴露与 `canStepAside()` 同源的 `nativeAvailable`，设置页据此显示——两处判据同源，才不会出现「按钮亮着、说明却说不可用」的假话。验证方式沿用本项目惯例：先用真实 `SlotCore` 形状的夹具跑出新断言失败，再收修复。
+
 ## LES-040 — 2026-11-17 — 「一处看得到、另一处看不到」先查两边读的是不是同一份数据，再查渲染
 
 用户说 Raccoon provider 在 picker 里看得到、在设置页看不到。我一开始往渲染方向想（过滤、

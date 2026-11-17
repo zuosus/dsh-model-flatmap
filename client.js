@@ -3391,6 +3391,8 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         'conflict.title': '模型选择器冲突',
         'conflict.broken': '另一个插件占用了输入框的模型选择位，原生选择器没有加载成功，它的子槽（模型名角标、菜单底部的返回行）也随之丢失。后果是「默认样式」暂时不可用——平铺面板本身仍然正常。',
         'conflict.contested': '另一个插件也在占用输入框的模型选择位，但当前仍由本插件接管，面板和「默认样式」都能正常工作。',
+        'conflict.nativeUnavailable.title': '默认样式不可用',
+        'conflict.nativeUnavailable': '输入框右下角的「默认样式」按钮现已置灰：如果本插件交出模型选择位，接手的不是原生选择器，而是另一个插件的控件——它不提供返回平铺面板的入口，会把你留在陌生界面里。平铺面板本身照常工作。「默认样式」能否恢复，取决于占用该位置的插件是否退出。',
         'conflict.empty': '输入框的模型选择位现在是空的：原生选择器在启动时与另一个插件发生注册冲突并失败，而且这种失败不会自动重试。刷新页面即可恢复。',
         'conflict.unknown': '无法检查模型选择位的状态（当前 Host 不提供槽位枚举）。',
         'conflict.culprit': '占用者：{name}',
@@ -3435,6 +3437,8 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         'conflict.title': 'Model picker conflict',
         'conflict.broken': 'Another plugin is occupying the composer\u2019s model seat, so the native picker did not load and its child slots (the name badge and the return row at the bottom of the menu) went with it. The default style is therefore unavailable; the flat panel itself still works.',
         'conflict.contested': 'Another plugin also occupies the composer\u2019s model seat, but this plugin still holds it, so the panel and the default style both work.',
+        'conflict.nativeUnavailable.title': 'Default style unavailable',
+        'conflict.nativeUnavailable': 'The “Default style” button at the bottom-right of the composer is greyed out: if this plugin handed the model seat over, the entry that would take it is not the native picker but another plugin\u2019s control. That control offers no way back to the flat panel and would leave you stranded in an unfamiliar UI. The flat panel itself keeps working. Whether the default style returns depends on the occupying plugin leaving this slot.',
         'conflict.empty': 'The composer\u2019s model seat is empty: the native picker failed a registration collision at startup, and that failure never retries. Reload the page to restore it.',
         'conflict.unknown': 'The state of the model seat cannot be checked (this Host does not expose slot enumeration).',
         'conflict.culprit': 'Occupied by: {name}',
@@ -3613,6 +3617,15 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         returnRowDeclared: false,
         /** Does this plugin's own entry currently hold the seat? */
         ours: false,
+        /**
+         * Would stepping aside land on a real native picker? This is the SAME
+         * predicate the footer button uses to enable itself (`canStepAside`):
+         * the first competing entry in priority order must declare the
+         * return-row child slot. The Settings page shows a notice whenever this
+         * is false while this plugin owns the seat — the exact state in which
+         * the user sees a greyed-out "Default style" button with no explanation.
+         */
+        nativeAvailable: false,
         /** May this plugin repair the situation by re-registering? */
         repairable: false,
         /** Why not, when `repairable` is false. */
@@ -3645,6 +3658,13 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
           ours: entry?.component === Seat,
         }))
         report.ours = report.entries.some(entry => entry.ours)
+        // `report.entries` is priority-sorted, so the first non-ours entry is
+        // exactly the one `nativeInheritor()` would elect. It can host native
+        // mode only if it declares the return-row child slot — the same rule as
+        // `declaresReturnRow()`/`canStepAside()`. Keeping the two in lockstep is
+        // what makes the Settings notice appear precisely when the button greys.
+        const firstOther = report.entries.find(entry => !entry.ours)
+        report.nativeAvailable = firstOther !== undefined && firstOther.native === true
         report.returnRowDeclared = typeof slots.spec === 'function'
           ? slots.spec(NATIVE_MENU_SLOT) !== undefined
           : report.entries.some(entry => entry.native)
@@ -5855,8 +5875,17 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       const [dismissed, setDismissed] = useState(false)
       const healthSeverity = health?.severity ?? 'ok'
       // `contested` is informational only: this plugin still holds the seat, so
-      // there is nothing to repair and nothing to alarm the user about.
-      const healthNeedsAttention = healthSeverity === 'broken' || healthSeverity === 'unknown'
+      // there is nothing to repair and nothing to alarm the user about — UNLESS
+      // stepping aside is unsafe, in which case the footer's "Default style"
+      // button is greyed out with no explanation where it sits. That is exactly
+      // the DEC-049 case (a foreign occupant without the return-row slot), and
+      // it is worth a word here.
+      const nativeUnavailable = health?.winnerIsOurs === true
+        && health?.nativeAvailable === false
+        && (health?.competitors?.length ?? 0) > 0
+      const healthNeedsAttention = healthSeverity === 'broken'
+        || healthSeverity === 'unknown'
+        || nativeUnavailable
       const runRepair = () => {
         if (typeof repairSeat !== 'function') {
           setRepairState({ ok: false, message: 'unavailable' })
@@ -6265,18 +6294,28 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
 
       // ---- the seat-conflict notice
       //
-      // Rendered only when there is something to say. Three different faults,
-      // three different bodies, because the user's next step differs:
+      // Rendered only when there is something to say. Four different cases,
+      // each with its own body, because the user's next step differs:
       //   broken    — a competitor holds the seat; offer "Force repair".
       //   empty     — nobody holds it; only a reload can bring the picker back.
       //   unknown   — this Host cannot be asked; say so, never claim "fine".
-      // `contested` (we still hold it) is deliberately silent: the composer
-      // works, and a notice about a plugin that is not causing harm is noise.
+      //   native    — we hold the seat, but stepping aside is unsafe, so the
+      //               "Default style" button is greyed out with no local
+      //               explanation. Say why here; there is no repair from here.
+      // A plain `contested` (we hold the seat AND the default style works) stays
+      // silent: a notice about a plugin that is not breaking anything is noise.
       const conflictCard = (() => {
         if (!healthNeedsAttention) return null
+        // A greyed-out button with an otherwise healthy seat is its own case:
+        // say why, name the occupant, offer no repair (there is none from here).
+        const isNativeNotice = nativeUnavailable
+          && healthSeverity !== 'broken'
+          && healthSeverity !== 'unknown'
         const bodyKey = healthSeverity === 'unknown'
           ? 'conflict.unknown'
-          : (health?.entries?.length === 0 ? 'conflict.empty' : 'conflict.broken')
+          : (isNativeNotice
+            ? 'conflict.nativeUnavailable'
+            : (health?.entries?.length === 0 ? 'conflict.empty' : 'conflict.broken'))
         const culprits = (health?.competitors ?? []).map(entry => entry.registrant)
         // `repairable` means a repair would CHANGE something: a competitor is
         // actually winning the cell. Holding the seat ourselves while the
@@ -6293,7 +6332,8 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         },
           h('div', { className: 'dshmf-setConflictHead' },
             svg(PATH_WARN, 14, { className: 'dshmf-setConflictIcon' }),
-            h('h3', { className: 'dshmf-setConflictTitle' }, translate('conflict.title')),
+            h('h3', { className: 'dshmf-setConflictTitle' },
+              translate(isNativeNotice ? 'conflict.nativeUnavailable.title' : 'conflict.title')),
             h('button', {
               type: 'button',
               className: 'dshmf-setConflictDismiss',
@@ -6990,6 +7030,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
               && next.repairable === snapshot.repairable
               && next.ours === snapshot.ours
               && next.winner === snapshot.winner
+              && next.nativeAvailable === snapshot.nativeAvailable
               && next.competitors.length === snapshot.competitors.length
               && next.competitors.every((entry, index) =>
                 entry.registrant === snapshot.competitors[index]?.registrant)

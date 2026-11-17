@@ -3455,13 +3455,21 @@ test('a foreign plugin holding the seat does not count as the native picker', ()
       children: null, // declares nothing: a replacement control, not a picker
       registrant: 'dsh-acp-agents',
     }
-    const { ctx, seat } = makeCtx({
+    const { ctx, seat, registered } = makeCtx({
       extraEntries: { 'conversation.input.model': [foreign] },
     })
     bundle.apply(ctx)
     const face = seat().registration.inject('session-1')
     assert.equal(face.nativeAvailable(), false,
       'handing the cell to a plugin that cannot host the return row strands the user')
+    // The Settings notice must read the SAME verdict, so the explanation appears
+    // precisely where the button greys out — through real slot assembly, not a
+    // hand-written snapshot.
+    const section = registered.find(entry => entry.registration?.name === 'settings.section')
+    const health = section.registration.inject().seatHealth.getSnapshot()
+    assert.equal(health.nativeAvailable, false,
+      'the Settings verdict agrees with the footer button')
+    assert.ok(health.competitors.some(entry => entry.registrant === 'dsh-acp-agents'))
     const tree = runtime.render(bundle.__component, { ...face, locked: false, t: key => key })
     findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
     const open = runtime.render(bundle.__component, { ...face, locked: false, t: key => key })
@@ -6143,13 +6151,14 @@ test('an empty seat offers a reload instead of a repair', () => {
   assert.equal(reloads, 1)
 })
 
-test('a contested seat is silent: the composer still works', () => {
+test('a contested seat with a usable native picker stays silent', () => {
   runtime.reset()
   const contested = {
     severity: 'contested',
     entries: [{ registrant: 'dsh-model-flatmap', priority: -5, native: false, ours: true }],
     competitors: [{ registrant: 'dsh-acp-agents', priority: 0 }],
-    winner: 'dsh-model-flatmap', returnRowDeclared: true, ours: true, repairable: true,
+    winner: 'dsh-model-flatmap', winnerIsOurs: true,
+    returnRowDeclared: true, nativeAvailable: true, ours: true, repairable: true,
   }
   const face = { getSnapshot: () => contested, subscribe: () => () => {}, refresh: () => {} }
   const tree = runtime.render(bundle.__test.SettingsSection, {
@@ -6162,10 +6171,68 @@ test('a contested seat is silent: the composer still works', () => {
     'a notice about a plugin that is not breaking anything is noise')
 })
 
+test('a greyed-out Default style button is explained in Settings, with no repair', () => {
+  runtime.reset()
+  // DEC-049: we hold the seat, but the entry that would inherit it (acp) has
+  // no return-row slot, so the footer button is disabled. The notice must say
+  // so, name the occupant, and offer no repair button that cannot help.
+  const contested = {
+    severity: 'contested',
+    entries: [
+      { registrant: 'dsh-acp-agents', priority: 0, native: false, ours: false },
+      { registrant: 'dsh-model-flatmap', priority: -5, native: false, ours: true },
+    ],
+    competitors: [{ registrant: 'dsh-acp-agents', priority: 0 }],
+    winner: 'dsh-model-flatmap', winnerIsOurs: true,
+    returnRowDeclared: false, nativeAvailable: false, ours: true, repairable: false,
+  }
+  const face = { getSnapshot: () => contested, subscribe: () => () => {}, refresh: () => {} }
+  const tree = runtime.render(bundle.__test.SettingsSection, {
+    t: key => key,
+    visibility: bundle.__test.createHiddenStore({ readStored: () => new Set() }),
+    catalog: bundle.__test.EMPTY_CATALOG,
+    seatHealth: face,
+    repairSeat: () => { throw new Error('no repair should be offered') },
+  })
+  const card = findAll(tree, node => hasClass(node, 'dshmf-setConflict'))[0]
+  assert.ok(card, 'the notice is drawn for a greyed-out button')
+  assert.equal(card.props['data-severity'], 'contested')
+  const title = findAll(tree, node => hasClass(node, 'dshmf-setConflictTitle'))[0]
+  assert.equal(title.children?.[0] ?? title.props?.children, 'conflict.nativeUnavailable.title')
+  const body = findAll(tree, node => hasClass(node, 'dshmf-setConflictBody'))[0]
+  assert.equal(body.children?.[0] ?? body.props?.children, 'conflict.nativeUnavailable')
+  const names = findAll(tree, node => hasClass(node, 'dshmf-setConflictName'))
+  assert.deepEqual(names.map(node => node.children?.[0] ?? node.props?.children), ['dsh-acp-agents'])
+  assert.equal(findAll(tree, node => hasClass(node, 'dshmf-setConflictBtn')).length, 0,
+    'no repair button: the fix is not in this plugin')
+})
+
+test('diagnoseSeat reports nativeAvailable from the true inheritor', () => {
+  const makeEntries = (native) => [
+    { options: { priority: 0 }, component: () => null, registrant: 'dsh-acp-agents',
+      ...(native ? { children: { 'conversation.input.model.options': {} } } : {}) },
+    { options: { priority: -5 }, component: () => null, registrant: 'dsh-model-flatmap' },
+  ]
+  const slots = { entries: () => makeEntries(false), spec: () => undefined }
+  assert.equal(bundle.__test.diagnoseSeat(slots).nativeAvailable, false,
+    'a foreign occupant without the return-row slot makes native unavailable')
+  // A real native picker underneath is available even when a competitor is also
+  // queued: the inheritor is the lowest-priority non-ours entry.
+  const withNative = {
+    entries: () => [
+      { options: { priority: 0 }, component: () => null, registrant: 'foreign',
+        children: { 'conversation.input.model.options': {} } },
+    ],
+    spec: () => undefined,
+  }
+  assert.equal(bundle.__test.diagnoseSeat(withNative).nativeAvailable, true)
+})
+
 test('every conflict key is translated in both languages', () => {
   const dicts = bundle.__test.settingsDict
   for (const key of ['conflict.title', 'conflict.broken', 'conflict.contested', 'conflict.empty',
-    'conflict.unknown', 'conflict.culprit', 'conflict.repair', 'conflict.repairHint',
+    'conflict.unknown', 'conflict.nativeUnavailable', 'conflict.nativeUnavailable.title',
+    'conflict.culprit', 'conflict.repair', 'conflict.repairHint',
     'conflict.repaired', 'conflict.reload', 'conflict.reloadHint', 'conflict.failed', 'conflict.dismiss']) {
     assert.equal(typeof dicts.zh[key], 'string', `zh ${key}`)
     assert.equal(typeof dicts.en[key], 'string', `en ${key}`)
