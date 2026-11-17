@@ -5341,11 +5341,12 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
           if (focused !== null && focused !== undefined && currentTarget !== null
             && currentTarget !== undefined && typeof currentTarget.contains === 'function'
             && currentTarget.contains(focused)) return
-          // Leaving the editor commits. Every mousedown inside it except the
-          // input is default-prevented, so a click on a control runs its own
-          // handler before focus can leave — never a save followed by a cancel.
-          // Focus is NOT pulled back to the pencil here: the pointer has
-          // already moved to whatever was clicked.
+          // Leaving the editor commits. A pointer that lands on one of the
+          // editor's own controls arms `suppressBlurRef` first (see
+          // `onEditorMouseDown`), so that control's handler decides the outcome
+          // instead — never a save followed by a cancel. Focus is NOT pulled
+          // back to the pencil here: the pointer has already moved to whatever
+          // was clicked.
           commitRename(group, false)
         }
         const onKeyDown = event => {
