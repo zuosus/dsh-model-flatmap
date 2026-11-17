@@ -5,6 +5,76 @@ entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
 
+## DEC-037 — 2026-11-17 — ⛔️ 匿名心跳可关闭：设置页底部的开关，默认开启（推翻 DEC-031 的「不做开关」）
+
+**取代：** DEC-031 第 4 条（「没有开关，默认 daily，不允许 off」）以及 README / DETAIL 里
+「deliberately not switchable」的表述。DEC-031 的其余结论全部继续有效：每日一条、七个字段的
+固定载荷、UTC+8 日界、先落盘再发送、30 次降级、复用 `dsh.zuos.us/api/e`。
+
+**Context.** 用户要求：「telemetry 功能现在一直开着，我需要在设置面板加一个开关，默认 ON，
+放在面板底部，让用户可以关掉/打开它。」这与 DEC-031 当时「不做开关」的判断直接冲突。
+
+**Findings.**
+
+- DEC-031 拒绝开关的理由是「一个没人能点到的开关不构成同意」。这个理由在**当时**成立：本
+  bundle 那时还没有设置页。但 DEC-034 之后有了 `settings.section`，开关有地方住了——**前提
+  变了，结论就该重审**。
+- 关键结构事实：**开关住在浏览器，心跳由宿主发送。** 客户端只有 `localStorage`；宿主才发网络
+  请求。两者必须打通，否则开关就是假的。
+- 打通通道本仓库已有先例：DEC-032 的 project-link 就是「宿主自建路由 + 浏览器 fetch」，并过
+  `connection.requestRejection` 信任栅栏。遥测选择走同一条路，只是方向相反（浏览器写、宿主读）。
+- 默认必须 ON：这是 opt-out。从没打开设置页的机器照旧上报，开关才是真选择而非伪装的默认值
+  （这正是 DEC-031 当初担心的问题，opt-out 默认值恰好回答了它）。
+
+**Decision.**
+
+1. **设置页底部加一个独立分区**（`.dshmf-setTelemetry`），在模型列表之后、用列表同款发丝线
+   隔开。它管的是整个插件唯一的网络请求，不属于任何 provider / 模型，所以不放进列表里。
+2. **默认 ON（opt-out）。** 缺记录 = 开启；文件损坏、`localStorage` 不可用、读到垃圾值一律
+   降级为**开启**——一个读不出来的选择绝不能悄悄把上报关掉，那会正好少算那些文件坏掉的机器。
+3. **客户端存 `localStorage`（`dshmf:telemetry`）+ 镜像到宿主。** `setEnabled` 同时写本地、
+   通知订阅者、`void` 掉镜像请求。镜像失败一律 resolve（不 reject），宿主半边不存在时开关照样
+   工作和显示，只是选择只存在本地。
+4. **宿主新增 `TELEMETRY_SETTINGS_PATH` 路由**（GET 读当前选择 / POST 写新选择），过与
+   project-link 同一道信任栅栏，`ctx.effect` 挂生命周期。POST 只接受 `{enabled: boolean}`，
+   其余一律 400 而不是猜——这个文件闸的是真实的网络发送，含糊的写入不能被默认成开或关。
+5. **宿主在每次发送前重读选择文件**（`telemetry-settings.json`，0600，与 `analytics.json`
+   同目录），不是只在启动时读一次：这样拨开关在当天晚些时候的下一次复查就生效，无需重启。
+6. **关闭时不发送也不落状态。** `TelemetryReporter` 加 `enabled` 闸，`prepare()` 第一件事就判它；
+   关闭时既不 POST 也不写 `analytics.json`，所以重新打开的次日会干净地报一次 install/heartbeat，
+   而不是接着一条半写的记录。
+7. **激活时把已存选择推给宿主一次**（`syncNow`，fire-and-forget），这样用户在上一个会话里做的
+   选择，即使不再打开设置页也会被下一次心跳遵守。
+
+**Rejected.**（1）继续不做开关：用户明确要求，且有了设置页后 DEC-031 的前提已不成立。
+（2）把开关放进模型列表里、当作某个 provider 的子项：它管的是整个插件的网络请求，不是某个
+provider。（3）默认 OFF：那就成了 opt-in，会静默抹掉所有老机器的统计。（4）只写
+`localStorage` 不同步宿主：宿主读不到浏览器，开关就是装饰。（5）宿主只在启动时读一次选择：
+拨开关要重启才生效，等于没做。（6）损坏的选择降级为「关闭」：会正好少算文件坏掉的那批机器。
+
+**Consequences.**
+
+- `telemetry.js`：新增 `SETTINGS_FILE`、`parseSettings` / `serializeSettings` /
+  `readSettingsFile` / `writeSettingsFile`，以及 `TelemetryReporter` 的 `enabled` 选项与
+  `enabled` getter、`prepare()` 顶部的闸。
+- `index.js`：新增 `TELEMETRY_SETTINGS_PATH`、`registerTelemetrySettings`、
+  `readTelemetryBody`；`heartbeat()` 发送前读选择文件，关闭则返回 `{reason:'opted-out'}`。
+  `apply()` 多注册一条路由。
+- `client.js`：新增 `TELEMETRY_KEY`、`readTelemetryEnabled` / `writeTelemetryEnabled` /
+  `syncTelemetryEnabled`、`createTelemetryStore` / `TELEMETRY_ON`、`TELEMETRY_SETTINGS_PATH`
+  （浏览器侧、文档相对路径），`SettingsSection` 底部新分区，`settingsDict` 新增
+  `telemetry.title` / `telemetry.desc` / `telemetry.toggle`（双语），`apply()` 构建并注入
+  `telemetryStore`、激活时 `syncNow`。
+- `SettingsSection` 新增 inject 面 `telemetry`；降级时用 `TELEMETRY_ON` 保持 hook 形状不变。
+- 测试 242 → 253：遥测设置默认/损坏降级、文件原子读写与 0600、opt-out 上报体不发且不落状态、
+  宿主路由 GET/POST/400/405、客户端 store 默认 ON + 持久化 + 镜像 + 订阅、镜像 POST 路径与
+  失败 resolve、设置页底部分区位置与默认 ON、双语词条、浏览器与宿主路由路径一致。
+  另改两条旧断言：设置页 switch 计数改为只数列表内的（遥测开关在列表外，带独立 class）；
+  repo-url 的两条「只注册一条路由」改为「两条路由、按 path 查找」。
+- 已知取舍：宿主半边不存在（Desktop 自带文件服务）时镜像不落地，选择只存在浏览器本地；该机器
+  的心跳照旧（等于 opt-out 默认），开关仍渲染且可用，只是这一台的关闭只在本地生效。
+
+
 ## DEC-036 — 2026-11-17 — 模型开关用偏青的品牌色，与 provider 开关区分
 
 **Context.** 设置页展开一个 provider 后，父级开关和它下面每个模型的开关颜色完全相同，

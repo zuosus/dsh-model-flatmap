@@ -6,20 +6,25 @@
  * in the client UI, and reads the Session's model directory, projections and
  * `session.selectModel` through public Client APIs.
  *
- * The Host contributes no service, tool or event. It has exactly two jobs of
+ * The Host contributes no service, tool or event. It has exactly three jobs of
  * its own:
  *
  * 1. The anonymous daily heartbeat in `telemetry.js` (see DEC-031), which is
  *    how the project can tell how many machines actually run the picker and how
  *    many of them ran it today. npm downloads cannot answer that (CI, mirrors
  *    and reinstalls all count) and a Client-side counter cannot either (a tab
- *    that is never reloaded reports nothing).
+ *    that is never reloaded reports nothing). The user can switch it off in
+ *    Settings (see DEC-035); the Host honours that choice on every send.
  * 2. One read-only route answering the panel's "open the project page" button
  *    with the URL its checkout configures (see `repo-url.js`). The browser half
  *    has no filesystem and no subprocess, so the checkout can only be read
  *    here. The route resolves on EVERY request rather than at activation: a
  *    remote added while the Host is running is picked up by the next click,
  *    and a checkout that is not a repository yet can become one.
+ * 3. One telemetry-settings route the Settings toggle mirrors its choice
+ *    through (see DEC-035). The toggle lives in the browser, the send happens
+ *    here, so the browser writes its choice to a file this half reads before
+ *    every send.
  *
  * Two rules keep those jobs from ever becoming the Host's problem:
  *
@@ -34,7 +39,12 @@
 import { readFileSync } from 'node:fs'
 
 import { FALLBACK_PROJECT_URL, resolveProjectUrl } from './repo-url.js'
-import { TelemetryReporter, resolveDataDir } from './telemetry.js'
+import {
+  TelemetryReporter,
+  readSettingsFile,
+  resolveDataDir,
+  writeSettingsFile,
+} from './telemetry.js'
 
 export const name = 'dsh-model-flatmap'
 
@@ -58,6 +68,17 @@ export const inject = []
  * envelope instead of returning plain JSON.
  */
 export const PROJECT_LINK_PATH = '/dsh-model-flatmap/project-link'
+
+/**
+ * Path of the telemetry-settings route the Settings toggle talks to (DEC-035).
+ *
+ * The toggle lives in the browser, but the heartbeat sends from here, so the
+ * browser mirrors its choice into a file this half reads before every send.
+ * `GET` answers the current choice; `POST` writes a new one. Namespaced under
+ * the package name like {@link PROJECT_LINK_PATH}, and behind the same trust
+ * fence — without it any web page could flip this machine's reporting.
+ */
+export const TELEMETRY_SETTINGS_PATH = '/dsh-model-flatmap/telemetry-settings'
 
 /**
  * Answer one project-link read.
@@ -137,6 +158,110 @@ function registerProjectLink(ctx) {
     }
   } catch (error) {
     warnOnce(ctx, `dsh-model-flatmap: the project-link route was not registered (plugin unaffected): ${String(error?.message ?? error)}`)
+  }
+}
+
+/**
+ * Read one telemetry-settings request body.
+ *
+ * Only `{ enabled: boolean }` is accepted. Anything else is a 400 rather than a
+ * guess: the file gates a real network send, so a malformed write must not be
+ * silently coerced into "on" or "off".
+ *
+ * @param {import('node:http').IncomingMessage} req - the request.
+ * @returns {Promise<{enabled: boolean}|null>} the parsed body, or `null` if invalid.
+ */
+async function readTelemetryBody(req) {
+  try {
+    const chunks = []
+    for await (const chunk of req) chunks.push(Buffer.from(chunk))
+    const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8') || '')
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    if (typeof parsed.enabled !== 'boolean') return null
+    return { enabled: parsed.enabled }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Register the telemetry-settings route (DEC-035).
+ *
+ * `GET` answers the choice the Host will honour on its next send; `POST`
+ * persists a new one. Both are behind the trust fence, and both degrade to
+ * "route absent" rather than throwing: a composition without a web server has
+ * no toggle channel, so the browser keeps its `localStorage` choice and the
+ * Host keeps reporting — the pre-toggle behaviour.
+ *
+ * @param {object} ctx - the Host plugin context.
+ * @returns {void}
+ */
+function registerTelemetrySettings(ctx) {
+  let webServer
+  try {
+    webServer = typeof ctx?.get === 'function' ? ctx.get('webServer') : undefined
+  } catch {
+    webServer = undefined
+  }
+  if (webServer === undefined || typeof webServer.register !== 'function') return
+
+  try {
+    const register = () => webServer.register({
+      kind: 'exact',
+      path: TELEMETRY_SETTINGS_PATH,
+      handler: async (req, res) => {
+        const rejection = trustRejection(ctx, req)
+        if (rejection !== undefined) {
+          res.statusCode = rejection
+          res.end()
+          return
+        }
+        const method = req.method
+        if (method !== 'GET' && method !== 'HEAD' && method !== 'POST') {
+          res.statusCode = 405
+          res.setHeader('allow', 'GET, HEAD, POST')
+          res.end()
+          return
+        }
+        // A read answers the file as it stands. A write is applied first so the
+        // next heartbeat — including a re-check already in flight — sees it.
+        if (method === 'POST') {
+          const body = await readTelemetryBody(req)
+          if (body === null) {
+            res.statusCode = 400
+            res.setHeader('content-type', 'application/json; charset=utf-8')
+            const problem = JSON.stringify({ ok: false, error: 'expected { enabled: boolean }' })
+            res.setHeader('content-length', Buffer.byteLength(problem))
+            res.end(problem)
+            return
+          }
+          try {
+            await writeSettingsFile(resolveDataDir(), body)
+          } catch (error) {
+            // An unwritable home is not the toggle's fault; report it honestly
+            // so the browser can say the choice did not stick.
+            warnOnce(ctx, `dsh-model-flatmap: telemetry settings could not be written: ${String(error?.message ?? error)}`)
+            res.statusCode = 500
+            res.end()
+            return
+          }
+        }
+        const settings = await readSettingsFile(resolveDataDir())
+        const payload = JSON.stringify({ ok: true, enabled: settings.enabled })
+        res.statusCode = 200
+        res.setHeader('content-type', 'application/json; charset=utf-8')
+        res.setHeader('cache-control', 'no-store')
+        res.setHeader('content-length', Buffer.byteLength(payload))
+        res.end(method === 'HEAD' ? undefined : payload)
+      },
+    })
+    if (typeof ctx?.effect === 'function') {
+      ctx.effect(() => register(), 'dsh-model-flatmap: telemetry-settings route')
+    } else {
+      register()
+    }
+  } catch (error) {
+    warnOnce(ctx, `dsh-model-flatmap: the telemetry-settings route was not registered (plugin unaffected): ${String(error?.message ?? error)}`)
   }
 }
 
@@ -222,13 +347,13 @@ function readOwnPackage() {
 }
 
 /**
- * Send this machine's daily heartbeat, if it has not been sent today.
+ * Send this machine's daily heartbeat, if it has not been sent today AND the
+ * user has not switched the collection off (DEC-035).
  *
- * Deliberately not configurable: the plugin ships no settings page, and a
- * switch nobody can reach is worse than none — it would only let the default
- * look like a user choice. What bounds the request instead is its own shape:
- * seven fields, no free text, no session content (see `telemetry.js`), and at
- * most one request per machine per local day.
+ * The toggle lives in the browser, so its choice is mirrored into
+ * `telemetry-settings.json` through the telemetry-settings route. A missing or
+ * unreadable file means **enabled** — the collection is opt-out, so a machine
+ * whose browser never opened Settings keeps reporting exactly as before.
  *
  * @param {object} ctx - The Host plugin context, used only for its logger.
  * @returns {Promise<{sent: boolean, kind: string|null, reason: string}|null>}
@@ -236,6 +361,15 @@ function readOwnPackage() {
  */
 async function heartbeat(ctx) {
   const pkg = readOwnPackage()
+  let enabled = true
+  try {
+    // Read fresh on EVERY send (start and each re-check), so flipping the
+    // toggle takes effect on the next check without a restart.
+    enabled = (await readSettingsFile(resolveDataDir())).enabled
+  } catch {
+    enabled = true
+  }
+  if (enabled !== true) return { sent: false, kind: null, reason: 'opted-out' }
   try {
     return await new TelemetryReporter({
       dir: resolveDataDir(),
@@ -244,6 +378,7 @@ async function heartbeat(ctx) {
       // renames the package must land on its own statistics line, not merge
       // into this one.
       pluginId: typeof pkg.name === 'string' ? pkg.name : '',
+      enabled,
     }).start({
       version: typeof pkg.version === 'string' ? pkg.version : '',
       platform: process.platform,
@@ -305,4 +440,10 @@ export function apply(ctx) {
   // `repo-url.js`). It is registered last and swallows its own failures: a
   // composition with no web server must still load the picker.
   registerProjectLink(ctx)
+
+  // The Settings toggle mirrors its choice into the data directory through this
+  // route (see DEC-035). Like the link route it swallows its own failures: with
+  // no web server the browser keeps its localStorage choice and the Host keeps
+  // reporting, which is the pre-toggle behaviour.
+  registerTelemetrySettings(ctx)
 }

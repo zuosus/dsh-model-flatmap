@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url'
 import {
   DATA_DIR_NAME,
   DEFAULT_ENDPOINT,
+  SETTINGS_FILE,
   STATE_FILE,
   TelemetryReporter,
   buildPayload,
@@ -32,12 +33,16 @@ import {
   newInstallId,
   normalizePluginId,
   normalizeVersion,
+  parseSettings,
   parseState,
+  readSettingsFile,
   resolveDataDir,
   resolveDshHome,
   resolveEndpoint,
+  serializeSettings,
   serializeState,
   shanghaiDay,
+  writeSettingsFile,
 } from '../telemetry.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -508,4 +513,148 @@ test('the Host entry reads the plugin id from its own manifest', async () => {
   assert.equal(manifest.name, PLUGIN)
   assert.equal(normalizePluginId(manifest.name), PLUGIN)
   assert.match(manifest.version, /^\d+\.\d+\.\d+/)
+})
+
+// ---------------------------------------------------------------------------
+// Telemetry toggle (DEC-035): the user's off switch, honoured by the Host.
+// ---------------------------------------------------------------------------
+
+test('telemetry settings default to enabled and survive a round-trip', () => {
+  // Absent = enabled: the collection is opt-out, so a machine whose owner
+  // never opened Settings must keep reporting exactly as before.
+  assert.deepEqual(parseSettings(''), { enabled: true })
+  assert.deepEqual(parseSettings(undefined), { enabled: true })
+  // Any corruption degrades to enabled, never to silent — losing a day of
+  // statistics to a damaged file is the wrong failure direction.
+  for (const bad of ['{', '[]', 'null', '"x"', '{"enabled":"no"}']) {
+    assert.deepEqual(parseSettings(bad), { enabled: true }, `input ${bad}`)
+  }
+  // Only an explicit `false` turns it off.
+  assert.deepEqual(parseSettings('{"enabled":false}'), { enabled: false })
+  assert.deepEqual(parseSettings('{"enabled":true}'), { enabled: true })
+  // Round-trip keeps the file hand-readable.
+  assert.equal(serializeSettings({ enabled: false }), '{\n  "enabled": false\n}\n')
+  assert.deepEqual(parseSettings(serializeSettings({ enabled: true })), { enabled: true })
+})
+
+test('the settings file reads and writes atomically in the data directory', async () => {
+  await withTempDir(async (dir) => {
+    assert.deepEqual(await readSettingsFile(dir), { enabled: true }, 'a missing file reads as enabled')
+    await writeSettingsFile(dir, { enabled: false })
+    const onDisk = JSON.parse(await readFile(join(dir, SETTINGS_FILE), 'utf8'))
+    assert.equal(onDisk.enabled, false)
+    assert.deepEqual(await readSettingsFile(dir), { enabled: false })
+    // 0600, like the state file: a local choice is nobody else's business.
+    const fileStat = await stat(join(dir, SETTINGS_FILE))
+    assert.equal(fileStat.mode & 0o777, 0o600)
+  })
+})
+
+test('an opted-out reporter sends nothing and writes no state', async () => {
+  await withTempDir(async (dir) => {
+    const { impl, calls } = stubFetch()
+    const reporter = new TelemetryReporter({
+      dir,
+      pluginId: PLUGIN,
+      fetchImpl: impl,
+      clock: () => DAY_ONE,
+      enabled: false,
+    })
+    assert.equal(reporter.enabled, false)
+    const result = await reporter.start({ version: '1.2.3', platform: 'darwin', arch: 'arm64' })
+    // Nothing sent, and crucially no state file: an opted-out machine must not
+    // leave `lastAttemptDay` behind, so re-enabling tomorrow reports a clean
+    // install/heartbeat rather than resuming a half-written one.
+    assert.equal(result.sent, false)
+    assert.equal(calls().length, 0)
+    await assert.rejects(stat(join(dir, STATE_FILE)))
+    // The default is enabled — the opt-out default keeps existing machines reporting.
+    const on = new TelemetryReporter({ dir, pluginId: PLUGIN, fetchImpl: impl, clock: () => DAY_ONE })
+    assert.equal(on.enabled, true)
+  })
+})
+
+/** Invoke one telemetry-settings route handler with a request body. */
+async function invokeTelemetry(route, method, body) {
+  let captured = null
+  const res = {
+    statusCode: 0,
+    headers: {},
+    setHeader(name, value) { this.headers[name] = value },
+    end(output) { captured = { status: this.statusCode, headers: this.headers, body: output } },
+  }
+  const req = {
+    method,
+    [Symbol.asyncIterator]: async function* () {
+      if (body !== undefined) yield Buffer.from(typeof body === 'string' ? body : JSON.stringify(body))
+    },
+  }
+  await route.handler(req, res)
+  return captured
+}
+
+test('the telemetry-settings route answers GET with the current choice', async () => {
+  const { apply, TELEMETRY_SETTINGS_PATH } = await import('../index.js')
+  assert.equal(typeof TELEMETRY_SETTINGS_PATH, 'string')
+  const routes = []
+  await withTempDir(async (dir) => {
+    // resolveDataDir() = $DSH_HOME/dsh-model-flatmap, created on write.
+    process.env.DSH_HOME = dir
+    const home = process.env.DSH_HOME
+    try {
+      apply({
+        get: name => (name === 'webServer' ? { register: r => { routes.push(r); return () => {} } } : undefined),
+        effect: fn => fn(),
+        logger: { warn: () => {} },
+      })
+      const route = routes.find(item => item.path === TELEMETRY_SETTINGS_PATH)
+      assert.notEqual(route, undefined, 'the telemetry-settings route is registered')
+      // Default (no file yet): enabled.
+      const first = await invokeTelemetry(route, 'GET')
+      assert.equal(first.status, 200)
+      assert.deepEqual(JSON.parse(first.body), { ok: true, enabled: true })
+      // After an opted-out write, GET reports it.
+      await writeSettingsFile(resolveDataDir(), { enabled: false })
+      const second = await invokeTelemetry(route, 'GET')
+      assert.deepEqual(JSON.parse(second.body), { ok: true, enabled: false })
+    } finally {
+      if (process.env.DSH_HOME === home) delete process.env.DSH_HOME
+    }
+  })
+})
+
+test('the telemetry-settings route writes a POSTed choice and rejects bad bodies', async () => {
+  const { apply, TELEMETRY_SETTINGS_PATH } = await import('../index.js')
+  const routes = []
+  await withTempDir(async (dir) => {
+    process.env.DSH_HOME = dir
+    const home = process.env.DSH_HOME
+    try {
+      apply({
+        get: name => (name === 'webServer' ? { register: r => { routes.push(r); return () => {} } } : undefined),
+        effect: fn => fn(),
+        logger: { warn: () => {} },
+      })
+      const route = routes.find(item => item.path === TELEMETRY_SETTINGS_PATH)
+      // A valid POST persists the choice and echoes it back.
+      const posted = await invokeTelemetry(route, 'POST', { enabled: false })
+      assert.equal(posted.status, 200)
+      assert.deepEqual(JSON.parse(posted.body), { ok: true, enabled: false })
+      assert.deepEqual(await readSettingsFile(resolveDataDir()), { enabled: false })
+      // Malformed bodies are a 400, never a silent coercion: this file gates a
+      // real network send, so an ambiguous write must not be guessed at.
+      for (const bad of ['{', '{"enabled":"yes"}', '{"enabled":1}', '[]', 'null']) {
+        const answer = await invokeTelemetry(route, 'POST', bad)
+        assert.equal(answer.status, 400, `bad body ${bad}`)
+      }
+      // A write that did not happen leaves the previous choice intact.
+      assert.deepEqual(await readSettingsFile(resolveDataDir()), { enabled: false })
+      // Methods it does not own are a 405.
+      const put = await invokeTelemetry(route, 'PUT', { enabled: true })
+      assert.equal(put.status, 405)
+      assert.equal(put.headers.allow, 'GET, HEAD, POST')
+    } finally {
+      if (process.env.DSH_HOME === home) delete process.env.DSH_HOME
+    }
+  })
 })
