@@ -4,6 +4,17 @@ Project-level decision log for the dsh-model-flatmap plugin. Append-only: new
 entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
+## DEC-056 — 2026-11-18 — 团队协作服务未挂载时保留开关行，禁用并说明
+
+**Context.** 用户之前的会话把 Agent Teams 强制装进桌面 profile 并写了 agent-team-force 补丁块，但当前进程没有重启：`remote.agentTeams` 与 `agentTeam` projection 都还没挂载。面板按「缺失即 `null`」把整行删除，用户看到的像是功能被删了，无从判断是服务未加载还是插件不支持。
+
+**Decision.** 页脚的团队协作行永远渲染：服务与 projection 都在时开关可用；任一缺失时开关禁用，提示改读 `team.unavailable`（说明当前会话尚未加载、需重启或在新会话开启 Agent Teams）。点击在禁用态绝不调用 `setEnabled`。footerKey 固定为 team 状态，避免开关从禁用到可用时触发一次多余测量。
+
+**Rationale.** 「静默消失」把配置问题和功能缺失混成一件事，且违反 DEC-049/DEC-054 的同类原则：不可用的控件要在用户能看见的地方说明。服务可能稍后挂载，禁用态让面板重开即可自愈，不需要专门的订阅通道。
+
+**Consequences.** 新增中英文案 `team.unavailable`；更新三条渲染测试（服务缺失、projection 缺失、footer 始终含团队行）。
+
+
 ## DEC-054 — 2026-11-17 — 「默认样式」置灰时，在设置页说明原因
 
 **Context.** 用户报告平铺面板右下角「原生 / 默认样式」按钮又变灰，问能不能在本插件设置页写一条情况说明。根因是 DEC-049 的安全检查：`canStepAside()` 要求继承者声明 `conversation.input.model.options`，而当前 profile 里 `dsh-acp-agents` 以 priority 0 抢占席位、没有这个子槽，于是按钮被明确置灰。此前设置页的冲突提示在 `contested`（我们仍持有席位）状态下被刻意隐藏，恰好覆盖了这个案例——用户只看到灰按钮，没有任何解释。

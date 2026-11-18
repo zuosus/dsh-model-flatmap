@@ -3265,6 +3265,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         'effort.hint': '调整模型的思考强度：档位越高，思考越深入，但速度更慢、token 开销更大。',
         'team.label': '启用智能体团队协作',
         'team.description': '通过共享任务板协调多个智能体的分工与进度，复杂任务表现更佳，token 开销也相应更高。',
+        'team.unavailable': '当前会话尚未加载团队协作服务；请重启 DeepSeek Harness 或在新会话中开启 Agent Teams 后再试。',
         'team.failed': '无法确认智能体团队协作设置已保存，请重试：{message}',
         'team.disable.title': '确认停用智能体团队协作？',
         'team.disable.description': '对话过程中停用智能体团队协作，将停止共享任务工具和团队协调指令。',
@@ -3305,6 +3306,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         'effort.hint': 'Adjusts how deeply the model thinks: higher levels reason more deeply, but are slower and cost more tokens.',
         'team.label': 'Enable agent teamwork',
         'team.description': 'Coordinate work and progress across agents with a shared task board for better results on complex tasks, with correspondingly higher token costs.',
+        'team.unavailable': 'Agent teamwork is not available in this session yet. Restart DeepSeek Harness or enable Agent Teams in a new session, then try again.',
         'team.failed': 'Could not confirm the agent teamwork setting was saved. Try again: {message}',
         'team.disable.title': 'Disable agent teamwork?',
         'team.disable.description': 'Disabling agent teamwork during a conversation stops the use of shared task tools and team coordination instructions.',
@@ -4187,6 +4189,16 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       const useSessionsSafe = typeof useSessions === 'function' ? useSessions : () => undefined
 
       const teamMode = useProjectionSafe('agentTeam')
+      // The Team switch needs both the host's agentTeam projection and its
+      // remote.agentTeams namespace service. In a profile where Agent Teams was
+      // just configured (or where the client mounted before the service), the
+      // projection can be absent for this Session. Rather than deleting the row
+      // — which made the feature look removed — keep it visible but disabled,
+      // and let a later settle make it live. Re-reading per render is enough:
+      // the panel re-renders on open, on projection pushes, and on team actions.
+      const teamProjectionReady = teamMode !== undefined
+      const teamServiceReady = teamAvailable() === true
+      const teamReady = teamProjectionReady && teamServiceReady
       const modelSelection = useProjectionSafe('modelSelection')
       // Both hooks may hand back `undefined` before the Session binds, so the
       // selectors never assume an object.
@@ -4407,7 +4419,9 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       // the footer exists. Naming the key after those members keeps a footer
       // that merely gains or loses one of them a real measurement, while a
       // footer whose content is unchanged stays quiet.
-      const teamRowShown = teamMode !== undefined && teamAvailable()
+      // Always render the row; use a stable key for both states so measuring
+      // the footer does not churn when readiness flips.
+      const teamRowShown = true
       const sectionCount = sections.length
       const footerKey = `${effortChoices.length > 0 ? 'reason' : 'none'}:${teamRowShown ? 'team' : 'none'}`
       const errorKey = state.error === null ? '' : state.error
@@ -5262,28 +5276,26 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
                       : h('span', { className: 'dshmf-pillName' }, level.name))
                   })),
                 ),
-                teamMode === undefined || !teamAvailable()
-                  ? null
-                  : h('div', { className: 'dshmf-team', ref: teamRef },
-                    h('span', { className: 'dshmf-teamLabel' },
-                      h('span', { className: 'dshmf-teamName' }, t('team.label')),
-                      h('span', {
-                        className: 'dshmf-info',
-                        title: t('team.description'),
-                        'aria-hidden': 'true',
-                      }, svg(PATH_INFO, 12)),
-                    ),
-                    h('button', {
-                      type: 'button',
-                      role: 'switch',
-                      className: 'dshmf-switch',
-                      'aria-checked': teamMode.enabled,
-                      'aria-label': t('team.label'),
-                      title: t('team.description'),
-                      disabled: locked || busy || teamPending || modelSelection === undefined,
-                      onClick: () => { changeTeamMode(!teamMode.enabled) },
-                    }, h('span', { className: 'dshmf-thumb' })),
+                h('div', { className: 'dshmf-team', ref: teamRef },
+                  h('span', { className: 'dshmf-teamLabel' },
+                    h('span', { className: 'dshmf-teamName' }, t('team.label')),
+                    h('span', {
+                      className: 'dshmf-info',
+                      title: teamReady ? t('team.description') : t('team.unavailable'),
+                      'aria-hidden': 'true',
+                    }, svg(PATH_INFO, 12)),
                   ),
+                  h('button', {
+                    type: 'button',
+                    role: 'switch',
+                    className: 'dshmf-switch',
+                    'aria-checked': teamMode?.enabled === true,
+                    'aria-label': t('team.label'),
+                    title: teamReady ? t('team.description') : t('team.unavailable'),
+                    disabled: !teamReady || locked || busy || teamPending || modelSelection === undefined,
+                    onClick: () => { if (teamReady) changeTeamMode(!(teamMode?.enabled === true)) },
+                  }, h('span', { className: 'dshmf-thumb' })),
+                ),
 
                 // ---- the trailing PAIR: the project link and the display
                 // mode button, as ONE footer child.
