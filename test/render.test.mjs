@@ -1403,15 +1403,45 @@ test('turning the teamwork switch ON calls setEnabled(sessionId, true)', () => {
   assert.deepEqual(calls, [['session-1', true]])
 })
 
-test('the teamwork row is omitted when remote.agentTeams is absent', () => {
+test('the teamwork row stays visible but disabled when remote.agentTeams is absent', () => {
   runtime.reset()
   const { ctx, seat } = makeCtx({ services: {} })
   bundle.apply(ctx)
   const face = seat().registration.inject('session-1')
-  const tree = runtime.render(bundle.__component, { ...face, locked: false, t: key => key })
+  const props = { ...face, locked: false, t: key => key }
+  const tree = runtime.render(bundle.__component, props)
   findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
-  const open = runtime.render(bundle.__component, { ...face, locked: false, t: key => key })
-  assert.equal(findAll(open, node => node.props?.role === 'switch').length, 0)
+  const open = runtime.render(bundle.__component, props)
+  const switches = findAll(open, node => node.props?.role === 'switch')
+  assert.equal(switches.length, 1, 'the row is shown instead of silently disappearing')
+  assert.equal(switches[0].props.disabled, true, 'the switch cannot pretend to work without the service')
+  assert.equal(switches[0].props.title, 'team.unavailable')
+  const row = findAll(open, node => hasClass(node, 'dshmf-team'))[0]
+  assert.ok(row, 'the teamwork row itself is present')
+})
+
+test('the teamwork row stays visible but disabled when the agentTeam projection is absent', () => {
+  runtime.reset()
+  const calls = []
+  const { ctx, seat } = makeCtx({
+    services: {
+      'remote.agentTeams': {
+        setEnabled: (...args) => { calls.push(args); return Promise.resolve({ ok: true }) },
+      },
+    },
+  })
+  bundle.apply(ctx)
+  const face = seat().registration.inject('session-1')
+  const props = { ...face, locked: false, t: key => key, useProjection: key => undefined }
+  const tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  const open = runtime.render(bundle.__component, props)
+  const sw = findAll(open, node => node.props?.role === 'switch')[0]
+  assert.ok(sw, 'projection absence no longer deletes the row')
+  assert.equal(sw.props.disabled, true)
+  assert.equal(sw.props['aria-checked'], false)
+  sw.props.onClick()
+  assert.deepEqual(calls, [], 'a disabled row must never call setEnabled')
 })
 
 test('a directory that cannot resolve yet still yields a renderable seat', () => {
@@ -1791,25 +1821,25 @@ test('the footer is a wrapping flex line with a 30px gap between the groups', ()
 test('the footer always renders, carrying the mode button even with no other group', () => {
   // No reasoning metadata and no agentTeams projection. The footer used to be
   // omitted entirely here; it now always renders because the display-mode
-  // button lives in it — but it must carry ONLY that button, never an empty
-  // reasoning or teamwork group.
+  // button lives in it. The teamwork row is always present too: with its
+  // services missing it is a disabled, explained row, not a hidden feature.
   const noTeam = catalogState({ current: { provider: 'third-party', model: 'glm-4.6' } })
   const a = openPanel(noTeam, { inject: { useProjection: () => undefined, teamAvailable: () => false } })
   const af = findAll(a.tree, node => hasClass(node, 'dshmf-footer'))
   assert.equal(af.length, 1, 'the footer is there for the mode button')
   assert.equal(findAll(af[0], node => hasClass(node, 'dshmf-reason')).length, 0,
     'no reasoning metadata means no reasoning group')
-  assert.equal(findAll(af[0], node => hasClass(node, 'dshmf-team')).length, 0,
-    'no agentTeam projection means no teamwork group')
+  assert.equal(findAll(af[0], node => hasClass(node, 'dshmf-team')).length, 1,
+    'the teamwork row stays visible even with no agentTeam projection')
   assert.equal(findAll(af[0], node => hasClass(node, 'dshmf-modeBtn')).length, 1,
     'the mode button is the footer\'s permanent member')
 
-  // Reasoning present, teamwork absent: footer still wraps the reasoning group.
+  // Reasoning present, teamwork still visible (disabled): footer wraps both.
   const b = openPanel(catalogState(), { inject: { useProjection: () => undefined, teamAvailable: () => false } })
   const footers = findAll(b.tree, node => hasClass(node, 'dshmf-footer'))
   assert.equal(footers.length, 1)
   assert.equal(findAll(footers[0], node => hasClass(node, 'dshmf-reason')).length, 1)
-  assert.equal(findAll(footers[0], node => hasClass(node, 'dshmf-team')).length, 0)
+  assert.equal(findAll(footers[0], node => hasClass(node, 'dshmf-team')).length, 1)
 
   // Teamwork present, no reasoning: footer still wraps the team group.
   const c = openPanel(catalogState({ current: { provider: 'third-party', model: 'glm-4.6' } }))
