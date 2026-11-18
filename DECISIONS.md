@@ -4,6 +4,18 @@ Project-level decision log for the dsh-model-flatmap plugin. Append-only: new
 entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
+## DEC-057 — 2026-11-18 — 设置页新增「启用智能体团队协作」默认开关，与模型面板的会话开关彻底分离
+
+**Context.** 用户要求在设置面板增加一项「启用智能体团队协作」设置，并明确：模型面板里的改动属于临时改动，不是默认改动，不影响这个设置。查证宿主 `@deepseek-ai/dsh-agent-team` 的 `TeamService.Config` 有 `defaultEnabled: boolean`（默认 `false`，新会话首次 llm step 前写入 `team/mode`），但那是 profile 文件里的普通配置字段，本客户端插件无法读写；它的 `remote.agentTeams.setEnabled(sessionId, enabled)` 只写当前 Session 的选择。
+
+**Decision.** 在本插件设置页底部（匿名统计开关上方）新增「启用智能体团队协作」开关，作为新会话默认值的浏览器端偏好，存于 `localStorage` 键 `dshmf:teamDefault`（`{enabled:boolean}`，缺失／损坏一律 `false`，与宿主默认一致）。独立 store，仅设置页可写；模型面板的会话开关只调 `remote.agentTeams.setEnabled(sessionId, enabled)`，seat face 上没有任何默认写入口，因此两条路径互不影响。默认关闭：不改现有会话、不覆盖已保存的 `team/mode`。文案明确说明「控制新会话的默认状态，已有会话不受影响」。
+
+**Rationale.** 用户把「默认」和「本次」分属两个 surface：默认属于偏好设置页，临时属于模型面板。把它们放进同一个 store 会让会话开关污染默认，违背需求。用浏览器 localStorage 而非宿主配置，是因为插件是纯客户端的，宿主没有面向客户端的默认写入通道；不引入 Host 镜像，因为没有宿主消费者。
+
+**Rejected.**（1）让设置页开关直接调用 `remote.agentTeams.setEnabled`：那会改当前会话，恰好是用户要避免的。（2）从会话开关顺带写默认：混淆两种作用域，用户明确反对。（3）把默认值塞进 telemetry 那套 Host 镜像：增加了没有消费者的复杂度。
+
+**Consequences.** 新增 `dshmf-setTeamDefault` 样式带与中英文案 `teamDefault.title/desc/toggle`；`__test` 导出 `TEAM_DEFAULT_KEY/readTeamDefault/writeTeamDefault/createTeamDefaultStore/TEAM_DEFAULT_OFF`；新增 5 条测试（读取默认与损坏值、store 持久化与通知、设置页开关位置与翻转、双语文案、模型面板开关不写默认）。测试先在原代码上跑红，再实现跑绿，全套 322 条通过。
+
 ## DEC-056 — 2026-11-18 — 团队协作服务未挂载时保留开关行，禁用并说明
 
 **Context.** 用户之前的会话把 Agent Teams 强制装进桌面 profile 并写了 agent-team-force 补丁块，但当前进程没有重启：`remote.agentTeams` 与 `agentTeam` projection 都还没挂载。面板按「缺失即 `null`」把整行删除，用户看到的像是功能被删了，无从判断是服务未加载还是插件不支持。

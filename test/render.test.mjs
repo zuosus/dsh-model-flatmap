@@ -5227,6 +5227,121 @@ test('the settings section renders the telemetry toggle at the bottom, ON by def
   }
 })
 
+// ---------------------------------------------------------------------------
+// The agent-teamwork DEFAULT (DEC-057). It is a preference about new sessions,
+// stored in this plugin's Settings panel, and MUST NOT be touched by the
+// model-panel switch (which only writes the current Session's selection).
+// ---------------------------------------------------------------------------
+
+test('the teamwork default is OFF unless explicitly stored on', () => {
+  assert.equal(bundle.__test.readTeamDefault(), false, 'no storage means off')
+  const store = installStorage()
+  try {
+    for (const bad of ['{', '[]', 'null', '"x"', '{"enabled":"yes"}']) {
+      store.set(bundle.__test.TEAM_DEFAULT_KEY, bad)
+      assert.equal(bundle.__test.readTeamDefault(), false, 'garbage ' + bad + ' reads as off')
+    }
+    store.set(bundle.__test.TEAM_DEFAULT_KEY, '{"enabled":true}')
+    assert.equal(bundle.__test.readTeamDefault(), true, 'an explicit opt-in is honoured')
+    store.set(bundle.__test.TEAM_DEFAULT_KEY, '{"enabled":false}')
+    assert.equal(bundle.__test.readTeamDefault(), false, 'an explicit opt-out is honoured')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('the team-default store persists locally and notifies without any host mirror', () => {
+  const storage = installStorage()
+  const face = bundle.__test.createTeamDefaultStore({
+    readStored: bundle.__test.readTeamDefault,
+    writeStored: bundle.__test.writeTeamDefault,
+  })
+  try {
+    assert.equal(face.getSnapshot(), false, 'off by default')
+    let seen
+    face.subscribe(() => { seen = face.getSnapshot() })
+    face.setEnabled(true)
+    assert.equal(face.getSnapshot(), true)
+    assert.equal(seen, true, 'subscribers are notified')
+    assert.equal(storage.get(bundle.__test.TEAM_DEFAULT_KEY), '{"enabled":true}', 'the choice is persisted')
+    face.setEnabled(true)
+    assert.equal(storage.get(bundle.__test.TEAM_DEFAULT_KEY), '{"enabled":true}', 'a redundant set does not rewrite storage')
+    face.setEnabled(false)
+    assert.equal(storage.get(bundle.__test.TEAM_DEFAULT_KEY), '{"enabled":false}')
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('the settings section renders the teamwork-default toggle above telemetry', async () => {
+  runtime.reset()
+  installStorage()
+  const catalog = bundle.__test.createCatalogStore({
+    read: () => ({ modelCatalog: async () => ({ ok: true, value: { groups: catalogState().groups } }) }),
+  })
+  await catalog.load()
+  const teamFace = bundle.__test.createTeamDefaultStore({ readStored: () => false, writeStored: () => {} })
+  let tree
+  const props = {
+    t: key => key,
+    visibility: bundle.__test.createHiddenStore({ readStored: () => new Set() }),
+    catalog,
+    teamDefault: teamFace,
+    telemetry: bundle.__test.createTelemetryStore({ readStored: () => true }),
+  }
+  runtime.setRerender(() => { tree = runtime.render(bundle.__test.SettingsSection, props) })
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  const band = findAll(tree, node => hasClass(node, 'dshmf-setTeamDefault'))[0]
+  assert.ok(band, 'the team-default band renders')
+  const listIndex = tree.children.findIndex(node => hasClass(node, 'dshmf-setList'))
+  const teamIndex = tree.children.indexOf(band)
+  const teleIndex = tree.children.findIndex(node => hasClass(node, 'dshmf-setTelemetry'))
+  assert.ok(teamIndex > listIndex && teleIndex > teamIndex, 'team default sits after the list, above telemetry')
+  const toggle = findAll(band, node => node?.type === bundle.__test.Switch)[0]
+  assert.ok(toggle, 'the band carries a switch')
+  assert.equal(toggle.props.checked, false, 'the default is OFF')
+  toggle.props.onChange(true)
+  tree = runtime.render(bundle.__test.SettingsSection, props)
+  const flipped = findAll(findAll(tree, node => hasClass(node, 'dshmf-setTeamDefault'))[0], node => node?.type === bundle.__test.Switch)[0]
+  assert.equal(flipped.props.checked, true, 'the toggle turned on')
+  assert.equal(teamFace.getSnapshot(), true, 'flipping the Settings toggle drives the team-default store only')
+})
+
+test('every team-default copy key exists in both languages', () => {
+  const dict = bundle.__test.settingsDict
+  for (const locale of ['zh', 'en']) {
+    for (const key of ['teamDefault.title', 'teamDefault.desc', 'teamDefault.toggle']) {
+      assert.equal(typeof dict[locale][key], 'string', locale + ' declares ' + key)
+      assert.notEqual(dict[locale][key], '', locale + ' ' + key + ' is not empty')
+    }
+  }
+})
+
+test('the model-panel teamwork switch never writes the default setting', () => {
+  runtime.reset()
+  const calls = []
+  const { ctx, seat } = makeCtx({
+    services: {
+      'remote.agentTeams': {
+        setEnabled: (...args) => { calls.push(args); return Promise.resolve({ ok: true, value: undefined }) },
+      },
+    },
+  })
+  bundle.apply(ctx)
+  const face = seat().registration.inject('session-1')
+  const props = {
+    ...face,
+    locked: false,
+    t: key => key,
+    useProjection: key => (key === 'agentTeam' ? { enabled: false, tasks: [] } : undefined),
+  }
+  runtime.render(bundle.__component, props)
+  findAll(runtime.render(bundle.__component, props), node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  const open = runtime.render(bundle.__component, props)
+  findAll(open, node => node.props?.role === 'switch')[0].props.onClick()
+  assert.equal(face.setTeamDefault, undefined, 'the seat face exposes no default writer')
+  assert.deepEqual(calls, [['session-1', true]], 'only the per-session selection is written')
+})
 test('every telemetry copy key exists in both languages', () => {
   const dict = bundle.__test.settingsDict
   for (const locale of ['zh', 'en']) {

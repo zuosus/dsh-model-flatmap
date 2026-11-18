@@ -4,6 +4,14 @@ Project-level lessons log for the dsh-model-flatmap plugin. Append-only: new
 entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
+## LES-044 — 2026-11-18 — 「默认」和「本次」是两个作用域，别让临时开关污染默认偏好
+
+用户要求给智能体团队协作加「默认开关」，并特别说明：模型面板里的开关是临时改动，不影响默认值。实现时最危险的诱惑是复用同一个 store，或者在会话开关的 `setEnabled` 里「顺手」写一下默认——那正好把用户刻意分开的两个作用域混成一个。
+
+正确做法：默认值单独一个 store（仅设置页可写），会话开关依旧只走 `remote.agentTeams.setEnabled(sessionId, enabled)`；seat face 上根本不提供默认写入口，从结构上让两条路径无法互相触碰。测试要显式钉住「会话开关不会写默认」（断言 face 没有默认 setter，且只调用一次带 sessionId 的 setEnabled）。
+
+配套教训：默认值要与上游宿主的默认保持一致（宿主 `agent-team.defaultEnabled` 默认 `false`），所以缺失/损坏记录必须读成 `false`，而不是像遥测那样读成 `true`。同一套 localStorage 读写模式，默认方向不同，照抄会得出相反行为。
+
 ## LES-043 — 2026-11-18 — 条件渲染的依赖是外部服务时，缺失不能等同于「功能不存在」
 
 面板插件里一个由宿主 namespace 服务驱动的开关，若按「服务不在就不渲染」实现，profile 刚配置但进程未重启、或客户端挂载早于服务时，用户只会看到控件凭空消失，然后去插件源码里找「是不是被删了」。更诚实的降级是保留控件、禁用并写明原因：它把「功能不支持」和「尚未就绪」分开，也给了用户下一步动作。

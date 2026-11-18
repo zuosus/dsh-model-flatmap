@@ -662,6 +662,11 @@ html[data-ds-dark-theme] .dshmf-panel { border-color: #6B7280; }
 }
 .dshmf-setConflictResult { margin: 0; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); }
 .dshmf-setConflictResult[data-ok="true"] { color: var(--dsw-alias-state-success-primary, #2f9e44); }
+.dshmf-setTeamDefault { margin-top: 4px; padding-top: 12px; border-top: 0.5px solid var(--dsw-alias-border-l2); }
+.dshmf-setTeamDefaultRow { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 4px 0; }
+.dshmf-setTeamDefaultText { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
+.dshmf-setTeamDefaultTitle { display: block; font-size: 14px; line-height: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dshmf-setTeamDefaultDesc { display: block; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); }
 .dshmf-setTelemetry { margin-top: 4px; padding-top: 12px; border-top: 0.5px solid var(--dsw-alias-border-l2); }
 .dshmf-setTelemetryRow { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 4px 0; }
 .dshmf-setTelemetryText { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
@@ -2465,6 +2470,91 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       syncNow: () => Promise.resolve(false),
     }
 
+
+    // ---------------------------------------------------------------------
+    // Agent-teamwork DEFAULT — a preference about NEW sessions, not a switch
+    // on the current one. The model-panel switch writes the Session's own
+    // `team/mode` selection through `remote.agentTeams.setEnabled(sessionId,`
+    // enabled)` and NEVER touches this record (DEC-057). This default is the
+    // client-side counterpart of the host's `agent-team.defaultEnabled` config
+    // field: it decides what a session with no saved selection starts as.
+    // A missing or unreadable record means OFF, matching the host's default.
+    // There is no Host mirror: no host-side business consumes this record, so
+    // the browser is the single source of truth, exactly like the grouping and
+    // visibility choices.
+    // ---------------------------------------------------------------------
+    const TEAM_DEFAULT_KEY = 'dshmf:teamDefault'
+
+    /**
+     * Read the stored teamwork default, or **false** when storage is missing,
+     * holds garbage, or throws. Only an explicit `true` opts in.
+     * @returns {boolean} whether new sessions should start with teamwork on.
+     */
+    function readTeamDefault() {
+      try {
+        if (typeof localStorage === 'undefined') return false
+        const text = localStorage.getItem(TEAM_DEFAULT_KEY)
+        if (text === null || text === '') return false
+        const parsed = JSON.parse(text)
+        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return false
+        return parsed.enabled === true
+      } catch {
+        return false
+      }
+    }
+
+    /** Persist the teamwork default; a write failure costs memory, not control. */
+    function writeTeamDefault(enabled) {
+      try {
+        if (typeof localStorage === 'undefined') return
+        localStorage.setItem(TEAM_DEFAULT_KEY, JSON.stringify({ enabled: enabled === true }))
+      } catch {
+        /* storage unavailable — the in-memory choice still applies */
+      }
+    }
+
+    /**
+     * The ONE team-default store per plugin generation, shared by the Settings
+     * toggle (the only writer) and any future reader. Mirrors the telemetry
+     * store's shape minus the host mirror. Has no `sync`, no `syncNow`, and no
+     * per-Session face — deliberately, so the panel switch cannot reach it.
+     */
+    function createTeamDefaultStore(deps) {
+      let enabled = typeof deps.readStored === 'function' ? deps.readStored() : false
+      const listeners = new Set()
+      const notify = () => {
+        for (const listener of [...listeners]) {
+          try { listener() } catch { /* one bad subscriber must not starve the others */ }
+        }
+      }
+      return {
+        getSnapshot: () => enabled,
+        subscribe: listener => {
+          listeners.add(listener)
+          return () => { listeners.delete(listener) }
+        },
+        setEnabled: next => {
+          const value = next === true
+          if (value === enabled) return
+          enabled = value
+          try {
+            if (typeof deps.writeStored === 'function') deps.writeStored(value)
+          } catch {
+            /* storage unavailable — the in-memory value still applies */
+          }
+          notify()
+        },
+        dispose: () => { listeners.clear() },
+      }
+    }
+
+    /** Frozen stand-in for a degraded activation: off, matching the default. */
+    const TEAM_DEFAULT_OFF = {
+      getSnapshot: () => false,
+      subscribe: () => () => {},
+      setEnabled: () => {},
+      dispose: () => {},
+    }
     // ---------------------------------------------------------------------
     // Provider names the user has chosen.
     //
@@ -3381,6 +3471,9 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         allNoCredit: '全部模型无额度',
         noCreditHint: '该模型最近一次调用因余额/额度不足而失败（含以 429 返回的额度不足）。任何一次正常响应的调用都会清除它；连续 24 小时没有再调用也会自动消失。',
         note: '新增的 Provider 和模型默认显示。',
+        'teamDefault.title': '启用智能体团队协作',
+        'teamDefault.desc': '控制新会话的默认状态：开启后，尚未保存过团队协作选择的会话将默认启用；已有会话的开关不受影响。关闭默认不影响已有会话。',
+        'teamDefault.toggle': '启用智能体团队协作',
         'telemetry.title': '匿名使用统计',
         'telemetry.desc': '每天最多一次，仅上报安装标识、插件版本、平台与架构，不含任何会话内容。默认开启。',
         'telemetry.toggle': '匿名使用统计',
@@ -3433,6 +3526,9 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         allNoCredit: 'all models out of credit',
         noCreditHint: 'Its most recent call failed on an insufficient balance, credit or quota — including a 429 that says so. Any call that answers clears it, as does 24h without another attempt.',
         note: 'Newly added providers and models are shown by default.',
+        'teamDefault.title': 'Enable agent teamwork',
+        'teamDefault.desc': 'Sets the default for new sessions: when on, sessions with no saved teamwork choice start with teamwork enabled. Sessions with a saved choice are never changed. Turning this default off does not affect existing sessions.',
+        'teamDefault.toggle': 'Enable agent teamwork',
         'telemetry.title': 'Anonymous usage statistics',
         'telemetry.desc': 'At most once a day: install id, plugin version, platform and architecture only — never any session content. On by default.',
         'telemetry.toggle': 'Anonymous usage statistics',
@@ -5835,7 +5931,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
      * @param props - the settings slot's props plus the injected face.
      */
     function SettingsSection(props) {
-      const { t, visibility, catalog, insufficient, telemetry, aliases, resolveText, seatHealth, repairSeat, reloadPage } = props
+      const { t, visibility, catalog, insufficient, telemetry, teamDefault, aliases, resolveText, seatHealth, repairSeat, reloadPage } = props
       const visibleFace = visibility ?? ALL_VISIBLE
       const subscribeHidden = useCallback(listener => visibleFace.subscribe(listener), [visibleFace])
       const getHidden = useCallback(() => visibleFace.getSnapshot(), [visibleFace])
@@ -5866,6 +5962,15 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       const subscribeTelemetry = useCallback(listener => telemetryFace.subscribe(listener), [telemetryFace])
       const getTelemetry = useCallback(() => telemetryFace.getSnapshot(), [telemetryFace])
       const telemetryOn = useSyncExternalStore(subscribeTelemetry, getTelemetry, getTelemetry)
+
+      // The teamwork default (DEC-057). Defaults to OFF (TEAM_DEFAULT_OFF),
+      // matching the host's own agent-team defaultEnabled: false. This store is
+      // separate from the per-Session switch in the model panel by construction
+      // — the panel face has no writer for it.
+      const teamDefaultFace = teamDefault ?? TEAM_DEFAULT_OFF
+      const subscribeTeamDefault = useCallback(listener => teamDefaultFace.subscribe(listener), [teamDefaultFace])
+      const getTeamDefault = useCallback(() => teamDefaultFace.getSnapshot(), [teamDefaultFace])
+      const teamDefaultOn = useSyncExternalStore(subscribeTeamDefault, getTeamDefault, getTeamDefault)
 
       // Read the catalog fresh every time this section mounts. The Settings
       // shell unmounts the whole panel on close and mounts only the active
@@ -6424,7 +6529,21 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
           ? h('p', { className: 'dshmf-setEmpty', role: 'status' }, translate('empty'))
           : h('div', { className: 'dshmf-setList' }, ...rows),
         nothingLoaded ? null : h('p', { className: 'dshmf-setNote' }, translate('note')),
-        // The telemetry toggle sits at the BOTTOM of the panel, after the model
+        // The teamwork DEFAULT sits above the telemetry band at the bottom of
+        // the panel: it is a preference about new sessions, distinct from the
+        // per-Session switch in the model panel. The description says so in
+        // both languages so nobody expects this to flip the open conversation.
+        h('div', { className: 'dshmf-setTeamDefault' },
+          h('div', { className: 'dshmf-setTeamDefaultRow' },
+            h('span', { className: 'dshmf-setTeamDefaultText' },
+              h('span', { className: 'dshmf-setTeamDefaultTitle' }, translate('teamDefault.title')),
+              h('span', { className: 'dshmf-setTeamDefaultDesc' }, translate('teamDefault.desc'))),
+            h(Switch, {
+              checked: teamDefaultOn === true,
+              className: 'dshmf-switchTeamDefault',
+              label: translate('teamDefault.toggle'),
+              onChange: next => teamDefaultFace.setEnabled(next),
+            }))),        // The telemetry toggle sits at the BOTTOM of the panel, after the model
         // list, as its own divided band: it governs the whole plugin's one
         // network request, not any single provider or model, so it does not
         // belong inside the list.
@@ -6455,7 +6574,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       // Pure layout and grouping derivations plus the component itself,
       // exposed for `node --test` so grouping, filtering and the column
       // algorithm are pinned without a browser. The shell never reads this key.
-      __test: { diagnoseSeat, entryName, declaresSlot, SEAT_SLOT, NATIVE_MENU_SLOT, EMPTY_SEAT_HEALTH, SEAT_HEALTH_UNKNOWN, marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, readDisplayMode, writeDisplayMode, createDisplayModeStore, DISPLAY_MODE_KEY, DISPLAY_MODE_DEFAULT, FLAT_DISPLAY_MODE, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore, quantizeMetric, metricChanged, METRIC_HYSTERESIS, LabelBoundary, readLabelEntry, labelSeat, labelSlotSource, LABEL_SLOT, providerLabel, fetchProjectLink, openInNewTab, PROJECT_LINK_PATH, PROJECT_LINK_FALLBACK, PROJECT_LINK_TIMEOUT_MS, HIDDEN_KEY, readHidden, writeHidden, providerHiddenKey, modelHiddenKey, modelIsVisible, visibleGroups, createHiddenStore, ALL_VISIBLE, hiddenKeysForGroup, groupVisibility, setGroupVisible, sameKeys, migrateLegacyHidden, NO_ALIASES, createAliasStore, aliasOf, writeAliases, readAliases, aliasFor, sanitizeAlias, ALIAS_MAX, ALIAS_KEY, createCatalogStore, EMPTY_CATALOG, TELEMETRY_KEY, readTelemetryEnabled, writeTelemetryEnabled, syncTelemetryEnabled, createTelemetryStore, TELEMETRY_ON, TELEMETRY_SETTINGS_PATH, SETTINGS_NS, settingsDict, installSettingsNavIcon, SettingsSection, creditNotes, Switch },
+      __test: { diagnoseSeat, entryName, declaresSlot, SEAT_SLOT, NATIVE_MENU_SLOT, EMPTY_SEAT_HEALTH, SEAT_HEALTH_UNKNOWN, marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, readDisplayMode, writeDisplayMode, createDisplayModeStore, DISPLAY_MODE_KEY, DISPLAY_MODE_DEFAULT, FLAT_DISPLAY_MODE, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore, quantizeMetric, metricChanged, METRIC_HYSTERESIS, LabelBoundary, readLabelEntry, labelSeat, labelSlotSource, LABEL_SLOT, providerLabel, fetchProjectLink, openInNewTab, PROJECT_LINK_PATH, PROJECT_LINK_FALLBACK, PROJECT_LINK_TIMEOUT_MS, HIDDEN_KEY, readHidden, writeHidden, providerHiddenKey, modelHiddenKey, modelIsVisible, visibleGroups, createHiddenStore, ALL_VISIBLE, hiddenKeysForGroup, groupVisibility, setGroupVisible, sameKeys, migrateLegacyHidden, NO_ALIASES, createAliasStore, aliasOf, writeAliases, readAliases, aliasFor, sanitizeAlias, ALIAS_MAX, ALIAS_KEY, createCatalogStore, EMPTY_CATALOG, TELEMETRY_KEY, readTelemetryEnabled, writeTelemetryEnabled, syncTelemetryEnabled, createTelemetryStore, TELEMETRY_ON, TELEMETRY_SETTINGS_PATH, TEAM_DEFAULT_KEY, readTeamDefault, writeTeamDefault, createTeamDefaultStore, TEAM_DEFAULT_OFF, SETTINGS_NS, settingsDict, installSettingsNavIcon, SettingsSection, creditNotes, Switch },
       __component: ModelFlatMap,
       __seat: Seat,
       __nativeMenuRow: NativeMenuRow,
@@ -6599,6 +6718,23 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         // never re-opens Settings. Fire-and-forget: it must never block or fail
         // the picker.
         try { void Promise.resolve(telemetryStore.syncNow()).catch(() => {}) } catch { /* never throws */ }
+        // ---- the teamwork DEFAULT store (DEC-057)
+        //
+        // ONE store per activation. It is written ONLY by the Settings toggle
+        // and is never placed on a seat face, so the model-panel switch has no
+        // path to it. No host mirror: nothing host-side consumes this record;
+        // it is a browser preference just like grouping and visibility.
+        let teamDefaultStore
+        try {
+          teamDefaultStore = createTeamDefaultStore({
+            readStored: readTeamDefault,
+            writeStored: writeTeamDefault,
+          })
+          ctx.effect(() => () => { teamDefaultStore.dispose?.() }, 'dsh-model-flatmap: team default')
+        } catch (error) {
+          console.error('dsh-model-flatmap: the team-default store failed to start', error)
+          teamDefaultStore = TEAM_DEFAULT_OFF
+        }
         // ---- the rename store (what the picker calls each provider)
         //
         // ONE store per activation, written by the Settings section and read by
@@ -7290,6 +7426,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
                     visibility: hiddenStore,
                     catalog: catalogStore,
                     telemetry: telemetryStore,
+                    teamDefault: teamDefaultStore,
                     aliases: aliasStore,
                     // The badge text is catalog-authored and may be a
                     // translation map, so the section resolves it through the
