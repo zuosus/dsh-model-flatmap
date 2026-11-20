@@ -381,66 +381,33 @@ panel, so it opens closed with an empty query. Focus follows the disposed
 button down to the document; cross-plugin DOM queries for focus are not allowed,
 so it is not chased.
 
-## Project link
+## Marketplace link
 
 Immediately left of the `默认样式` / `Default style` button sits an icon button
-that opens this project's GitHub page in a new tab. The two are one trailing
-**pair**, held in a single container (`.dshmf-actions`) with a 2px gap between
-them; the pair carries the footer's auto margin, so it stays pinned to the
-panel's bottom-right and wraps as one unit on a narrow panel.
+that opens the [dsh.zuos.us plugin marketplace](https://dsh.zuos.us/) in a new
+tab — the public catalogue where this and sibling plugins are discovered and
+installed. The two are one trailing **pair**, held in a single container
+(`.dshmf-actions`) with a 2px gap between them; the pair carries the footer's
+auto margin, so it stays pinned to the panel's bottom-right and wraps as one unit
+on a narrow panel.
 
 Grouping them is what makes that gap small. The footer spaces its own groups by
 `column-gap: 30px` — the distance between the reasoning group, the teamwork row
-and the trailing pair — and that gap applies between flex items. While the two
-buttons were separate footer items it fell between them too, so the space was
-30px + the icon's margin, and no margin on either button could shrink it. As one
-item the 30px stays outside the pair and the inner spacing is the container's
-own 2px.
+and the trailing pair — and that gap applies between flex items. As one item the
+30px stays outside the pair and the inner spacing is the container's own 2px.
 
-**The address is derived, never hardcoded.** The browser half has no filesystem
-and no subprocess, so the Host reads the checkout with
-`git remote -v` and converts the first usable GitHub remote into a page URL.
-`origin` is tried first, then `upstream`, then the rest in configuration order.
-Every spelling git writes for the same repository resolves to the same page:
+**The address is a fixed, documented constant.** The button promotes the
+marketplace site, not this project's GitHub repository, so nothing is derived
+from the local checkout: there is no `git remote -v` read, no Host route, no
+fallback resolution and no prefetch. `MARKETPLACE_URL` is declared once and
+repeated in the browser half (which cannot import a Host-only module); a test
+pins the two copies against each other so they cannot drift.
 
-| Configured remote | Opened page |
-|---|---|
-| `git@github.com:owner/repo.git` | `https://github.com/owner/repo` |
-| `https://github.com/owner/repo.git` | `https://github.com/owner/repo` |
-| `ssh://git@github.com/owner/repo` | `https://github.com/owner/repo` |
-| `git://github.com/owner/repo.git` | `https://github.com/owner/repo` |
-| `github.com:owner/repo` | `https://github.com/owner/repo` |
-
-A remote on another host (GitLab, Bitbucket, a self-hosted server) is refused
-rather than rewritten: opening a *different* repository than the one configured
-would be worse than opening the fallback, because nothing on screen would say
-the destination changed. Renaming the repository, moving it to another owner, or
-adding a fork upstream all change the destination without touching this plugin.
-
-**When there is no GitHub remote.** An npm-installed copy ships no `.git`, and a
-plain tarball has none either, so the button opens
-`https://github.com/zuosus/dsh-model-flatmap` — this project's own page — and
-its tooltip says so. That address is the one hardcoded value in the feature,
-declared once in `repo-url.js` and pinned by a test to `package.json`'s
-`repository.url` and `homepage` so the three cannot drift apart. The browser
-half repeats it (it cannot import a Host-only module), and a second test pins
-that repetition.
-
-**The click does not wait on the network.** The URL is prefetched when the panel
-opens, so the ordinary click has it in hand and opens the tab synchronously —
-`window.open` after an `await` is a popup the browser may block. Only a click
-that beats the prefetch takes the async path. A tab the browser refuses anyway
-is reported in the button's tooltip instead of being swallowed, and only an
-`http(s)` address can reach `window.open` at all: a payload naming
-`javascript:`, `file:` or any other scheme is discarded for the fallback.
-
-**Transport.** The Host answers one read-only route,
-`/dsh-model-flatmap/project-link`, resolved on every request rather than at
-activation — a remote added while the Host is running is picked up by the next
-click. It is guarded by the same Host/Origin fence and authenticated-Peer check
-the shipped plugins apply to their own routes, and fails closed if that check
-cannot answer. A composition without a web server simply does not register it,
-and the button falls back.
+**The click is always synchronous.** With no network round-trip to await, the
+click calls `window.open` with the constant directly, so a popup blocker has no
+awaited gap to exploit. The tab carries `noopener,noreferrer`, and a browser
+that still refuses it is reported in the button's tooltip instead of being
+swallowed.
 
 ## Data and interaction
 

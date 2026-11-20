@@ -4,6 +4,18 @@ Project-level decision log for the dsh-model-flatmap plugin. Append-only: new
 entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
+## DEC-058 — 2026-11-20 — 面板链接改为宣传 dsh.zuos.us 插件市场，移除 git remote 推导与宿主路由
+
+**Context.** 用户要求把项目里那条「link」改成宣传 dsh.zuos.us 插件市场的链接。查证 dsh.zuos.us 首页确认它确为面向 DSH 的插件市场，且列出了本插件的条目。原有的链接按钮（DEC-030 一类）点击时读取本地 checkout 的 GitHub remote、经宿主自建路由返回页面地址，remote 不可用时回退到本项目 GitHub 主页。
+
+**Decision.** 把面板右下角的链接图标改成固定打开 `https://dsh.zuos.us/`（市场首页，而非某个插件详情页，以「宣传市场」为准）。因为目标是固定公开站点、不再由 checkout 决定，删除整套 git remote 推导：`repo-url.js` 瘦身为只导出 `MARKETPLACE_URL` 一个常量；`index.js` 删除 `PROJECT_LINK_PATH`、`projectLinkPayload`、`registerProjectLink` 及其调用（宿主只剩 telemetry 与其设置路由两条职责）；`client.js` 删除 `fetchProjectLink`、预取 effect、`projectLink` state 与 `/project-link` 路由常量，点击直接同步 `window.open(MARKETPLACE_URL, '_blank', 'noopener,noreferrer')`。中英文案改为「插件市场 / Plugin marketplace」，删去 `link.openFrom`、`link.fallback` 两条已无用的文案。
+
+**Rationale.** 市场是稳定的公共地址，不是 checkout 的属性；沿用 remote 推导只会让「宣传市场」的按钮随 fork / rename 指向别处，是错误抽象。去掉宿主路由与预取后，点击再无 await 间隙，弹窗拦截不再有机会，代码面也更小。
+
+**Rejected.**（1）保留 commit 路由、只把 fallback 改成市场地址：那样有 GitHub remote 的机器仍会打开仓库页，与宣传市场的意图相悖。（2）指向本插件详情页 `/dsh-model-flatmap/`：用户说的是宣传「插件市场」整体，首页更符合。（3）保留预取：地址已经是常量，预取只会增加无意义的复杂度。
+
+**Consequences.** 测试从 322 调整为 299：`test/repo-url.test.mjs` 重写为 4 项校验常量与两半一致、无残留项目链接路由；render 测试的链接块改为校验固定地址、同步打开、放置与文案。README / README.zh / docs/DETAIL.md 的「项目链接」小节同步改写。此条目取代 DEC-030 一类关于「从 remote 推导项目页」的决定在该按钮上的适用性，旧条目按 append-only 规则原样保留。
+
 ## DEC-057 — 2026-11-18 — 设置页新增「启用智能体团队协作」默认开关，与模型面板的会话开关彻底分离
 
 **Context.** 用户要求在设置面板增加一项「启用智能体团队协作」设置，并明确：模型面板里的改动属于临时改动，不是默认改动，不影响这个设置。查证宿主 `@deepseek-ai/dsh-agent-team` 的 `TeamService.Config` 有 `defaultEnabled: boolean`（默认 `false`，新会话首次 llm step 前写入 `team/mode`），但那是 profile 文件里的普通配置字段，本客户端插件无法读写；它的 `remote.agentTeams.setEnabled(sessionId, enabled)` 只写当前 Session 的选择。

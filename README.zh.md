@@ -112,17 +112,10 @@
   `localStorage`（`dshmf:aliases`），由设置页与页面内所有面板共享，所以保存后已打开的面板
   立即重渲，无需刷新。`默认样式` 用的是宿主自己的选择器，仍显示目录原名。
 - **跟随主题。** 仅使用宿主主题令牌着色，在浅色与深色主题下都正确。
-- **网页链接。** `默认样式` 按钮**左侧紧邻**有一个链接图标按钮，在新标签页打开本项目的
-  GitHub 页面。地址**不是写死的**：宿主半边用 `git remote -v` 读取 checkout 已配置的 remote
-  （`origin` 优先，其次 `upstream`，再其次其余），把 `git@github.com:owner/repo.git`、
-  `https://github.com/owner/repo.git`、`ssh://`、`git://`、`github.com:owner/repo` 等各种
-  拼写统一转成 `https://github.com/owner/repo` 页面地址。非 GitHub 宿主（GitLab、
-  Bitbucket、自建服务器）的 remote 会被**跳过而不是改写成 github.com**——改写会打开另一个
-  仓库，而界面上不会有任何提示。改名、换 owner、加 fork 都会自动跟随，不用改代码。当
-  checkout 没有任何可用的 GitHub remote（例如从 registry 装进 `node_modules`，那里没有
-  `.git`），按钮打开本项目主页 `https://github.com/zuosus/dsh-model-flatmap`，并在 tooltip
-  里说明这是兜底。面板打开时**预取**地址，所以正常点击是同步 `window.open`，不会被弹窗拦截；
-  新标签页带 `noopener,noreferrer`，且只有 `http(s)` 地址能进 `window.open`。点击行为与
+- **插件市场链接。** `默认样式` 按钮左边有一个链接图标，在新标签页打开
+  [dsh.zuos.us 插件市场](https://dsh.zuos.us/)——也就是发现和安装了本插件及兄弟插件的公开市场。
+  目标是固定地址，不再从本地 checkout 推导：不读 git remote、不经过宿主路由、也不做兜底解析。
+  新标签页带 `noopener,noreferrer`，浏览器拒绝打开时会在 tooltip 里说明，不会默默失败。点击行为与
   `默认样式` 按钮互不影响，后者的外观、`aria-pressed` 语义与禁用规则一字未改。
 - **原生模式。** 面板右下角的 `默认样式` 按钮把输入框的模型座位交还给**宿主自己的**选择器——真正
   出厂的 `ModelSelect`，不是它的复制品。做法是**让位**：本插件 dispose 掉自己在

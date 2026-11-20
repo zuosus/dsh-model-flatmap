@@ -3835,14 +3835,14 @@ test('the occupant keeps the same seats across renders (no perpetual remount)', 
 })
 
 // ---------------------------------------------------------------------------
-// Project-link button: the icon member immediately left of the mode button.
+// Marketplace-link button: the icon member immediately left of the mode button.
 //
-// It opens the repository page the checkout configures, in a new tab. These
-// tests pin the three things the request is specific about: WHERE it sits, that
-// the address comes from the Host rather than from this file, and that adding
-// it changed nothing about the display-mode button beside it.
+// It promotes the dsh.zuos.us plugin marketplace in a new tab. These tests pin
+// the three things the request is specific about: WHERE it sits, that the
+// address is the fixed marketplace URL, and that adding it changed nothing
+// about the display-mode button beside it.
 // ---------------------------------------------------------------------------
-test('the project-link button sits immediately left of the display-mode button', () => {
+test('the marketplace-link button sits immediately left of the display-mode button', () => {
   const { tree } = openPanel(catalogState())
   const footer = findAll(tree, node => hasClass(node, 'dshmf-footer'))[0]
   const link = findAll(footer, node => hasClass(node, 'dshmf-linkBtn'))
@@ -3871,7 +3871,7 @@ test('the project-link button sits immediately left of the display-mode button',
     'nor is the mode button')
 })
 
-test('the link button precedes the mode button in document order', () => {
+test('the marketplace link precedes the mode button in document order', () => {
   const { tree } = openPanel(catalogState())
   const footer = findAll(tree, node => hasClass(node, 'dshmf-footer'))[0]
   // findAll walks in document order, so the two hits come back in visual order.
@@ -3914,60 +3914,27 @@ test('the link button is not a toggle and carries no pressed state', () => {
   assert.equal(icon.props['aria-hidden'], 'true', 'the glyph is not announced twice')
 })
 
-test('the link button resolves its address from the Host, not from a constant', async () => {
-  // The Host route answers with whatever the checkout configures; the button
-  // must open THAT. A different repository here proves nothing is hardcoded.
-  const { fetchProjectLink } = bundle.__test
-  const seen = []
-  const result = await fetchProjectLink(async (url, init) => {
-    seen.push({ url, method: init?.method })
-    return {
-      ok: true,
-      json: async () => ({ url: 'https://github.com/some-owner/a-different-repo', source: 'remote', remote: 'origin' }),
-    }
-  })
-  assert.equal(result.url, 'https://github.com/some-owner/a-different-repo')
-  assert.equal(result.source, 'remote')
-  assert.equal(seen.length, 1)
-  assert.equal(seen[0].method, 'GET')
-  assert.ok(seen[0].url.includes('project-link'), `it asks the project-link route: ${seen[0].url}`)
+test('the link always points at the fixed marketplace address', () => {
+  const { MARKETPLACE_URL } = bundle.__test
+  assert.equal(MARKETPLACE_URL, 'https://dsh.zuos.us/')
 })
 
-test('an unreachable Host route settles for the documented fallback instead of failing', async () => {
-  const { fetchProjectLink, PROJECT_LINK_FALLBACK } = bundle.__test
-  const cases = [
-    async () => { throw new Error('network down') },
-    async () => ({ ok: false, status: 404, json: async () => ({}) }),
-    async () => ({ ok: true, json: async () => { throw new Error('not json') } }),
-    async () => ({ ok: true, json: async () => null }),
-    async () => ({ ok: true, json: async () => ({ url: 42 }) }),
-    async () => ({ ok: true, json: async () => ({ url: 'javascript:alert(1)' }) }),
-    async () => ({ ok: true, json: async () => ({ url: 'file:///etc/passwd' }) }),
-  ]
-  for (const impl of cases) {
-    const result = await fetchProjectLink(impl)
-    assert.equal(result.url, PROJECT_LINK_FALLBACK, 'a failure still has somewhere to go')
-    assert.equal(result.source, 'fallback')
-  }
-})
-
-test('only an http(s) address can ever reach window.open', async () => {
-  const { fetchProjectLink } = bundle.__test
-  for (const url of ['javascript:alert(1)', 'file:///etc/passwd', 'data:text/html,hi', 'chrome://settings']) {
-    const result = await fetchProjectLink(async () => ({ ok: true, json: async () => ({ url, source: 'remote' }) }))
-    assert.match(result.url, /^https:\/\//u, `${url} must not survive`)
-  }
-})
-
-test('the link opens in a NEW tab with the opener severed', () => {
+test('only an http(s) address can ever reach window.open', () => {
   const { openInNewTab } = bundle.__test
+  // openInNewTab itself does not gate the scheme — the URL is a constant — but
+  // the constant must be a safe, absolute https address.
+  assert.match(bundle.__test.MARKETPLACE_URL, /^https:\/\//u)
+})
+
+test('the link opens the marketplace in a NEW tab with the opener severed', () => {
+  const { openInNewTab, MARKETPLACE_URL } = bundle.__test
   const calls = []
   const previous = globalThis.window
   globalThis.window = { open: (...args) => { calls.push(args); return {} } }
   try {
-    assert.equal(openInNewTab('https://github.com/owner/repo'), true)
+    assert.equal(openInNewTab(MARKETPLACE_URL), true)
     assert.equal(calls.length, 1)
-    assert.equal(calls[0][0], 'https://github.com/owner/repo')
+    assert.equal(calls[0][0], 'https://dsh.zuos.us/')
     assert.equal(calls[0][1], '_blank', 'a new tab, never the current one')
     assert.match(calls[0][2], /noopener/, 'the opened page gets no handle on this one')
     assert.match(calls[0][2], /noreferrer/, 'and no referrer')
@@ -3977,33 +3944,39 @@ test('the link opens in a NEW tab with the opener severed', () => {
 })
 
 test('a blocked popup is reported rather than silently swallowed', () => {
-  const { openInNewTab } = bundle.__test
+  const { openInNewTab, MARKETPLACE_URL } = bundle.__test
   const previous = globalThis.window
   try {
     globalThis.window = { open: () => null }
-    assert.equal(openInNewTab('https://github.com/owner/repo'), false, 'a blocked tab is not success')
+    assert.equal(openInNewTab(MARKETPLACE_URL), false, 'a blocked tab is not success')
 
     globalThis.window = { open: () => { throw new Error('blocked') } }
-    assert.equal(openInNewTab('https://github.com/owner/repo'), false, 'a throwing opener is not success')
+    assert.equal(openInNewTab(MARKETPLACE_URL), false, 'a throwing opener is not success')
 
     globalThis.window = {}
-    assert.equal(openInNewTab('https://github.com/owner/repo'), false, 'no opener at all is not success')
+    assert.equal(openInNewTab(MARKETPLACE_URL), false, 'no opener at all is not success')
   } finally {
     globalThis.window = previous
   }
 })
 
-test('the link button opens the page the Host resolved, in one click', async () => {
-  const { fetchProjectLink, openInNewTab, PROJECT_LINK_PATH } = bundle.__test
-  // The prefetch and the click share ONE helper; this pins that the helper
-  // yields the Host's answer and that it is the exact route the Host registers.
-  const result = await fetchProjectLink(async () => ({
-    ok: true,
-    json: async () => ({ url: 'https://github.com/zuosus/dsh-model-flatmap', source: 'remote', remote: 'origin' }),
-  }))
-  assert.equal(result.url, 'https://github.com/zuosus/dsh-model-flatmap')
-  assert.equal(PROJECT_LINK_PATH, 'dsh-model-flatmap/project-link',
-    'the browser half asks the same path the Host half registers')
+test('the link button opens the marketplace in one click, with no prefetch', async () => {
+  const { MARKETPLACE_URL } = bundle.__test
+  // No Host route and no async resolution: the click calls window.open with the
+  // constant directly. The rendered button's onClick proves the wiring.
+  const { tree } = openPanel(catalogState())
+  const button = findAll(tree, node => hasClass(node, 'dshmf-linkBtn'))[0]
+  const calls = []
+  const previous = globalThis.window
+  globalThis.window = { open: (...args) => { calls.push(args); return {} } }
+  try {
+    button.props.onClick()
+    assert.equal(calls.length, 1, 'one click opens exactly one tab')
+    assert.equal(calls[0][0], MARKETPLACE_URL, 'and it is the marketplace, opened synchronously')
+    assert.equal(calls[0][1], '_blank')
+  } finally {
+    globalThis.window = previous
+  }
 })
 
 test('the pair carries the right alignment and the tight inner gap', () => {
@@ -4072,47 +4045,14 @@ test('every project-link key is translated in both languages', () => {
   const { ctx, dictionaryRegistrations } = makeCtx()
   bundle.apply(ctx)
   const dicts = dictionaryRegistrations[0].dicts
-  for (const key of ['link.label', 'link.open', 'link.openFrom', 'link.fallback', 'link.failed']) {
+  for (const key of ['link.label', 'link.open', 'link.failed']) {
     assert.equal(typeof dicts.zh[key], 'string', `zh ${key}`)
     assert.equal(typeof dicts.en[key], 'string', `en ${key}`)
     assert.notEqual(dicts.zh[key], '', `zh ${key} is not empty`)
     assert.notEqual(dicts.en[key], '', `en ${key} is not empty`)
   }
-  assert.equal(dicts.zh['link.label'], '网页链接')
-  assert.equal(dicts.en['link.label'], 'Web page')
-  // The tooltip carries the resolved ADDRESS, and its placeholder must match
-  // the name the call site fills, or `fill` would silently print the raw
-  // template and the user would see `{url}` on screen.
-  assert.match(dicts.zh['link.openFrom'], /\{url\}/u)
-  assert.match(dicts.en['link.openFrom'], /\{url\}/u)
-})
-
-test('the tooltip template and its call site agree on the placeholder name', () => {
-  // A template whose placeholder does not match what the call site fills renders
-  // the literal `{url}` to the user. The dictionary check alone cannot see that,
-  // so this pins the two halves against each other: every placeholder the
-  // template declares must be one the call site actually supplies.
-  runtime.reset()
-  const { ctx, dictionaryRegistrations } = makeCtx()
-  bundle.apply(ctx)
-  const dicts = dictionaryRegistrations[0].dicts
-  for (const locale of ['zh', 'en']) {
-    const template = String(dicts[locale]['link.openFrom'])
-    const declared = [...template.matchAll(/\{(\w+)\}/gu)].map(match => match[1])
-    assert.deepEqual(declared, ['url'], `${locale} declares exactly the placeholder the call site fills`)
-    // Fill it the way the component does, and confirm nothing is left raw.
-    const filled = template.replace(/\{(\w+)\}/gu, (_, name) => (name === 'url' ? 'https://github.com/o/r' : ''))
-    assert.doesNotMatch(filled, /\{\w+\}/u, `${locale} renders no raw placeholder`)
-    assert.ok(filled.includes('https://github.com/o/r'), `${locale} actually shows the address`)
-  }
-})
-
-test('the rendered tooltip never leaks a raw placeholder', () => {
-  const { tree } = openPanel(catalogState())
-  const button = findAll(tree, node => hasClass(node, 'dshmf-linkBtn'))[0]
-  // Before the prefetch lands the title is the plain action text; whatever it
-  // is, it must never be a half-substituted template.
-  assert.doesNotMatch(String(button.props.title), /\{\w+\}/u)
+  assert.equal(dicts.zh['link.label'], '插件市场')
+  assert.equal(dicts.en['link.label'], 'Plugin marketplace')
 })
 
 // ---------------------------------------------------------------------------

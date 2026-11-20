@@ -160,23 +160,13 @@ levels, and the agent-teamwork switch on one surface:
   picker is the host's own and keeps the catalog's names.
 - **Theme-aware.** Styled with host theme tokens only; looks correct in both
   light and dark themes.
-- **Project link.** Immediately left of the `Default style` button sits a link
-  icon that opens this project's GitHub page in a new tab. The address is **not
-  hardcoded**: the Host reads the checkout's configured remotes with
-  `git remote -v` (`origin` first, then `upstream`, then the rest) and turns
-  every spelling git writes — `git@github.com:owner/repo.git`,
-  `https://github.com/owner/repo.git`, `ssh://`, `git://`,
-  `github.com:owner/repo` — into the same `https://github.com/owner/repo` page.
-  A remote on another host (GitLab, Bitbucket, a self-hosted server) is skipped
-  rather than rewritten to github.com: rewriting would open a *different*
-  repository with nothing on screen saying so. Renaming the repository, moving
-  it to another owner, or adding a fork upstream all change the destination
-  without touching this plugin. When the checkout has no usable GitHub remote
-  (an npm-installed copy ships no `.git`), the button opens this project's home
-  page and its tooltip says that is the fallback. The URL is prefetched when the
-  panel opens, so an ordinary click is a synchronous `window.open` that a popup
-  blocker will not eat; the tab opens with `noopener,noreferrer`, and only
-  `http(s)` addresses can reach it. Clicking it does not affect the
+- **Marketplace link.** Immediately left of the `Default style` button sits a link
+  icon that opens the [dsh.zuos.us plugin marketplace](https://dsh.zuos.us/) in a
+  new tab — the public catalogue where this and sibling plugins are discovered
+  and installed. The destination is a fixed address, not something derived from
+  the local checkout: no git remote read, no Host route, no fallback resolution.
+  The tab opens with `noopener,noreferrer`, and a browser that refuses it is
+  reported in the tooltip rather than swallowed. Clicking it does not affect the
   `Default style` button, whose look, `aria-pressed` meaning and disabled rule
   are unchanged.
 - **Native mode.** The panel's bottom-right `Default style` button hands the
