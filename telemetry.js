@@ -27,6 +27,14 @@
  *    The installation id is a random UUIDv4 generated on first run and tied to no
  *    account; deleting `analytics.json` gives the machine a new identity.
  *
+ * ## Where the state lives
+ *
+ * `$DSH_HOME/plugins/dsh-model-flatmap/` — inside the shared `plugins/` root every
+ * DSH plugin keeps its runtime data in (DEC-059). Before that move the directory
+ * sat directly under the home (`$DSH_HOME/dsh-model-flatmap/`), so
+ * `migrateLegacyDataDir()` relocates it once on startup; see its comment for the
+ * exact contract and for why a failure is a fallback rather than an error.
+ *
  * ## Why the day boundary is fixed at UTC+8
  *
  * China has not used daylight saving since 1991, so `Asia/Shanghai` is a
@@ -38,9 +46,10 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { cp, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 
 /**
  * The collection endpoint. It is the same Worker that serves the sibling
@@ -74,6 +83,12 @@ export const SETTINGS_FILE = 'telemetry-settings.json'
 
 /** Directory under the DSH home that holds this plugin's runtime data. */
 export const DATA_DIR_NAME = 'dsh-model-flatmap'
+
+/**
+ * The shared root under the DSH home that every plugin keeps its runtime data
+ * in (`$DSH_HOME/plugins/<plugin-name>/`, DEC-059).
+ */
+export const PLUGINS_DIR_NAME = 'plugins'
 
 /** Environment variable the host itself honours for the DSH home directory. */
 export const DSH_HOME_ENV = 'DSH_HOME'
@@ -135,13 +150,131 @@ export function resolveDshHome(options = {}) {
 }
 
 /**
- * The plugin's own data directory (`~/.dsh/dsh-model-flatmap/`).
+ * The plugin's own data directory (`~/.dsh/plugins/dsh-model-flatmap/`).
+ *
+ * It lives inside the shared `plugins/` root every DSH plugin keeps its
+ * runtime state in, rather than directly under the DSH home (DEC-059).
  *
  * @param {{env?: Record<string, string|undefined>}} [options] - Injectable env for tests.
  * @returns {string} Absolute directory path (not created here).
  */
 export function resolveDataDir(options = {}) {
+  return join(resolveDshHome(options), PLUGINS_DIR_NAME, DATA_DIR_NAME)
+}
+
+/**
+ * The directory this plugin's data lived in before the `plugins/` move:
+ * `~/.dsh/dsh-model-flatmap/` (DEC-059).
+ *
+ * Kept as a named function rather than an inline `join` because two places need
+ * the exact same path — the one-shot migration and its fallback — and a typo in
+ * either would silently strand a user's state file.
+ *
+ * @param {{env?: Record<string, string|undefined>}} [options] - Injectable env for tests.
+ * @returns {string} Absolute legacy directory path.
+ */
+export function resolveLegacyDataDir(options = {}) {
   return join(resolveDshHome(options), DATA_DIR_NAME)
+}
+
+/**
+ * The directory actually in force right now, without touching the disk beyond
+ * two `stat` calls.
+ *
+ * Normally this is the current `plugins/` path. It is the legacy path only when
+ * that directory still exists and the new one does not — i.e. the migration has
+ * not run yet, or ran and failed. This is the fallback the whole module leans on:
+ * a home directory the process cannot write to may cost the new location, never
+ * the user's existing state.
+ *
+ * @param {{env?: Record<string, string|undefined>}} [options] - Injectable env for tests.
+ * @returns {string} Absolute directory path (not created here).
+ */
+export function resolvePluginDataDir(options = {}) {
+  const current = resolveDataDir(options)
+  try {
+    if (existsSync(current)) return current
+    const legacy = resolveLegacyDataDir(options)
+    if (existsSync(legacy)) return legacy
+  } catch {
+    /* An unreadable home is "nothing there yet"; the caller creates the path. */
+  }
+  return current
+}
+
+/**
+ * Move the pre-`plugins/` data directory to its new home, once (DEC-059).
+ *
+ * The contract is deliberately narrow, because this runs on every start:
+ *
+ * - no legacy directory → do nothing, report `false` (a fresh install);
+ * - the new directory already exists → **never overwrite and never merge**,
+ *   report `false`. Merging two half-written state files would corrupt the
+ *   installation id, and overwriting would throw away a newer copy;
+ * - otherwise move the whole directory: `rename` first (atomic, same volume),
+ *   and on `EXDEV` a recursive copy followed by deleting the source.
+ *
+ * **Never throws.** Every failure is swallowed and reported as `false`, which
+ * makes the caller fall back to the legacy directory (`resolvePluginDataDir`)
+ * and keeps the plugin working. Statistics are never worth a plugin fault.
+ *
+ * @param {{env?: Record<string, string|undefined>, fs?: object}} [options] -
+ *   Injectable env and filesystem (`rename`, `cp`, `rm`) for tests.
+ * @returns {Promise<boolean>} Whether a migration actually happened.
+ */
+export async function migrateLegacyDataDir(options = {}) {
+  const legacy = resolveLegacyDataDir(options)
+  const current = resolveDataDir(options)
+  const fs = { rename, cp, rm, ...(options.fs ?? {}) }
+  try {
+    if (!(await pathExists(legacy))) return false
+    // Both present means someone else already moved (or a newer release wrote
+    // here first). Leave both exactly as they are and use the new one.
+    if (await pathExists(current)) return false
+    await mkdir(dirname(current), { recursive: true })
+    try {
+      await fs.rename(legacy, current)
+      return true
+    } catch (error) {
+      // A different volume is the one failure a copy can still fix.
+      if (error?.code !== 'EXDEV') throw error
+    }
+    try {
+      // `errorOnExist` + `force: false`: a directory that appeared between the
+      // check above and here is a reason to stop, not to write over it.
+      await fs.cp(legacy, current, { recursive: true, errorOnExist: true, force: false })
+    } catch (error) {
+      // A target that appeared between the check above and the copy belongs to
+      // someone else — never delete it, just fall back.
+      //
+      // A half-copied directory of our own is the opposite problem: it would
+      // look "ready" to `resolvePluginDataDir`, so it has to go before we fall
+      // back to the legacy directory.
+      if (error?.code !== 'ERR_FS_CP_EEXIST') {
+        await fs.rm(current, { recursive: true, force: true }).catch(() => {})
+      }
+      throw error
+    }
+    await fs.rm(legacy, { recursive: true, force: true })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Whether a path exists, treating any error (permissions included) as absent.
+ *
+ * @param {string} path - Absolute path.
+ * @returns {Promise<boolean>} True when `stat` succeeds.
+ */
+async function pathExists(path) {
+  try {
+    await stat(path)
+    return true
+  } catch {
+    return false
+  }
 }
 
 /**

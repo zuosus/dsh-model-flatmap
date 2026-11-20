@@ -4,6 +4,18 @@ Project-level decision log for the dsh-model-flatmap plugin. Append-only: new
 entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
+## DEC-059 — 2026-11-20 — 插件数据目录迁到 `$DSH_HOME/plugins/dsh-model-flatmap/`，并加一次性迁移
+
+**Context.** DSH 各插件此前把配置/数据目录直接放在 `$DSH_HOME/<plugin-name>/`（本插件即 `~/.dsh/dsh-model-flatmap/`）。宿主侧已确立 `$DSH_HOME/plugins/<plugin-name>/` 作为插件数据目录的惯例（本机已有 `~/.dsh/plugins/dsh-generative-ui/` 与 `~/.dsh/plugins/dsh-model-fusion/`），要求统一。本插件的数据目录里放着 `analytics.json`（安装 id、lastAttemptDay 等）与 `telemetry-settings.json`（用户的统计开关），直接改路径会让老用户的安装身份与开关选择凭空消失。
+
+**Decision.** 三件事一起做：（1）`resolveDataDir()` 改为 `join(resolveDshHome(options), 'plugins', DATA_DIR_NAME)`，新增常量 `PLUGINS_DIR_NAME`；`resolveDshHome()` 的语义（`$DSH_HOME` 优先、空白视为未设置、`~` 展开、`resolve` 绝对化）一字不动。（2）新增 `resolveLegacyDataDir()` 专门指向旧地址，`migrateLegacyDataDir()` 负责一次性整目录搬迁：旧地址不存在 → 静默返回 `false`；新地址已存在 → 绝不覆盖、绝不合并，返回 `false`；否则 `rename` 优先，`EXDEV` 回退为递归 `cp` + `rm`。（3）新增 `resolvePluginDataDir()`：新地址存在就用新地址，否则若旧地址存在就退回旧地址，两者都无则返回新地址（由写入方创建）。`index.js` 的心跳与 telemetry-settings 路由在**任何读写之前**先 `await migrateLegacyDataDir()`，并改用 `resolvePluginDataDir()`。
+
+**Rationale.** 迁移失败必须降级、不能抛：统计与设置是插件的附带功能，一个只读的家目录不该让整个面板起不来，所以 `migrateLegacyDataDir()` 吞掉全部异常并返回布尔值，调用方靠 `resolvePluginDataDir()` 自动退回旧目录继续读。新地址已存在时既不覆盖也不合并，是因为两个 `analytics.json` 合并会得到互相矛盾的安装 id 与 `lastAttemptDay`（可能同一天重复上报），覆盖则会丢掉更新的一份；让新地址胜出、旧目录原样留着，是唯一不损坏数据的处理。`cp` 用 `errorOnExist: true, force: false`；拷贝失败时，若失败原因是目标已被别人抢先创建（`ERR_FS_CP_EEXIST`）就原样保留、直接退回旧目录，否则先 `rm` 掉自己的半成品目录再抛——半拷贝的目录会让 `resolvePluginDataDir()` 误判"新地址已就绪"，从而读到缺文件的目录，而删掉别人的目录则是更严重的越权。
+
+**Rejected.**（1）只改路径不迁移：老用户的安装 id 会重置，DAU 凭空多出一次 install，用户关掉的统计开关也会重新打开——这是把一次重构变成一次数据事故。（2）迁移失败就抛错或让插件失效：违反本模块"统计永远不是插件故障"的既有承诺（DEC-031）。（3）新旧目录都读、取并集：状态文件不是可合并的数据结构，`lastAttemptDay` 取并集等于选一个随机值。（4）每次启动都尝试迁移：幂等靠"旧地址不存在"这一个条件就够了，多余的判断只会引入竞态。
+
+**Consequences.** `test/telemetry.test.mjs` 的 "the data directory follows the hosts own home rules" 按新路径更新，并新增 7 条迁移测试（正常搬迁、幂等、新目录已存在不覆盖、迁移失败降级、`EXDEV` 走拷贝、拷贝途中目标被他人抢占时不误删、宿主先迁移后读）；测试数从 299 增至 306。`README.md` / `README.zh.md` / `docs/DETAIL.md` 里的 `~/.dsh/dsh-model-flatmap/analytics.json` 路径同步改写并补上迁移说明。迁移只在 `index.js` 的两条宿主路径上执行；`telemetry.js` 本身不认识"迁移"这件事，仍可只靠注入的 `dir` 独立测试。
+
 ## DEC-058 — 2026-11-20 — 面板链接改为宣传 dsh.zuos.us 插件市场，移除 git remote 推导与宿主路由
 
 **Context.** 用户要求把项目里那条「link」改成宣传 dsh.zuos.us 插件市场的链接。查证 dsh.zuos.us 首页确认它确为面向 DSH 的插件市场，且列出了本插件的条目。原有的链接按钮（DEC-030 一类）点击时读取本地 checkout 的 GitHub remote、经宿主自建路由返回页面地址，remote 不可用时回退到本项目 GitHub 主页。

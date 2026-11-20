@@ -19,6 +19,12 @@
  *    here, so the browser writes its choice to a file this half reads before
  *    every send.
  *
+ * Both jobs read the plugin's data directory at `$DSH_HOME/plugins/dsh-model-flatmap/`
+ * and both run `migrateLegacyDataDir()` first (DEC-059): a data directory left
+ * over from before the `plugins/` move is relocated exactly once, before
+ * anything is read. A failed migration is swallowed there and the legacy
+ * directory stays in use, so this half never has to know it happened.
+ *
  * Two rules keep those jobs from ever becoming the Host's problem:
  *
  * 1. Both run off any startup path — the heartbeat inside `void`, the settings
@@ -33,8 +39,9 @@ import { readFileSync } from 'node:fs'
 
 import {
   TelemetryReporter,
+  migrateLegacyDataDir,
   readSettingsFile,
-  resolveDataDir,
+  resolvePluginDataDir,
   writeSettingsFile,
 } from './telemetry.js'
 
@@ -136,7 +143,8 @@ function registerTelemetrySettings(ctx) {
             return
           }
           try {
-            await writeSettingsFile(resolveDataDir(), body)
+            await migrateLegacyDataDir()
+            await writeSettingsFile(resolvePluginDataDir(), body)
           } catch (error) {
             // An unwritable home is not the toggle's fault; report it honestly
             // so the browser can say the choice did not stick.
@@ -146,7 +154,8 @@ function registerTelemetrySettings(ctx) {
             return
           }
         }
-        const settings = await readSettingsFile(resolveDataDir())
+        await migrateLegacyDataDir()
+        const settings = await readSettingsFile(resolvePluginDataDir())
         const payload = JSON.stringify({ ok: true, enabled: settings.enabled })
         res.statusCode = 200
         res.setHeader('content-type', 'application/json; charset=utf-8')
@@ -255,6 +264,9 @@ function readOwnPackage() {
  * unreadable file means **enabled** — the collection is opt-out, so a machine
  * whose browser never opened Settings keeps reporting exactly as before.
  *
+ * The one-shot data directory migration runs first, before any read: reading a
+ * stale legacy file and then migrating would report a day twice.
+ *
  * @param {object} ctx - The Host plugin context, used only for its logger.
  * @returns {Promise<{sent: boolean, kind: string|null, reason: string}|null>}
  *   The reporter's result, or `null` when reporting could not even be set up.
@@ -265,14 +277,15 @@ async function heartbeat(ctx) {
   try {
     // Read fresh on EVERY send (start and each re-check), so flipping the
     // toggle takes effect on the next check without a restart.
-    enabled = (await readSettingsFile(resolveDataDir())).enabled
+    await migrateLegacyDataDir()
+    enabled = (await readSettingsFile(resolvePluginDataDir())).enabled
   } catch {
     enabled = true
   }
   if (enabled !== true) return { sent: false, kind: null, reason: 'opted-out' }
   try {
     return await new TelemetryReporter({
-      dir: resolveDataDir(),
+      dir: resolvePluginDataDir(),
       logger: ctx?.logger,
       // Both values come from the manifest rather than constants: a fork that
       // renames the package must land on its own statistics line, not merge

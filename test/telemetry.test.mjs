@@ -14,7 +14,7 @@
  * state directory is a temp dir removed afterwards.
  */
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
@@ -39,6 +39,9 @@ import {
   resolveDataDir,
   resolveDshHome,
   resolveEndpoint,
+  resolveLegacyDataDir,
+  resolvePluginDataDir,
+  migrateLegacyDataDir,
   serializeSettings,
   serializeState,
   shanghaiDay,
@@ -404,14 +407,204 @@ test('the data directory follows the hosts own home rules', () => {
   const relative = resolveDshHome({ env: { DSH_HOME: 'rel/home' } })
   assert.equal(relative.startsWith('/'), true)
   assert.equal(relative, resolveDshHome({ env: { DSH_HOME: './rel/home' } }))
-  // The plugin keeps its own directory under the home.
+  // The plugin keeps its own directory under the home, inside the shared
+  // `plugins/` root every plugin data directory now lives in.
   assert.equal(
     resolveDataDir({ env: { DSH_HOME: '/tmp/dsh-home' } }),
+    join('/tmp/dsh-home', 'plugins', DATA_DIR_NAME),
+  )
+  // The pre-`plugins/` location is still nameable: the one-shot migration and
+  // its fallback both need to point at it.
+  assert.equal(
+    resolveLegacyDataDir({ env: { DSH_HOME: '/tmp/dsh-home' } }),
     join('/tmp/dsh-home', DATA_DIR_NAME),
   )
   // Tilde expansion handles both separators; ~user is left alone.
   assert.equal(expandHomePath('~alice/x'), '~alice/x')
   assert.equal(expandHomePath('~').includes('/') || expandHomePath('~').includes('\\'), true)
+})
+
+
+// ---------------------------------------------------------------------------
+// One-shot data directory migration: ~/.dsh/dsh-model-flatmap/ (legacy) ->
+// ~/.dsh/plugins/dsh-model-flatmap/ (current). The legacy location was the
+// plugin's own directory for every release before this one, so an upgrade must
+// carry the state files over exactly once and must never lose them.
+// ---------------------------------------------------------------------------
+
+/** Seed a legacy data directory with the two files that actually matter. */
+async function seedLegacy(home, contents = {}) {
+  const legacy = join(home, DATA_DIR_NAME)
+  await mkdir(legacy, { recursive: true })
+  await writeFile(join(legacy, STATE_FILE), contents.state ?? serializeState({
+    installId: newInstallId(),
+    firstRunAt: 1730505600000,
+    firstVersion: '1.4.0',
+    lastAttemptDay: '2026-11-19',
+    lastOkDay: '2026-11-19',
+  }))
+  await writeFile(join(legacy, SETTINGS_FILE), contents.settings ?? serializeSettings({ enabled: false }))
+  return legacy
+}
+
+test('a legacy data directory is moved to plugins/ on first run, files intact', async () => {
+  await withTempDir(async (home) => {
+    const legacy = await seedLegacy(home)
+    const before = await readFile(join(legacy, STATE_FILE), 'utf8')
+
+    const migrated = await migrateLegacyDataDir({ env: { DSH_HOME: home } })
+    assert.equal(migrated, true, 'a legacy directory must be reported as migrated')
+
+    const current = resolveDataDir({ env: { DSH_HOME: home } })
+    // Whole directory, not just the files we know about.
+    assert.equal(await readFile(join(current, STATE_FILE), 'utf8'), before)
+    assert.deepEqual(await readSettingsFile(current), { enabled: false })
+    // The old location is gone: leaving it behind would make the next start
+    // migrate a second time, and the two copies would drift apart.
+    await assert.rejects(stat(legacy))
+  })
+})
+
+test('migration is idempotent: nothing to move means nothing happens', async () => {
+  await withTempDir(async (home) => {
+    // No legacy directory at all — the fresh-install path.
+    assert.equal(await migrateLegacyDataDir({ env: { DSH_HOME: home } }), false)
+    await assert.rejects(stat(resolveDataDir({ env: { DSH_HOME: home } })))
+    // Second run after a successful migration is a no-op too.
+    await seedLegacy(home)
+    assert.equal(await migrateLegacyDataDir({ env: { DSH_HOME: home } }), true)
+    assert.equal(await migrateLegacyDataDir({ env: { DSH_HOME: home } }), false)
+  })
+})
+
+test('an existing plugins/ directory is never overwritten or merged into', async () => {
+  await withTempDir(async (home) => {
+    // Both locations exist (an interrupted earlier attempt, or a machine that
+    // already ran a newer release). The current directory wins outright.
+    const current = resolveDataDir({ env: { DSH_HOME: home } })
+    await mkdir(current, { recursive: true })
+    const kept = serializeState({ installId: newInstallId(), firstRunAt: 1730592000000 })
+    await writeFile(join(current, STATE_FILE), kept)
+    const legacy = await seedLegacy(home)
+
+    assert.equal(await migrateLegacyDataDir({ env: { DSH_HOME: home } }), false)
+
+    // Current untouched — not merged, not replaced.
+    assert.equal(await readFile(join(current, STATE_FILE), 'utf8'), kept)
+    await assert.rejects(stat(join(current, SETTINGS_FILE)), 'legacy files must not be copied in')
+    // Legacy left exactly where it was: deleting data the user can still see is
+    // worse than a stale directory nobody reads any more.
+    assert.equal(typeof (await stat(join(legacy, STATE_FILE))).size, 'number')
+  })
+})
+
+test('a failed migration is swallowed and the plugin keeps working', async () => {
+  await withTempDir(async (home) => {
+    await seedLegacy(home)
+    const legacy = resolveLegacyDataDir({ env: { DSH_HOME: home } })
+
+    // Fail both halves of the move: rename throws a non-EXDEV error (the
+    // normal "cannot move" case, e.g. a read-only home) and cp throws too, so
+    // the copy fallback cannot rescue it either.
+    const brokenFs = {
+      rename: async () => { throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }) },
+      cp: async () => { throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }) },
+    }
+
+    // Must not throw: a failed migration may cost the new location, never the
+    // plugin (which would take the picker's UI down with it).
+    const migrated = await migrateLegacyDataDir({ env: { DSH_HOME: home }, fs: brokenFs })
+    assert.equal(migrated, false)
+
+    // And the fallback is the legacy directory, so this run still sees the
+    // user's real state and settings.
+    assert.equal(resolvePluginDataDir({ env: { DSH_HOME: home } }), legacy)
+    assert.deepEqual(await readSettingsFile(resolvePluginDataDir({ env: { DSH_HOME: home } })), { enabled: false })
+  })
+})
+
+test('a cross-device move falls back to copy-then-delete', async () => {
+  await withTempDir(async (home) => {
+    await seedLegacy(home)
+    const calls = []
+    const fakeFs = {
+      rename: async (from, to) => {
+        calls.push(['rename', from, to])
+        throw Object.assign(new Error('EXDEV: cross-device link not permitted'), { code: 'EXDEV' })
+      },
+      cp: async (from, to, options) => { calls.push(['cp', from, to, options]); return cp(from, to, options) },
+    }
+
+    const migrated = await migrateLegacyDataDir({ env: { DSH_HOME: home }, fs: fakeFs })
+    assert.equal(migrated, true)
+    // EXDEV is the one error worth retrying as a copy — and the copy must be
+    // recursive, because the payload is a directory.
+    assert.deepEqual(
+      calls[0],
+      ['rename', resolveLegacyDataDir({ env: { DSH_HOME: home } }), resolveDataDir({ env: { DSH_HOME: home } })],
+    )
+    assert.equal(calls[1][0], 'cp')
+    assert.equal(calls[1][3]?.recursive, true)
+    assert.deepEqual(await readSettingsFile(resolveDataDir({ env: { DSH_HOME: home } })), { enabled: false })
+    await assert.rejects(stat(resolveLegacyDataDir({ env: { DSH_HOME: home } })))
+  })
+})
+
+test('a target that appears mid-copy is never deleted', async () => {
+  await withTempDir(async (home) => {
+    await seedLegacy(home)
+    const current = resolveDataDir({ env: { DSH_HOME: home } })
+    const marker = join(current, 'someone-elses.json')
+    const fakeFs = {
+      rename: async () => {
+        throw Object.assign(new Error('EXDEV: cross-device link not permitted'), { code: 'EXDEV' })
+      },
+      // Simulate a race: another process created the target between our check
+      // and our copy, so `cp` refuses to write over it.
+      cp: async () => {
+        await mkdir(current, { recursive: true })
+        await writeFile(marker, 'do not delete me')
+        throw Object.assign(new Error('cp: dest exists'), { code: 'ERR_FS_CP_EEXIST' })
+      },
+    }
+
+    assert.equal(await migrateLegacyDataDir({ env: { DSH_HOME: home }, fs: fakeFs }), false)
+    // The loser of the race must not clean up after the winner.
+    assert.equal(await readFile(marker, 'utf8'), 'do not delete me')
+  })
+})
+
+test('the Host migrates before it reads any state', async () => {
+  const { apply, TELEMETRY_SETTINGS_PATH } = await import('../index.js')
+  const routes = []
+  await withTempDir(async (home) => {
+    // A legacy directory the user has opted out in. If the route or the
+    // heartbeat read before migrating, they would read this file from the old
+    // path — and the assertions below would see it in the wrong place.
+    await seedLegacy(home, { settings: serializeSettings({ enabled: false }) })
+    const originalHome = process.env.DSH_HOME
+    process.env.DSH_HOME = home
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = async () => ({ ok: true, status: 202 })
+    try {
+      apply({
+        get: name => (name === 'webServer' ? { register: r => { routes.push(r); return () => {} } } : undefined),
+        effect: fn => fn(),
+        logger: { warn: () => {} },
+      })
+      const route = routes.find(item => item.path === TELEMETRY_SETTINGS_PATH)
+      const answer = await invokeTelemetry(route, 'GET')
+      assert.deepEqual(JSON.parse(answer.body), { ok: true, enabled: false })
+      // The choice was read from the NEW location, which only holds it because
+      // the migration ran first.
+      assert.deepEqual(await readSettingsFile(resolveDataDir()), { enabled: false })
+      await assert.rejects(stat(resolveLegacyDataDir()))
+    } finally {
+      globalThis.fetch = originalFetch
+      if (originalHome === undefined) delete process.env.DSH_HOME
+      else process.env.DSH_HOME = originalHome
+    }
+  })
 })
 
 /** Captured before any test replaces it, so the harness can still sleep. */
@@ -484,7 +677,7 @@ test('the Host entry reports on start, without awaiting or throwing', async () =
     // The launch heartbeat really was sent, from the redirected home.
     await new Promise((resolve) => setTimeout(resolve, 100))
     assert.equal(calls().length, 1)
-    const state = JSON.parse(await readFile(join(dir, DATA_DIR_NAME, STATE_FILE), 'utf8'))
+    const state = JSON.parse(await readFile(join(dir, 'plugins', DATA_DIR_NAME, STATE_FILE), 'utf8'))
     assert.equal(state.installId, JSON.parse(calls()[0].options.body).id)
 
     // A re-check timer exists, owns its disposer, and never holds the loop open.
@@ -598,7 +791,7 @@ test('the telemetry-settings route answers GET with the current choice', async (
   assert.equal(typeof TELEMETRY_SETTINGS_PATH, 'string')
   const routes = []
   await withTempDir(async (dir) => {
-    // resolveDataDir() = $DSH_HOME/dsh-model-flatmap, created on write.
+    // resolveDataDir() = $DSH_HOME/plugins/dsh-model-flatmap, created on write.
     process.env.DSH_HOME = dir
     const home = process.env.DSH_HOME
     try {

@@ -30,9 +30,12 @@ left running all night still counts for the new day rather than only for the day
 it was launched.
 
 The installation id is a random UUIDv4 created on first run and unrelated to any
-account; deleting `~/.dsh/dsh-model-flatmap/analytics.json` gives the machine a
-new one. The heartbeat is `void`-ed and every failure is swallowed, so the picker
-never waits for it and never fails because of it. It exists because npm download
+account; deleting `~/.dsh/plugins/dsh-model-flatmap/analytics.json` gives the
+machine a new one. A pre-`plugins/` data directory (`~/.dsh/dsh-model-flatmap/`)
+is moved there automatically on first start, once; an existing
+`~/.dsh/plugins/dsh-model-flatmap/` is never overwritten or merged into.
+The heartbeat is `void`-ed and every failure is swallowed, so the picker never
+waits for it and never fails because of it. It exists because npm download
 counts cannot answer "how many machines actually run this, and how many ran it
 today" (installs, CI and mirrors all count), and a Client-side counter cannot
 either (a tab nobody reloads reports nothing).

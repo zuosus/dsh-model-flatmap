@@ -706,6 +706,12 @@ the measured overflow, and the duration is that distance divided by 50 px/s
   `telemetry-settings.json`; the Host re-reads that file before every send, so
   the next heartbeat honours it with no restart. A missing or damaged file reads
   as **enabled** — an unreadable choice must never silently silence reporting.
+  Both state files live in `$DSH_HOME/plugins/dsh-model-flatmap/` (DEC-059); a
+  data directory from before that move (`$DSH_HOME/dsh-model-flatmap/`) is
+  relocated there once at startup — `rename` first, a recursive copy plus delete
+  across volumes — and an existing new directory is never overwritten or merged
+  into. A migration that fails is swallowed and the legacy directory keeps being
+  used, so a read-only home costs the new location, never the plugin.
   Disabling the bundle stops the heartbeat with everything else.
 - The trigger's label cell renders ANOTHER PLUGIN'S component, and so does every
   model row under *By provider* (DEC-046). It is written against the documented

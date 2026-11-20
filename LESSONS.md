@@ -4,6 +4,16 @@ Project-level lessons log for the dsh-model-flatmap plugin. Append-only: new
 entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
+## LES-046 — 2026-11-20 — 迁移失败要能"退回旧地址继续用"，而不是只吞掉异常
+
+把数据目录从 `$DSH_HOME/<name>/` 迁到 `$DSH_HOME/plugins/<name>/` 时，最容易写出的半成品是：迁移函数 `try/catch` 吞掉异常返回 `false`，调用方却仍然按新路径读写。结果是迁移失败的那一刻插件表面没崩，实际上读的是一个空目录——用户的统计开关被重置成默认值、安装 id 换新，比直接报错更难排查。
+
+正确做法是把"路径解析"和"迁移"分成两个函数：`resolveDataDir()` 只算规范的新地址；`resolvePluginDataDir()` 才决定这一次到底用哪个目录（新地址存在 → 新地址；否则旧地址存在 → 旧地址）。迁移函数只负责搬，失败返回 `false`，让解析函数自然落到旧地址上。测试要专门覆盖这条：注入一个 `rename` 和 `cp` 都抛 `EACCES` 的假文件系统，断言不抛异常、返回 `false`、且 `resolvePluginDataDir()` 指回旧目录、还能读到旧目录里的真实设置。
+
+另一条：跨卷回退（`EXDEV` → 递归拷贝 + 删除）必须处理"拷贝到一半失败"的中间态——先 `rm` 掉半成品目标目录再抛错，否则下一次启动会看到目标目录已存在，误判为"迁移已完成"而永远读缺文件的目录。测试里用假 `rename` 抛 `EXDEV`、真 `cp` 执行，同时断言 `cp` 收到 `recursive: true`。
+
+最后一条流程教训：先写测试时如果直接 `import` 一个还不存在的导出，红阶段的失败会是 `SyntaxError: does not provide an export`——那是导入错误，不满足"因行为缺失而失败"的要求。先补上导出与空实现（返回 `false` / 走旧路径），再跑一次，让失败变成断言差异，红→绿证据才站得住。
+
 ## LES-045 — 2026-11-20 — 目标是固定站点时，别沿用「从本地状态推导」的旧机制
 
 把链接从「本项目 GitHub 页（从 git remote 推导）」改成「宣传插件市场（固定站点）」时，最大的陷阱是只改兜底常量、保留旧的 remote 推导与宿主路由：那样有 remote 的机器仍打开仓库页，恰好背离新意图，还留下一段无人再用却看似合理的复杂代码。
