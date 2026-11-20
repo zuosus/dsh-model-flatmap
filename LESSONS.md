@@ -4,6 +4,12 @@ Project-level lessons log for the dsh-model-flatmap plugin. Append-only: new
 entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
+## LES-047 — 2026-11-20 — 「只有一个 source of truth」意味着删掉缓存，而不是把它留作首帧便利
+
+用户说 `localStorage` 不参与、只能有一个 source of truth 时，正确动作是彻底删除缓存的读写与镜像，而不是保留一份「首帧先画缓存、Host 应答后文件覆盖」的折中——后者仍有两个数据源，且缓存与文件冲突时还要解释谁赢。删的时候同步删 `readStored`/`writeStored` 参数、`readHidden`/`writeHidden`/`readAliases`/`writeAliases` 函数与 `HIDDEN_KEY`/`ALIAS_KEY` 常量、`__test` 导出和文档提及，一处不留。
+
+配套教训：删除一批测试时，若它们恰好用 `delete globalThis.localStorage` 掩盖了**另一个无关测试**泄漏的 `globalThis.localStorage`，删掉后那个泄漏会暴露、拖垮后面的测试。改测试块时若发现「隔离通过、全序列失败」，先查前序测试是否泄漏了全局状态，在**泄漏源头**补 `finally { delete globalThis.localStorage }`，而不是在受害者身上打补丁。
+
 ## LES-046 — 2026-11-20 — 迁移失败要能"退回旧地址继续用"，而不是只吞掉异常
 
 把数据目录从 `$DSH_HOME/<name>/` 迁到 `$DSH_HOME/plugins/<name>/` 时，最容易写出的半成品是：迁移函数 `try/catch` 吞掉异常返回 `false`，调用方却仍然按新路径读写。结果是迁移失败的那一刻插件表面没崩，实际上读的是一个空目录——用户的统计开关被重置成默认值、安装 id 换新，比直接报错更难排查。

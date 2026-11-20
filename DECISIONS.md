@@ -4,6 +4,16 @@ Project-level decision log for the dsh-model-flatmap plugin. Append-only: new
 entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
+## DEC-060 — 2026-11-20 — 可见性开关与 Provider 重命名以 `$DSH_HOME/dsh-model-flatmap/config.yaml` 为唯一事实来源
+
+**Context.** 可见性（hidden，哪些 Provider/模型被关掉）与别名（aliases，用户重命名的 Provider 名）此前只存浏览器 `localStorage`。用户要求把它们改到 Host 侧的一个配置文件，并明确纠正：`localStorage` 不参与，只能有一个 source of truth。
+
+**Decision.** `$DSH_HOME/dsh-model-flatmap/config.yaml` 是这两个记录的唯一事实来源，`localStorage` 完全不参与——没有缓存、没有镜像、没有回退。客户端通过 Host 的 `dsh-model-flatmap/config` 路由读写：GET 读文件、POST 整体替换（不是 merge，两个 section 同时发送，避免「缺省 = 未变还是空」歧义）。`createHiddenStore`/`createAliasStore` 不再接受 `readStored`/`writeStored`：store 从内置默认开始（全部可见、目录原名），`persist()` 只 POST 到 config 路由，`adopt(record)` 只替换内存并通知订阅者、不再写 storage。删除 `readHidden`/`writeHidden`/`readAliases`/`writeAliases`/`HIDDEN_KEY`/`ALIAS_KEY` 及它们在 `__test` 的导出。`loadConfigFromHost` 不刷新任何缓存，只返回文件记录。
+
+**Rationale.** 一个 source of truth 让手改文件立即生效、跨端一致，也没有「缓存与文件哪个算数」的二义性。代价是首帧显示默认、文件读取失败时停在默认（没有 last-known-good 可保留），这是「无缓存」的固有结果，如实告知用户。
+
+**Consequences.** 首帧可能短暂显示默认再被文件覆盖；config.yaml 损坏或 Host 不可达时面板停在默认，损坏时 console 警告；无 last-known-good 保留。测试 285 条全绿：config-client 断言 `HIDDEN_KEY/readHidden/writeHidden/ALIAS_KEY/readAliases/writeAliases === undefined`、GET 不触碰 `localStorage`、store 从默认开始、`adopt` 无 storage 写、POST 发送完整记录。README / README.zh / docs/DETAIL.md 同步改写，删除 `dshmf:hidden`/`dshmf:aliases` 提及。
+
 ## DEC-059 — 2026-11-20 — 插件数据目录迁到 `$DSH_HOME/plugins/dsh-model-flatmap/`，并加一次性迁移
 
 **Context.** DSH 各插件此前把配置/数据目录直接放在 `$DSH_HOME/<plugin-name>/`（本插件即 `~/.dsh/dsh-model-flatmap/`）。宿主侧已确立 `$DSH_HOME/plugins/<plugin-name>/` 作为插件数据目录的惯例（本机已有 `~/.dsh/plugins/dsh-generative-ui/` 与 `~/.dsh/plugins/dsh-model-fusion/`），要求统一。本插件的数据目录里放着 `analytics.json`（安装 id、lastAttemptDay 等）与 `telemetry-settings.json`（用户的统计开关），直接改路径会让老用户的安装身份与开关选择凭空消失。

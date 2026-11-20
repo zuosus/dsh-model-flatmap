@@ -4062,41 +4062,10 @@ test('every project-link key is translated in both languages', () => {
 // these tests cover three things separately: the pure record semantics, the
 // store that both surfaces share, and the filter's effect on the rendered grid.
 // ---------------------------------------------------------------------------
-test('the hidden record stores only switched-off keys', () => {
-  installStorage({ [bundle.__test.HIDDEN_KEY]: JSON.stringify({ 'third-party': true, 'third-party/grok-4': true, 'other/x': false }) })
-  try {
-    const hidden = bundle.__test.readHidden()
-    assert.equal(hidden.has('third-party'), true, 'a hidden provider is read back')
-    assert.equal(hidden.has('third-party/grok-4'), true, 'a hidden model is read back')
-    assert.equal(hidden.has('other/x'), false, 'a `false` never resurrects a hidden model')
-    assert.equal(hidden.size, 2)
-  } finally {
-    delete globalThis.localStorage
-  }
-})
-
-test('a missing, empty or malformed hidden record means everything is visible', () => {
-  for (const stored of [undefined, '', 'not json', '[]', 'null', '"text"', '{"a":1}']) {
-    const entries = stored === undefined ? {} : { [bundle.__test.HIDDEN_KEY]: stored }
-    installStorage(entries)
-    try {
-      assert.equal(bundle.__test.readHidden().size, 0, `stored ${JSON.stringify(stored)} degrades to visible`)
-    } finally {
-      delete globalThis.localStorage
-    }
-  }
-})
-
-test('writing the hidden record round-trips through storage', () => {
-  const store = installStorage()
-  try {
-    bundle.__test.writeHidden(new Set(['p', 'p/m']))
-    assert.equal(store.has(bundle.__test.HIDDEN_KEY), true, 'the record is written')
-    assert.deepEqual([...bundle.__test.readHidden()].sort(), ['p', 'p/m'], 'both keys come back')
-  } finally {
-    delete globalThis.localStorage
-  }
-})
+// The hidden record no longer lives in `localStorage` (DEC-060): `config.yaml`
+// is the only source of truth, so there is no stored record to read or write.
+// The store's contract (start from the defaults, adopt the file, mirror changes
+// to the file) is pinned in config-client.test.mjs.
 
 test('a model is hidden by its own key, and a legacy provider key still hides it', () => {
   const { modelIsVisible, providerHiddenKey, modelHiddenKey } = bundle.__test
@@ -4125,28 +4094,22 @@ test('a provider whose models are all hidden is dropped, not drawn empty', () =>
   assert.equal(groups[0].models.length, 2, 'the input catalogue is never mutated')
 })
 
-test('the hidden store notifies once per real change and persists', () => {
-  const store = installStorage()
-  try {
-    const face = bundle.__test.createHiddenStore({ readStored: bundle.__test.readHidden, writeStored: bundle.__test.writeHidden })
-    let notified = 0
-    const off = face.subscribe(() => { notified += 1 })
-    assert.equal(face.getSnapshot().size, 0, 'it starts empty')
-    face.setVisible('p', false)
-    assert.equal(notified, 1, 'hiding notifies')
-    assert.equal(face.getSnapshot().has('p'), true)
-    assert.deepEqual([...bundle.__test.readHidden()], ['p'], 'the change is persisted')
-    face.setVisible('p', false)
-    assert.equal(notified, 1, 'a no-op change notifies nobody')
-    face.setVisible('p', true)
-    assert.equal(notified, 2, 'showing notifies')
-    assert.equal(face.getSnapshot().size, 0)
-    off()
-    face.setVisible('q', false)
-    assert.equal(notified, 2, 'an unsubscribed listener is not called')
-  } finally {
-    delete globalThis.localStorage
-  }
+test('the hidden store notifies once per real change and starts from the defaults', () => {
+  const face = bundle.__test.createHiddenStore({})
+  let notified = 0
+  const off = face.subscribe(() => { notified += 1 })
+  assert.equal(face.getSnapshot().size, 0, 'it starts empty: the file is the only source')
+  face.setVisible('p', false)
+  assert.equal(notified, 1, 'hiding notifies')
+  assert.equal(face.getSnapshot().has('p'), true)
+  face.setVisible('p', false)
+  assert.equal(notified, 1, 'a no-op change notifies nobody')
+  face.setVisible('p', true)
+  assert.equal(notified, 2, 'showing notifies')
+  assert.equal(face.getSnapshot().size, 0)
+  off()
+  face.setVisible('q', false)
+  assert.equal(notified, 2, 'an unsubscribed listener is not called')
 })
 
 // ---------------------------------------------------------------------------
@@ -4156,52 +4119,19 @@ test('the hidden store notifies once per real change and persists', () => {
 // surface must share. The Settings editor and the picker's reaction are below,
 // beside the other Settings tests.
 // ---------------------------------------------------------------------------
-test('the alias record is sanitized, capped and round-trips through storage', () => {
-  const store = installStorage()
-  try {
-    const aliases = new Map([
-      ['p', '  Work   Place  '],
-      ['q', 'x'.repeat(80)],
-      ['control', 'a\u0007b'],
-      ['empty', '   '],
-      ['', 'nope'],
-    ])
-    bundle.__test.writeAliases(aliases)
-    const read = bundle.__test.readAliases()
-    assert.equal(read.get('p'), 'Work Place', 'whitespace runs collapse and trim')
-    assert.equal([...read.get('q')].length, bundle.__test.ALIAS_MAX, 'the cap counts code points')
-    assert.equal(read.get('control'), 'a b', 'a control character becomes a space')
-    assert.equal(read.has('empty'), false, 'an empty name is absence, not a rename')
-    assert.equal(read.has(''), false, 'an empty provider id is ignored')
-    assert.equal(store.has(bundle.__test.ALIAS_KEY), true, 'the record is written')
-  } finally {
-    delete globalThis.localStorage
-  }
+test('an alias is sanitized, capped and never stored blank', () => {
+  const { sanitizeAlias, ALIAS_MAX } = bundle.__test
+  assert.equal(sanitizeAlias('  Work   Place  '), 'Work Place', 'whitespace runs collapse and trim')
+  assert.equal([...sanitizeAlias('x'.repeat(80))].length, ALIAS_MAX, 'the cap counts code points')
+  assert.equal(sanitizeAlias('a\u0007b'), 'a b', 'a control character becomes a space')
+  assert.equal(sanitizeAlias('   '), '', 'an empty name is absence, not a rename')
 })
 
 test('the alias cap never splits a surrogate pair', () => {
-  installStorage()
-  try {
-    const alias = '😀'.repeat(bundle.__test.ALIAS_MAX + 10)
-    bundle.__test.writeAliases(new Map([['p', alias]]))
-    const stored = bundle.__test.readAliases().get('p')
-    assert.equal([...stored].length, bundle.__test.ALIAS_MAX, 'exactly the code-point cap')
-    assert.equal(stored, '😀'.repeat(bundle.__test.ALIAS_MAX), 'whole emoji survive')
-  } finally {
-    delete globalThis.localStorage
-  }
-})
-
-test('a missing, empty or malformed alias record means every provider keeps its name', () => {
-  for (const stored of [undefined, '', 'not json', '[]', 'null', '"text"', '{"a":1}']) {
-    const entries = stored === undefined ? {} : { [bundle.__test.ALIAS_KEY]: stored }
-    installStorage(entries)
-    try {
-      assert.equal(bundle.__test.readAliases().size, 0, `stored ${JSON.stringify(stored)} degrades to the catalog name`)
-    } finally {
-      delete globalThis.localStorage
-    }
-  }
+  const { sanitizeAlias, ALIAS_MAX } = bundle.__test
+  const stored = sanitizeAlias('😀'.repeat(ALIAS_MAX + 10))
+  assert.equal([...stored].length, ALIAS_MAX, 'exactly the code-point cap')
+  assert.equal(stored, '😀'.repeat(ALIAS_MAX), 'whole emoji survive')
 })
 
 test('aliasFor stores nothing for a blank, unchanged or whitespace-different draft', () => {
@@ -4214,36 +4144,27 @@ test('aliasFor stores nothing for a blank, unchanged or whitespace-different dra
   assert.equal(aliasFor('third party', 'Third Party'), 'third party', 'case is the user’s choice, not redundancy')
 })
 
-test('the alias store notifies once per real change and persists', () => {
-  installStorage()
-  try {
-    const face = bundle.__test.createAliasStore({
-      readStored: bundle.__test.readAliases,
-      writeStored: bundle.__test.writeAliases,
-    })
-    let notified = 0
-    const off = face.subscribe(() => { notified += 1 })
-    assert.equal(face.getSnapshot().size, 0, 'it starts empty')
-    face.setAlias('p', ' Work ')
-    assert.equal(notified, 1, 'a rename notifies')
-    assert.equal(face.getSnapshot().get('p'), 'Work', 'the name is normalized')
-    assert.equal(bundle.__test.readAliases().get('p'), 'Work', 'the change is persisted')
-    face.setAlias('p', ' Work ')
-    assert.equal(notified, 1, 'a no-op rename notifies nobody')
-    face.setAlias('p', '')
-    assert.equal(notified, 2, 'restoring the catalog name notifies')
-    assert.equal(face.getSnapshot().has('p'), false, 'and removes the key')
-    face.setAlias('', 'x')
-    assert.equal(notified, 2, 'an empty provider id is ignored')
-    off()
-    face.setAlias('q', 'Q')
-    assert.equal(notified, 2, 'an unsubscribed listener is not called')
-    face.dispose()
-    face.setAlias('r', 'R')
-    assert.equal(notified, 2, 'a disposed store notifies nobody')
-  } finally {
-    delete globalThis.localStorage
-  }
+test('the alias store notifies once per real change and starts from the defaults', () => {
+  const face = bundle.__test.createAliasStore({})
+  let notified = 0
+  const off = face.subscribe(() => { notified += 1 })
+  assert.equal(face.getSnapshot().size, 0, 'it starts empty: the file is the only source')
+  face.setAlias('p', ' Work ')
+  assert.equal(notified, 1, 'a rename notifies')
+  assert.equal(face.getSnapshot().get('p'), 'Work', 'the name is normalized')
+  face.setAlias('p', ' Work ')
+  assert.equal(notified, 1, 'a no-op rename notifies nobody')
+  face.setAlias('p', '')
+  assert.equal(notified, 2, 'restoring the catalog name notifies')
+  assert.equal(face.getSnapshot().has('p'), false, 'and removes the key')
+  face.setAlias('', 'x')
+  assert.equal(notified, 2, 'an empty provider id is ignored')
+  off()
+  face.setAlias('q', 'Q')
+  assert.equal(notified, 2, 'an unsubscribed listener is not called')
+  face.dispose()
+  face.setAlias('r', 'R')
+  assert.equal(notified, 2, 'a disposed store notifies nobody')
 })
 
 test('providerLabel prefers the alias, then the catalog name', () => {
@@ -4476,7 +4397,8 @@ test('the settings section lists every provider and model with a switch each', a
 test('the settings section draws a provider as switched off, with its models disabled', async () => {
   runtime.reset()
   const hidden = new Set([bundle.__test.providerHiddenKey('third-party')])
-  const face = bundle.__test.createHiddenStore({ readStored: () => new Set(hidden) })
+  const face = bundle.__test.createHiddenStore({})
+  face.adopt(hidden)
   const catalog = bundle.__test.createCatalogStore({
     read: () => ({ modelCatalog: async () => ({ ok: true, value: { groups: catalogState().groups } }) }),
   })
@@ -4489,8 +4411,10 @@ test('the settings section draws a provider as switched off, with its models dis
 
 test('the panel drops hidden models from the grid and from the count', () => {
   const hidden = new Set([bundle.__test.modelHiddenKey('third-party', 'grok-4')])
+  const vis = bundle.__test.createHiddenStore({})
+  vis.adopt(hidden)
   const { tree } = openPanel(catalogState(), {
-    inject: { visibility: bundle.__test.createHiddenStore({ readStored: () => new Set(hidden) }) },
+    inject: { visibility: vis },
   })
   const rows = gridRows(tree)
   assert.equal(rows.length, 5, 'six catalogue models minus the hidden one')
@@ -4501,8 +4425,10 @@ test('the panel drops hidden models from the grid and from the count', () => {
 
 test('hiding a whole provider removes its heading as well as its models', () => {
   const hidden = new Set([bundle.__test.providerHiddenKey('third-party')])
+  const vis = bundle.__test.createHiddenStore({})
+  vis.adopt(hidden)
   const { tree } = openPanel(catalogState(), {
-    inject: { visibility: bundle.__test.createHiddenStore({ readStored: () => new Set(hidden) }) },
+    inject: { visibility: vis },
   })
   const titles = gridTitles(tree).map(textOf)
   assert.equal(titles.includes('Third Party'), false, 'the emptied heading is not drawn')
@@ -4514,8 +4440,10 @@ test('hiding a whole provider removes its heading as well as its models', () => 
 
 test('hiding everything says so and points at Settings', () => {
   const hidden = new Set(catalogState().groups.map(group => bundle.__test.providerHiddenKey(group.id)))
+  const vis = bundle.__test.createHiddenStore({})
+  vis.adopt(hidden)
   const { tree } = openPanel(catalogState(), {
-    inject: { visibility: bundle.__test.createHiddenStore({ readStored: () => new Set(hidden) }) },
+    inject: { visibility: vis },
   })
   const empty = findAll(tree, node => hasClass(node, 'dshmf-empty'))
   assert.equal(empty.length, 1, 'the empty state is drawn')
@@ -4549,9 +4477,8 @@ test('a toggle in Settings re-renders an open panel without a reload', () => {
 })
 
 test('a renamed provider is used by headings and family rows', () => {
-  const face = bundle.__test.createAliasStore({
-    readStored: () => new Map([['third-party', 'Work Place']]),
-  })
+  const face = bundle.__test.createAliasStore({})
+  face.adopt(new Map([['third-party', 'Work Place']]))
   const opened = openPanel(catalogState(), { inject: { aliases: face } })
   const { tree } = opened
   assert.deepEqual(gridTitles(tree).map(textOf), ['provider.account', 'Work Place'],
@@ -4567,9 +4494,8 @@ test('a renamed provider is used by headings and family rows', () => {
 })
 
 test('search accepts the alias and still accepts the original provider name', () => {
-  const face = bundle.__test.createAliasStore({
-    readStored: () => new Map([['third-party', 'Work Place']]),
-  })
+  const face = bundle.__test.createAliasStore({})
+  face.adopt(new Map([['third-party', 'Work Place']]))
   const search = query => {
     runtime.reset()
     const made = makeProps(catalogState(), { inject: { aliases: face } })
@@ -4821,8 +4747,9 @@ test('a pointer on an editor control never turns a cancel into a save', async ()
 
 test('a blank name restores the original, and a duplicate name warns without blocking', async () => {
   runtime.reset()
-  const face = bundle.__test.createAliasStore({ readStored: () => new Map([['third-party', 'Work Place']]) })
-  const hidden = bundle.__test.createHiddenStore({ readStored: () => new Set() })
+  const face = bundle.__test.createAliasStore({})
+  face.adopt(new Map([['third-party', 'Work Place']]))
+  const hidden = bundle.__test.createHiddenStore({})
   const catalog = bundle.__test.createCatalogStore({
     read: () => ({ modelCatalog: async () => ({ ok: true, value: { groups: catalogState().groups } }) }),
   })
@@ -5216,35 +5143,39 @@ test('the team-default store persists locally and notifies without any host mirr
 test('the settings section renders the teamwork-default toggle above telemetry', async () => {
   runtime.reset()
   installStorage()
-  const catalog = bundle.__test.createCatalogStore({
-    read: () => ({ modelCatalog: async () => ({ ok: true, value: { groups: catalogState().groups } }) }),
-  })
-  await catalog.load()
-  const teamFace = bundle.__test.createTeamDefaultStore({ readStored: () => false, writeStored: () => {} })
-  let tree
-  const props = {
-    t: key => key,
-    visibility: bundle.__test.createHiddenStore({ readStored: () => new Set() }),
-    catalog,
-    teamDefault: teamFace,
-    telemetry: bundle.__test.createTelemetryStore({ readStored: () => true }),
+  try {
+    const catalog = bundle.__test.createCatalogStore({
+      read: () => ({ modelCatalog: async () => ({ ok: true, value: { groups: catalogState().groups } }) }),
+    })
+    await catalog.load()
+    const teamFace = bundle.__test.createTeamDefaultStore({ readStored: () => false, writeStored: () => {} })
+    let tree
+    const props = {
+      t: key => key,
+      visibility: bundle.__test.createHiddenStore({ readStored: () => new Set() }),
+      catalog,
+      teamDefault: teamFace,
+      telemetry: bundle.__test.createTelemetryStore({ readStored: () => true }),
+    }
+    runtime.setRerender(() => { tree = runtime.render(bundle.__test.SettingsSection, props) })
+    tree = runtime.render(bundle.__test.SettingsSection, props)
+    const band = findAll(tree, node => hasClass(node, 'dshmf-setTeamDefault'))[0]
+    assert.ok(band, 'the team-default band renders')
+    const listIndex = tree.children.findIndex(node => hasClass(node, 'dshmf-setList'))
+    const teamIndex = tree.children.indexOf(band)
+    const teleIndex = tree.children.findIndex(node => hasClass(node, 'dshmf-setTelemetry'))
+    assert.ok(teamIndex > listIndex && teleIndex > teamIndex, 'team default sits after the list, above telemetry')
+    const toggle = findAll(band, node => node?.type === bundle.__test.Switch)[0]
+    assert.ok(toggle, 'the band carries a switch')
+    assert.equal(toggle.props.checked, false, 'the default is OFF')
+    toggle.props.onChange(true)
+    tree = runtime.render(bundle.__test.SettingsSection, props)
+    const flipped = findAll(findAll(tree, node => hasClass(node, 'dshmf-setTeamDefault'))[0], node => node?.type === bundle.__test.Switch)[0]
+    assert.equal(flipped.props.checked, true, 'the toggle turned on')
+    assert.equal(teamFace.getSnapshot(), true, 'flipping the Settings toggle drives the team-default store only')
+  } finally {
+    delete globalThis.localStorage
   }
-  runtime.setRerender(() => { tree = runtime.render(bundle.__test.SettingsSection, props) })
-  tree = runtime.render(bundle.__test.SettingsSection, props)
-  const band = findAll(tree, node => hasClass(node, 'dshmf-setTeamDefault'))[0]
-  assert.ok(band, 'the team-default band renders')
-  const listIndex = tree.children.findIndex(node => hasClass(node, 'dshmf-setList'))
-  const teamIndex = tree.children.indexOf(band)
-  const teleIndex = tree.children.findIndex(node => hasClass(node, 'dshmf-setTelemetry'))
-  assert.ok(teamIndex > listIndex && teleIndex > teamIndex, 'team default sits after the list, above telemetry')
-  const toggle = findAll(band, node => node?.type === bundle.__test.Switch)[0]
-  assert.ok(toggle, 'the band carries a switch')
-  assert.equal(toggle.props.checked, false, 'the default is OFF')
-  toggle.props.onChange(true)
-  tree = runtime.render(bundle.__test.SettingsSection, props)
-  const flipped = findAll(findAll(tree, node => hasClass(node, 'dshmf-setTeamDefault'))[0], node => node?.type === bundle.__test.Switch)[0]
-  assert.equal(flipped.props.checked, true, 'the toggle turned on')
-  assert.equal(teamFace.getSnapshot(), true, 'flipping the Settings toggle drives the team-default store only')
 })
 
 test('every team-default copy key exists in both languages', () => {
@@ -5529,26 +5460,21 @@ test('group visibility reports the three states a bulk switch needs', () => {
   assert.deepEqual([empty.allVisible, empty.mixed, empty.allHidden], [false, false, true])
 })
 
-test('a bulk write through the store notifies once and persists', () => {
-  const store = installStorage()
-  try {
-    const face = bundle.__test.createHiddenStore({ readStored: bundle.__test.readHidden, writeStored: bundle.__test.writeHidden })
-    let notified = 0
-    face.subscribe(() => { notified += 1 })
-    face.setGroupVisible(GROUP_FIXTURE, false)
-    assert.equal(notified, 1, 'one notification for the whole group, not one per model')
-    assert.deepEqual([...bundle.__test.readHidden()].sort(), ['p/a', 'p/b', 'p/c'], 'persisted as per-model keys')
-    // A no-op bulk write is silent.
-    face.setGroupVisible(GROUP_FIXTURE, false)
-    assert.equal(notified, 1, 'writing the same state notifies nobody')
-  } finally {
-    delete globalThis.localStorage
-  }
+test('a bulk write through the store notifies once', () => {
+  const face = bundle.__test.createHiddenStore({})
+  let notified = 0
+  face.subscribe(() => { notified += 1 })
+  face.setGroupVisible(GROUP_FIXTURE, false)
+  assert.equal(notified, 1, 'one notification for the whole group, not one per model')
+  assert.deepEqual([...face.getSnapshot()].sort(), ['p/a', 'p/b', 'p/c'], 'per-model keys')
+  // A no-op bulk write is silent.
+  face.setGroupVisible(GROUP_FIXTURE, false)
+  assert.equal(notified, 1, 'writing the same state notifies nobody')
 })
 
 test('the settings section keeps model switches interactive under a switched-off provider', async () => {
   runtime.reset()
-  const face = bundle.__test.createHiddenStore({ readStored: () => new Set() })
+  const face = bundle.__test.createHiddenStore({})
   face.setGroupVisible(GROUP_FIXTURE, false)
   const catalog = bundle.__test.createCatalogStore({
     read: () => ({ modelCatalog: async () => ({ ok: true, value: { groups: [GROUP_FIXTURE] } }) }),

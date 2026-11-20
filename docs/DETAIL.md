@@ -565,7 +565,8 @@ with the focused control — `Enter` on Cancel must cancel, not save.
 The alias is a **display label only**. It is keyed by the provider's stable id,
 so it cannot change routing, the hidden record's keys, the current selection or
 the order of providers, and a rename survives a provider disappearing and
-returning. It is stored in `localStorage` under `dshmf:aliases`; absence means
+returning. It is stored in the config file
+(`$DSH_HOME/dsh-model-flatmap/config.yaml`) under `aliases`; absence means
 "use the catalog name", and a draft that normalizes to the original stores
 nothing, so a future upstream rename still flows through. A read or write
 failure degrades to the catalog names, exactly as the hidden record degrades to
@@ -602,12 +603,12 @@ dropped rather than drawn as an empty heading.
 
 ### Persistence and reactivity
 
-The record is kept in `localStorage` under `dshmf:hidden`, like this plugin's
-other preferences, and a read or write failure degrades to "everything is
-visible": a browser that refuses storage loses the memory of the choice, never
-the models. One store per activation is shared by the settings section and every
-panel in the page, so a switch flipped in Settings re-renders an open panel
-immediately, with no reload.
+The record is kept in the config file (`$DSH_HOME/dsh-model-flatmap/config.yaml`),
+which is the plugin's only source of truth for visibility, and a read or write
+failure degrades to "everything is visible": if the file cannot be read the
+panel loses the memory of the choice, never the models. One store per activation
+is shared by the settings section and every panel in the page, so a switch
+flipped in Settings re-renders an open panel immediately, with no reload.
 
 Hiding the model a conversation currently uses is allowed. The grid obeys the
 switch, and the trigger still names the current model, because the trigger reads
@@ -723,9 +724,10 @@ the measured overflow, and the duration is that distance divided by 50 px/s
   renders something very wide (the name window clips it, as it clips any long
   name).
 - Addressed subagent sessions hide the seat, matching the shipped selector.
-- The visibility record is per-browser-origin (`localStorage`), so it does not
-  follow an account to another machine or another browser profile. It narrows
-  the **flat panel** only: the shipped `/model` popup and the Host's own picker
+- The visibility record lives in `$DSH_HOME/dsh-model-flatmap/config.yaml` on
+  the machine that runs the Host, so it follows the account to another browser
+  profile on the same machine but not to another machine. It narrows the
+  **flat panel** only: the shipped `/model` popup and the Host's own picker
   (native mode) still list the whole catalogue, because neither reads this
   record. Hiding is presentation, not access control — a hidden provider is
   still configured, still billed, and still selectable through those other

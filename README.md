@@ -138,9 +138,10 @@ levels, and the agent-teamwork switch on one surface:
   runs on the single catalogue every one of them derives from. The
   record stores what is **hidden**, not what is shown, so a provider or model
   added by a plugin installed later appears without re-opening Settings. It is
-  kept in `localStorage` (`dshmf:hidden`) and shared by the settings page and
-  every panel in the page, so a switch flipped in Settings re-renders an open
-  panel immediately, with no reload. Hiding the model a conversation currently
+  kept in the config file (`$DSH_HOME/dsh-model-flatmap/config.yaml`) — the one
+  source of truth — and shared by the settings page and every panel in the page,
+  so a switch flipped in Settings re-renders an open panel immediately, with no
+  reload. Hiding the model a conversation currently
   uses is allowed: the grid obeys the switch, and the trigger still names the
   current model. If everything is hidden the panel says so and points back at
   Settings instead of claiming no models are available.
@@ -158,8 +159,8 @@ levels, and the agent-teamwork switch on one surface:
   Search still matches the catalog's original name, and the original stays
   visible beside the alias in Settings and as the editor's placeholder, with a
   one-click restore. Aliases
-  live in `localStorage` (`dshmf:aliases`), shared by Settings and every open
-  panel, so a save re-renders the picker with no reload. The `Default style`
+  live in the same config file (`config.yaml`), shared by Settings and every
+  open panel, so a save re-renders the picker with no reload. The `Default style`
   picker is the host's own and keeps the catalog's names.
 - **Theme-aware.** Styled with host theme tokens only; looks correct in both
   light and dark themes.

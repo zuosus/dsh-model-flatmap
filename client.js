@@ -2004,57 +2004,13 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
     //    uses, plus a bare provider id for a provider-wide switch. Both live in
     //    ONE record, so a provider switch and a per-model exception can never
     //    disagree about which of them was written last.
-    // 3. **Storage failure degrades to "show everything".** The panel's job is
-    //    to offer the catalogue; a browser that refuses `localStorage` must
-    //    lose the memory of the choice, never the models.
+    // 3. **An unreachable file degrades to "show everything".** The panel's job
+    //    is to offer the catalogue; if `config.yaml` cannot be read (the Host is
+    //    down, or the file is corrupt) the panel must still offer the models,
+    //    never blank out. The file is the only source of truth (DEC-060).
     // ---------------------------------------------------------------------
-    const HIDDEN_KEY = 'dshmf:hidden'
-
     /** The shared empty hidden record; one instance keeps `getSnapshot` stable. */
     const EMPTY_HIDDEN = new Set()
-
-    /**
-     * Read one stored hidden record, or an empty set when storage is missing,
-     * holds garbage, or throws.
-     *
-     * The record is a flat object of `key -> true`. Only `true` counts: a
-     * `false` is a leftover from a version that stored both states and must
-     * never resurrect a hidden model.
-     * @returns {Set<string>} the hidden provider ids and `provider/model` routes.
-     */
-    function readHidden() {
-      try {
-        if (typeof localStorage === 'undefined') return new Set()
-        const text = localStorage.getItem(HIDDEN_KEY)
-        if (text === null || text === '') return new Set()
-        const parsed = JSON.parse(text)
-        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return new Set()
-        const hidden = new Set()
-        for (const [key, value] of Object.entries(parsed)) {
-          if (typeof key !== 'string' || key === '') continue
-          if (value === true) hidden.add(key)
-        }
-        return hidden
-      } catch {
-        return new Set()
-      }
-    }
-
-    /**
-     * Persist one hidden record. A write failure is swallowed: the in-memory
-     * set still drives every open panel in this page.
-     * @param {Set<string>} hidden - the keys to persist.
-     */
-    function writeHidden(hidden) {
-      try {
-        if (typeof localStorage === 'undefined') return
-        const record = {}
-        for (const key of hidden) record[key] = true
-        localStorage.setItem(HIDDEN_KEY, JSON.stringify(record))
-      } catch {
-        /* storage unavailable — keep the in-memory choice only */
-      }
-    }
 
     /**
      * The provider-wide key. A provider id can never collide with a route key:
@@ -2239,13 +2195,15 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
      * @returns the store plus an idempotent `setVisible`.
      */
     function createHiddenStore(deps) {
-      let hidden = new Set(typeof deps.readStored === 'function' ? deps.readStored() : [])
+      let hidden = new Set()
       const listeners = new Set()
       const persist = () => {
-        try {
-          if (typeof deps.writeStored === 'function') deps.writeStored(hidden)
-        } catch {
-          /* storage unavailable — the in-memory value still applies */
+        // Mirror the record to the config file, which is the ONLY source of
+        // truth (DEC-060). Fire-and-forget: a Host that is slow or absent must
+        // never block the switch's own re-render, and the in-memory choice
+        // already applies for this page.
+        if (typeof deps.sync === 'function') {
+          try { void Promise.resolve(deps.sync(hidden)).catch(() => {}) } catch { /* never throws */ }
         }
       }
       /** Publish one new record: persist, then notify every surface. */
@@ -2303,6 +2261,28 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
           if (next === hidden || sameKeys(next, hidden)) return
           commit(next)
         },
+        /**
+         * Adopt a record read from the config file (DEC-060).
+         *
+         * The file is the ONLY source of truth, so this replaces the in-memory
+         * record with exactly what the file said and notifies the surfaces. It
+         * does NOT write back — the file is where this record came from, so a
+         * second write would be a pointless round-trip, and there is no cache to
+         * refresh.
+         * @param {Iterable<string>} record - the keys the file says are hidden.
+         */
+        adopt: record => {
+          const next = new Set(record ?? [])
+          if (sameKeys(next, hidden)) return
+          hidden = next
+          for (const listener of [...listeners]) {
+            try {
+              listener()
+            } catch {
+              /* one bad subscriber must not starve the others */
+            }
+          }
+        },
         /** Drop every subscriber (activation teardown). */
         dispose: () => { listeners.clear() },
       }
@@ -2318,6 +2298,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       setVisible: () => {},
       setGroupVisible: () => {},
       migrateLegacy: () => {},
+      adopt: () => {},
     }
 
     // ---------------------------------------------------------------------
@@ -2344,6 +2325,147 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
      * path with a leading slash.
      */
     const TELEMETRY_SETTINGS_PATH = 'dsh-model-flatmap/telemetry-settings'
+
+    // ---------------------------------------------------------------------
+    // The config file (DEC-060).
+    //
+    // The visibility switches and provider renames live in
+    // `$DSH_HOME/dsh-model-flatmap/config.yaml`, reached through the Host's
+    // config route. The file is the ONLY source of truth: `localStorage` does
+    // not participate at all. There is no cache and no mirror — a switch writes
+    // the file (via POST), and the panel takes the file's record (via GET).
+    //
+    // The stores start at their built-in defaults (everything visible, catalog
+    // names) so the composer can draw its first frame immediately; when the Host
+    // answers, the file's record replaces those defaults, including a hand-edit
+    // the browser has never seen. The first frame may therefore show the
+    // defaults for a moment — that is the honest cost of one source of truth.
+    //
+    // Every failure degrades in the direction that loses nothing:
+    //
+    //   - Host unreachable → keep the defaults (going offline must not reset the
+    //     user's choices; with no cache the defaults are all that exists);
+    //   - file corrupt → report it, never read as "nothing hidden" (an empty
+    //     record would silently un-hide every model they switched off);
+    //   - write fails → the in-memory choice still applies for this page, and the
+    //     caller learns the file did not take it.
+    // ---------------------------------------------------------------------
+    const CONFIG_ROUTE_PATH = 'dsh-model-flatmap/config'
+
+    /**
+     * Parse one config payload from the Host.
+     *
+     * @param {unknown} payload - the route's JSON body.
+     * @returns {{hidden: Set<string>, aliases: Map<string,string>}|null} the
+     *   record, or `null` when the payload is not this shape.
+     */
+    function parseConfigPayload(payload) {
+      if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return null
+      if (payload.ok !== true) return null
+      const hidden = new Set()
+      if (payload.hidden !== undefined) {
+        if (!Array.isArray(payload.hidden)) return null
+        for (const item of payload.hidden) {
+          if (typeof item !== 'string' || item === '') return null
+          hidden.add(item)
+        }
+      }
+      const aliases = new Map()
+      if (payload.aliases !== undefined) {
+        if (payload.aliases === null || typeof payload.aliases !== 'object' || Array.isArray(payload.aliases)) return null
+        for (const [id, name] of Object.entries(payload.aliases)) {
+          if (id === '' || typeof name !== 'string' || name === '') return null
+          aliases.set(id, name)
+        }
+      }
+      return { hidden, aliases }
+    }
+
+    /**
+     * Read the config file through the Host. There is no cache: the file is the
+     * only source of truth (DEC-060).
+     *
+     * `status` tells the caller which of the three outcomes it got:
+     *
+     *   - `ready` — the file answered, and `hidden`/`aliases` are its record;
+     *   - `unavailable` — no Host, no fetch, or a failed request: the panel keeps
+     *     its built-in defaults (the honest fallback with no storage);
+     *   - `broken` — the file exists but does not parse: `error` says why, and
+     *     there is deliberately NO record, so nothing gets un-hidden by accident.
+     *
+     * @param {{fetchImpl?: Function, hasFetch?: boolean}} [deps] - test seams.
+     * @returns {Promise<{status: string, hidden?: Set<string>, aliases?: Map<string,string>, error?: string}>}
+     *   the outcome.
+     */
+    async function loadConfigFromHost(deps = {}) {
+      const doFetch = typeof deps.fetchImpl === 'function'
+        ? deps.fetchImpl
+        : (deps.hasFetch === false ? undefined : (typeof fetch === 'function' ? fetch : undefined))
+      if (doFetch === undefined) return { status: 'unavailable' }
+      let response
+      try {
+        response = await doFetch(CONFIG_ROUTE_PATH, {
+          method: 'GET',
+          credentials: 'same-origin',
+          cache: 'no-store',
+          headers: { accept: 'application/json' },
+        })
+      } catch {
+        return { status: 'unavailable' }
+      }
+      let payload
+      try {
+        payload = await response?.json?.()
+      } catch {
+        return { status: 'unavailable' }
+      }
+      if (response?.ok !== true) {
+        // A 500 here means the file is there but does not parse. That is not the
+        // same as "unreachable": the user needs to be told.
+        const error = typeof payload?.error === 'string' ? payload.error : 'config.yaml 读取失败'
+        return { status: 'broken', error }
+      }
+      const parsed = parseConfigPayload(payload)
+      if (parsed === null) return { status: 'unavailable' }
+      return { status: 'ready', hidden: parsed.hidden, aliases: parsed.aliases }
+    }
+
+    /**
+     * Write the whole config record to the file through the Host.
+     *
+     * A POST is a REPLACE, not a patch: the browser always sends both sections,
+     * so the two halves can never disagree about whether an absent section means
+     * "unchanged" or "empty".
+     *
+     * @param {{hidden: Set<string>, aliases: Map<string,string>}} record - the record.
+     * @param {{fetchImpl?: Function, hasFetch?: boolean}} [deps] - test seams.
+     * @returns {Promise<boolean>} whether the Host acknowledged the write.
+     */
+    async function syncConfigToHost(record, deps = {}) {
+      const doFetch = typeof deps.fetchImpl === 'function'
+        ? deps.fetchImpl
+        : (deps.hasFetch === false ? undefined : (typeof fetch === 'function' ? fetch : undefined))
+      if (doFetch === undefined) return false
+      const body = {
+        hidden: [...(record?.hidden ?? [])].map(String).filter(key => key !== '').sort(),
+        aliases: Object.fromEntries([...(record?.aliases ?? [])]
+          .map(([id, name]) => [String(id), String(name ?? '')])
+          .filter(([id, name]) => id !== '' && name !== '')),
+      }
+      try {
+        const response = await doFetch(CONFIG_ROUTE_PATH, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+          credentials: 'same-origin',
+          cache: 'no-store',
+        })
+        return Boolean(response?.ok)
+      } catch {
+        return false
+      }
+    }
+
 
     /**
      * Read the stored telemetry choice, or **true** when storage is missing,
@@ -2572,11 +2694,11 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
     //    the upstream label — including a name the plugin adds later — and an
     //    alias equal to the current label is stored as absence, not as a copy
     //    that would freeze the old spelling.
-    // 3. **Storage failure degrades to the catalog name.** Like the hidden
-    //    record, a browser that refuses storage loses the alias, never a model.
+    // 3. **An unreachable file degrades to the catalog name.** Like the hidden
+    //    record, if `config.yaml` cannot be read the panel must still draw the
+    //    catalog's own names, never a blank. The file is the only source of
+    //    truth (DEC-060).
     // ---------------------------------------------------------------------
-    const ALIAS_KEY = 'dshmf:aliases'
-
     /**
      * Longest accepted alias, in Unicode code points.
      *
@@ -2626,50 +2748,6 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
     }
 
     /**
-     * Read the stored aliases, or an empty map when storage is missing, holds
-     * garbage, or throws. Only non-empty string values survive sanitization.
-     * @returns {Map<string, string>} provider id -> alias.
-     */
-    function readAliases() {
-      try {
-        if (typeof localStorage === 'undefined') return new Map()
-        const text = localStorage.getItem(ALIAS_KEY)
-        if (text === null || text === '') return new Map()
-        const parsed = JSON.parse(text)
-        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return new Map()
-        const aliases = new Map()
-        for (const [key, value] of Object.entries(parsed)) {
-          const id = String(key)
-          if (id === '') continue
-          const alias = sanitizeAlias(value)
-          if (alias !== '') aliases.set(id, alias)
-        }
-        return aliases
-      } catch {
-        return new Map()
-      }
-    }
-
-    /**
-     * Persist the alias record. A write failure is swallowed: the in-memory map
-     * still drives every open panel in this page.
-     * @param {Map<string, string>} aliases - provider id -> alias.
-     */
-    function writeAliases(aliases) {
-      try {
-        if (typeof localStorage === 'undefined') return
-        const record = {}
-        for (const [id, value] of aliases) {
-          const alias = sanitizeAlias(value)
-          if (alias !== '') record[String(id)] = alias
-        }
-        localStorage.setItem(ALIAS_KEY, JSON.stringify(record))
-      } catch {
-        /* storage unavailable — keep the in-memory names only */
-      }
-    }
-
-    /**
      * The alias for one provider, or `undefined` when it still uses its
      * catalog name. Tolerates an absent face so call sites stay simple.
      * @param {Map<string, string>|undefined} aliases - the current record.
@@ -2686,17 +2764,19 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
      * The ONE rename store per plugin generation, shared by the Settings page
      * that writes it and every panel that reads it, so a save in Settings
      * re-renders an open picker with no reload.
-     * @param deps - storage accessors, injected for testability.
+     * @param deps - an optional host mirror, injected for testability.
      * @returns the store plus an idempotent `setAlias`.
      */
     function createAliasStore(deps) {
-      let aliases = new Map(typeof deps.readStored === 'function' ? deps.readStored() : [])
+      let aliases = new Map()
       const listeners = new Set()
       const persist = () => {
-        try {
-          if (typeof deps.writeStored === 'function') deps.writeStored(aliases)
-        } catch {
-          /* storage unavailable — the in-memory value still applies */
+        // Mirror the aliases to the config file, which is the ONLY source of
+        // truth (DEC-060). Fire-and-forget, exactly like the hidden record's
+        // mirror: a Host that is slow or absent never blocks the rename, and the
+        // in-memory name already applies for this page.
+        if (typeof deps.sync === 'function') {
+          try { void Promise.resolve(deps.sync(aliases)).catch(() => {}) } catch { /* never throws */ }
         }
       }
       /** Publish one new record: persist, then notify every surface. */
@@ -2739,6 +2819,34 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
           map.set(id, next)
           commit(map)
         },
+        /**
+         * Adopt the alias map read from the config file (DEC-060).
+         *
+         * Same rule as the hidden store's `adopt`: the file is the ONLY source of
+         * truth, so this replaces the in-memory map with exactly what the file
+         * said and notifies the surfaces. It does not write back — the file is
+         * where these names came from, so a second write would be a pointless
+         * round-trip, and there is no cache to refresh.
+         * @param {Map<string,string>|Iterable<[string,string]>} record - the file's aliases.
+         */
+        adopt: record => {
+          const next = new Map(record ?? [])
+          let same = next.size === aliases.size
+          if (same) {
+            for (const [id, name] of next) {
+              if (aliases.get(id) !== name) { same = false; break }
+            }
+          }
+          if (same) return
+          aliases = next
+          for (const listener of [...listeners]) {
+            try {
+              listener()
+            } catch {
+              /* one bad subscriber must not starve the others */
+            }
+          }
+        },
         /** Drop every subscriber (activation teardown). */
         dispose: () => { listeners.clear() },
       }
@@ -2752,6 +2860,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       getSnapshot: () => EMPTY_ALIASES,
       subscribe: () => () => {},
       setAlias: () => {},
+      adopt: () => {},
     }
 
     // ---------------------------------------------------------------------
@@ -6468,7 +6577,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       // Pure layout and grouping derivations plus the component itself,
       // exposed for `node --test` so grouping, filtering and the column
       // algorithm are pinned without a browser. The shell never reads this key.
-      __test: { diagnoseSeat, entryName, declaresSlot, SEAT_SLOT, NATIVE_MENU_SLOT, EMPTY_SEAT_HEALTH, SEAT_HEALTH_UNKNOWN, marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, readDisplayMode, writeDisplayMode, createDisplayModeStore, DISPLAY_MODE_KEY, DISPLAY_MODE_DEFAULT, FLAT_DISPLAY_MODE, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore, quantizeMetric, metricChanged, METRIC_HYSTERESIS, LabelBoundary, readLabelEntry, labelSeat, labelSlotSource, LABEL_SLOT, providerLabel, MARKETPLACE_URL, openInNewTab, HIDDEN_KEY, readHidden, writeHidden, providerHiddenKey, modelHiddenKey, modelIsVisible, visibleGroups, createHiddenStore, ALL_VISIBLE, hiddenKeysForGroup, groupVisibility, setGroupVisible, sameKeys, migrateLegacyHidden, NO_ALIASES, createAliasStore, aliasOf, writeAliases, readAliases, aliasFor, sanitizeAlias, ALIAS_MAX, ALIAS_KEY, createCatalogStore, EMPTY_CATALOG, TELEMETRY_KEY, readTelemetryEnabled, writeTelemetryEnabled, syncTelemetryEnabled, createTelemetryStore, TELEMETRY_ON, TELEMETRY_SETTINGS_PATH, TEAM_DEFAULT_KEY, readTeamDefault, writeTeamDefault, createTeamDefaultStore, TEAM_DEFAULT_OFF, SETTINGS_NS, settingsDict, installSettingsNavIcon, SettingsSection, creditNotes, Switch },
+      __test: { diagnoseSeat, entryName, declaresSlot, SEAT_SLOT, NATIVE_MENU_SLOT, EMPTY_SEAT_HEALTH, SEAT_HEALTH_UNKNOWN, marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, readDisplayMode, writeDisplayMode, createDisplayModeStore, DISPLAY_MODE_KEY, DISPLAY_MODE_DEFAULT, FLAT_DISPLAY_MODE, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore, quantizeMetric, metricChanged, METRIC_HYSTERESIS, LabelBoundary, readLabelEntry, labelSeat, labelSlotSource, LABEL_SLOT, providerLabel, MARKETPLACE_URL, openInNewTab, providerHiddenKey, modelHiddenKey, modelIsVisible, visibleGroups, createHiddenStore, ALL_VISIBLE, hiddenKeysForGroup, groupVisibility, setGroupVisible, sameKeys, migrateLegacyHidden, NO_ALIASES, createAliasStore, aliasOf, aliasFor, sanitizeAlias, ALIAS_MAX, createCatalogStore, EMPTY_CATALOG, TELEMETRY_KEY, readTelemetryEnabled, writeTelemetryEnabled, syncTelemetryEnabled, createTelemetryStore, TELEMETRY_ON, TELEMETRY_SETTINGS_PATH, CONFIG_ROUTE_PATH, parseConfigPayload, loadConfigFromHost, syncConfigToHost, TEAM_DEFAULT_KEY, readTeamDefault, writeTeamDefault, createTeamDefaultStore, TEAM_DEFAULT_OFF, SETTINGS_NS, settingsDict, installSettingsNavIcon, SettingsSection, creditNotes, Switch },
       __component: ModelFlatMap,
       __seat: Seat,
       __nativeMenuRow: NativeMenuRow,
@@ -6527,6 +6636,18 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
           }
         }
 
+        // ---- the config-file bridge (DEC-060)
+        //
+        // Both mirrors below post the FULL record, because a POST replaces the
+        // file rather than patching it. These two readers let each store's mirror
+        // carry the other half, so a rename never wipes the hidden list and a
+        // visibility switch never wipes the aliases.
+        //
+        // They read the live stores rather than the cache, so the record that
+        // reaches the file is always the one on screen.
+        const hiddenStoreForSync = () => (hiddenStore?.getSnapshot?.() ?? new Set())
+        const aliasStoreForSync = () => (aliasStore?.getSnapshot?.() ?? new Map())
+
         // ---- the GLOBAL insufficient-balance store
         //
         // Created once per activation and shared by every seat, because the
@@ -6575,12 +6696,18 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         // ---- the visibility store (which providers and models the panel draws)
         //
         // ONE store per activation, read by the panel and written by the
-        // Settings section below. `readHidden` already returns an empty record
-        // for a missing or unreadable store, so a persistence failure costs the
-        // memory of the choice, never the models.
+        // Settings section below. There is no cache: the store starts at its
+        // built-in defaults (everything visible) and takes the file's record
+        // when the Host answers (DEC-060), so a file that cannot be read costs
+        // the memory of the choice, never the models.
         let hiddenStore
         try {
-          hiddenStore = createHiddenStore({ readStored: readHidden, writeStored: writeHidden })
+          hiddenStore = createHiddenStore({
+            // Every switch reaches the config file, which is the ONLY source of
+            // truth (DEC-060). The alias store's mirror carries the alias half,
+            // so the two never fight over one POST.
+            sync: record => syncConfigToHost({ hidden: record, aliases: aliasStoreForSync() }),
+          })
           ctx.effect(() => () => { hiddenStore.dispose?.() }, 'dsh-model-flatmap: visibility')
         } catch (error) {
           console.error('dsh-model-flatmap: the visibility store failed to start', error)
@@ -6637,11 +6764,47 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         // record would make the two features' write paths depend on each other.
         let aliasStore
         try {
-          aliasStore = createAliasStore({ readStored: readAliases, writeStored: writeAliases })
+          aliasStore = createAliasStore({
+            sync: aliases => syncConfigToHost({ hidden: hiddenStoreForSync(), aliases }),
+          })
           ctx.effect(() => () => { aliasStore.dispose?.() }, 'dsh-model-flatmap: provider names')
         } catch (error) {
           console.error('dsh-model-flatmap: the rename store failed to start', error)
           aliasStore = NO_ALIASES
+        }
+
+        // ---- adopt the config file (DEC-060)
+        //
+        // The file is the ONLY source of truth: there is no cache, so the stores
+        // keep their built-in defaults (everything visible, catalog names) until
+        // the Host answers. Whatever `config.yaml` holds then replaces them,
+        // including a hand-edit the browser has never seen. The first frame may
+        // therefore show the defaults for a moment before the file wins — that
+        // is the honest cost of having one source of truth.
+        //
+        // Fire-and-forget, and every outcome is survivable:
+        //
+        //   - `ready`   → adopt; the file is the truth;
+        //   - `unavailable` → keep the defaults (offline must not reset choices,
+        //     and with no cache the defaults are all that exists);
+        //   - `broken`  → keep the defaults and say so once, because silently
+        //     showing "nothing hidden" would un-hide models the user switched
+        //     off with no explanation.
+        try {
+          void Promise.resolve(loadConfigFromHost())
+            .then(result => {
+              if (result?.status === 'ready') {
+                hiddenStore.adopt?.(result.hidden)
+                aliasStore.adopt?.(result.aliases)
+                return
+              }
+              if (result?.status === 'broken') {
+                console.warn(`dsh-model-flatmap: config.yaml 读取失败，保持默认显示：${result.error}`)
+              }
+            })
+            .catch(() => {})
+        } catch {
+          /* the defaults are already in place; a failed read costs nothing */
         }
 
         // ---- the catalogue the Settings section lists

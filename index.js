@@ -18,6 +18,11 @@
  *    through (see DEC-035). The toggle lives in the browser, the send happens
  *    here, so the browser writes its choice to a file this half reads before
  *    every send.
+ * 3. One config route (see DEC-060). The model-visibility switches and provider
+ *    renames live in the browser, but their source of truth is
+ *    `$DSH_HOME/dsh-model-flatmap/config.yaml` — a file the user can read, diff,
+ *    back up and hand-edit. This half owns that file; the route is the only way
+ *    the browser reaches it.
  *
  * Both jobs read the plugin's data directory at `$DSH_HOME/plugins/dsh-model-flatmap/`
  * and both run `migrateLegacyDataDir()` first (DEC-059): a data directory left
@@ -37,6 +42,11 @@
  */
 import { readFileSync } from 'node:fs'
 
+import {
+  readConfigFile,
+  resolveConfigFile,
+  writeConfigFile,
+} from './config.js'
 import {
   TelemetryReporter,
   migrateLegacyDataDir,
@@ -67,6 +77,174 @@ export const inject = []
  * fence — without it any web page could flip this machine's reporting.
  */
 export const TELEMETRY_SETTINGS_PATH = '/dsh-model-flatmap/telemetry-settings'
+
+/**
+ * Path of the config route (DEC-060).
+ *
+ * `GET` answers the config file as it stands on disk — including a hand-edit the
+ * browser has never seen, which is the point of moving this out of
+ * `localStorage`. `POST` replaces it with the record the browser sends.
+ *
+ * Behind the same trust fence as the telemetry route: this file decides which
+ * models the machine shows, so an arbitrary web page must not be able to flip it.
+ */
+export const CONFIG_ROUTE_PATH = '/dsh-model-flatmap/config'
+
+/**
+ * Read one config request body.
+ *
+ * Only `{hidden?: string[], aliases?: Record<string, string>}` is accepted, and
+ * every field is validated rather than coerced: this body becomes the file that
+ * decides which models a user sees, so a malformed write must be a 400, never a
+ * guess. An absent field means "empty", because the browser always posts the
+ * full record — a POST is a replace, not a patch.
+ *
+ * @param {import('node:http').IncomingMessage} req - the request.
+ * @returns {Promise<{hidden: Set<string>, aliases: Map<string,string>}|null>}
+ *   the parsed config, or `null` if invalid.
+ */
+async function readConfigBody(req) {
+  try {
+    const chunks = []
+    for await (const chunk of req) chunks.push(Buffer.from(chunk))
+    const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8') || '')
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    for (const key of Object.keys(parsed)) {
+      if (key !== 'hidden' && key !== 'aliases') return null
+    }
+    const hidden = new Set()
+    if (parsed.hidden !== undefined) {
+      if (!Array.isArray(parsed.hidden)) return null
+      for (const item of parsed.hidden) {
+        if (typeof item !== 'string' || item === '') return null
+        hidden.add(item)
+      }
+    }
+    const aliases = new Map()
+    if (parsed.aliases !== undefined) {
+      if (parsed.aliases === null || typeof parsed.aliases !== 'object' || Array.isArray(parsed.aliases)) return null
+      for (const [id, name] of Object.entries(parsed.aliases)) {
+        if (id === '' || typeof name !== 'string' || name === '') return null
+        aliases.set(id, name)
+      }
+    }
+    return { hidden, aliases }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Turn a config into the JSON body both halves exchange.
+ *
+ * Sorted, so two responses that differ in one switch differ in one line.
+ *
+ * @param {{hidden: Set<string>, aliases: Map<string,string>}} config - the config.
+ * @returns {string} JSON text.
+ */
+function configPayload(config) {
+  return JSON.stringify({
+    ok: true,
+    hidden: [...config.hidden].sort(),
+    aliases: Object.fromEntries([...config.aliases.entries()].sort(([left], [right]) => (
+      left < right ? -1 : left > right ? 1 : 0
+    ))),
+  })
+}
+
+/**
+ * Register the config route (DEC-060).
+ *
+ * `GET` reads the file fresh on every request: a hand-edit must take effect
+ * without a restart, and a cached answer would defeat the whole reason this file
+ * exists. `POST` writes it atomically.
+ *
+ * A corrupt file is a 500 with the reason, never an empty config: reporting
+ * "nothing is hidden" would silently un-hide every model the user switched off,
+ * and they would have no way to tell why.
+ *
+ * @param {object} ctx - the Host plugin context.
+ * @returns {void}
+ */
+function registerConfigRoute(ctx) {
+  let webServer
+  try {
+    webServer = typeof ctx?.get === 'function' ? ctx.get('webServer') : undefined
+  } catch {
+    webServer = undefined
+  }
+  if (webServer === undefined || typeof webServer.register !== 'function') return
+
+  try {
+    const register = () => webServer.register({
+      kind: 'exact',
+      path: CONFIG_ROUTE_PATH,
+      handler: async (req, res) => {
+        const rejection = trustRejection(ctx, req)
+        if (rejection !== undefined) {
+          res.statusCode = rejection
+          res.end()
+          return
+        }
+        const method = req.method
+        if (method !== 'GET' && method !== 'HEAD' && method !== 'POST') {
+          res.statusCode = 405
+          res.setHeader('allow', 'GET, HEAD, POST')
+          res.end()
+          return
+        }
+        const path = resolveConfigFile()
+        if (method === 'POST') {
+          const body = await readConfigBody(req)
+          if (body === null) {
+            res.statusCode = 400
+            res.setHeader('content-type', 'application/json; charset=utf-8')
+            const problem = JSON.stringify({ ok: false, error: 'expected { hidden?: string[], aliases?: Record<string, string> }' })
+            res.setHeader('content-length', Buffer.byteLength(problem))
+            res.end(problem)
+            return
+          }
+          try {
+            writeConfigFile(path, body)
+          } catch (error) {
+            // An unwritable home is not the toggle's fault; say so honestly so
+            // the browser can tell the user the change did not stick.
+            warnOnce(ctx, `dsh-model-flatmap: config could not be written: ${String(error?.message ?? error)}`)
+            res.statusCode = 500
+            res.end()
+            return
+          }
+        }
+        let config
+        try {
+          config = readConfigFile(path)
+        } catch (error) {
+          // The file exists but does not parse. Report it; do not pretend it
+          // said "nothing is hidden".
+          res.statusCode = 500
+          res.setHeader('content-type', 'application/json; charset=utf-8')
+          const problem = JSON.stringify({ ok: false, error: String(error?.message ?? error) })
+          res.setHeader('content-length', Buffer.byteLength(problem))
+          res.end(problem)
+          return
+        }
+        const payload = configPayload(config)
+        res.statusCode = 200
+        res.setHeader('content-type', 'application/json; charset=utf-8')
+        res.setHeader('cache-control', 'no-store')
+        res.setHeader('content-length', Buffer.byteLength(payload))
+        res.end(method === 'HEAD' ? undefined : payload)
+      },
+    })
+    if (typeof ctx?.effect === 'function') {
+      ctx.effect(() => register(), 'dsh-model-flatmap: config route')
+    } else {
+      register()
+    }
+  } catch (error) {
+    warnOnce(ctx, `dsh-model-flatmap: the config route was not registered (plugin unaffected): ${String(error?.message ?? error)}`)
+  }
+}
 
 /**
  * Read one telemetry-settings request body.
@@ -354,4 +532,10 @@ export function apply(ctx) {
   // no web server the browser keeps its localStorage choice and the Host keeps
   // reporting, which is the pre-toggle behaviour.
   registerTelemetrySettings(ctx)
+
+  // The model-visibility switches and provider renames read and write their
+  // source of truth through this route (DEC-060). Same degradation rule: with no
+  // web server the browser keeps its localStorage cache and the file simply is
+  // not reachable from the UI.
+  registerConfigRoute(ctx)
 }
