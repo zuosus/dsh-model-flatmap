@@ -625,6 +625,23 @@ Newly added providers and models are shown by default; the section says so.
   first frame's measurements do not stick.
 - The panel opens above the trigger and flips below when there is no room,
   staying inside the viewport.
+- **The panel opens showing the current model.** The grid is the only scrolling
+  region and the selected row can sit anywhere in it: below the fold on a long
+  catalogue, above it after a re-plan, or in a column a narrower plan no longer
+  shows. Opening the panel scrolls the grid the **least amount that makes the
+  selected row whole** — a row already visible is left exactly where it is, so
+  opening never jumps a list the user was reading, and a row below the fold
+  lands on the bottom edge rather than being centred. A row taller than the
+  viewport (impossible with the fixed 26 px row, but guarded) aligns its top
+  instead. It runs again while the panel is still settling (the first frame
+  lays out with default measurements, so the provisional column plan can place
+  the row elsewhere), but stops the moment the **user** scrolls the grid: from
+  then on a grouping switch or a re-plan leaves the viewport where they put it.
+  It also stays pending while the catalogue is still loading — the model is
+  revealed as soon as its row exists — and closing/re-opening the panel starts
+  a fresh reveal. If the current model is not in the grid at all (filtered out
+  by the search, or switched off in Settings) there is no row and nothing
+  moves; the trigger still names the model (see DEC-061).
 - An unbound Session, an empty catalog, a failed provider, and a search with no
   hits each have their own state. A directory that has not resolved yet still
   renders a trigger rather than blanking the composer.

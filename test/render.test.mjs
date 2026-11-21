@@ -23,6 +23,7 @@ function createRuntime() {
   // flushes them. Existing tests never flush, so their behavior is unchanged;
   // tests for mount-time reads (the Settings catalogue) can flush on demand.
   const pendingEffects = []
+  const pendingLayoutEffects = []
   class RComponent {
     constructor(props) { this.props = props; this.state = {} }
     setState(next) { this.state = { ...this.state, ...(typeof next === 'function' ? next(this.state) : next) } }
@@ -71,7 +72,16 @@ function createRuntime() {
       if (previous === undefined || !sameDeps(previous.deps, deps)) pendingEffects.push(() => effect())
       hooks[slot] = { deps }
     },
-    useLayoutEffect: () => { cursor += 1 },
+    // Layout effects are queued SEPARATELY and, like the passive ones, only run
+    // when a test flushes them: a test that drives a post-layout DOM read (the
+    // reveal of the selected row) assigns the fake elements to the refs the
+    // tree carries, then flushes.
+    useLayoutEffect: (effect, deps) => {
+      const slot = cursor++
+      const previous = hooks[slot]
+      if (previous === undefined || !sameDeps(previous.deps, deps)) pendingLayoutEffects.push(() => effect())
+      hooks[slot] = { deps }
+    },
     useSyncExternalStore: (subscribe, getSnapshot) => getSnapshot(),
   }
   return {
@@ -93,10 +103,39 @@ function createRuntime() {
       const queued = pendingEffects.splice(0)
       return Promise.all(queued.map(run => run()))
     },
+    /**
+     * Run the layout effects queued by renders since the last flush.
+     *
+     * The panel's own layout effects subscribe to `window` (placement) and
+     * measure elements that the stub DOM does not provide; both degrade to a
+     * no-op when those are absent, so a minimal `window` is supplied for the
+     * duration of the flush and removed afterwards.
+     */
+    flushLayoutEffects() {
+      const queued = pendingLayoutEffects.splice(0)
+      const hadWindow = 'window' in globalThis
+      const previous = globalThis.window
+      if (!hadWindow || previous === undefined) {
+        globalThis.window = {
+          addEventListener() {},
+          removeEventListener() {},
+          innerWidth: 1024,
+          innerHeight: 768,
+        }
+      }
+      try {
+        for (const run of queued) run()
+      } finally {
+        if (!hadWindow || previous === undefined) delete globalThis.window
+        else globalThis.window = previous
+      }
+      return queued.length
+    },
     /** Drop every hook slot so each test starts from a clean component state. */
     reset() {
       hooks.length = 0
       pendingEffects.length = 0
+      pendingLayoutEffects.length = 0
       cursor = 0
       rerender = null
     },
@@ -3092,6 +3131,278 @@ test('only one thing in the panel scrolls at a time, title or row', async () => 
       node => hasClass(node, 'dshmf-rowNameTrack'))[0].props['data-running'],
     undefined, 'and the row stopped — never two tickers at once',
   )
+})
+
+// ---------------------------------------------------------------------------
+// DEC-061: opening the panel shows the CURRENT model.
+//
+// The grid is the only scrolling region, and the selected row can sit anywhere
+// in it — off the bottom of a long catalogue, above the fold after a re-plan,
+// in a column a narrower plan no longer shows. Opening the panel must scroll it
+// into view, and must do so by the LEAST amount: a row already visible is left
+// exactly where it is, so opening never jumps a list the user was reading.
+// ---------------------------------------------------------------------------
+test('revealOffset moves the grid only as far as the selected row needs', () => {
+  const { revealOffset } = bundle.__test
+  const box = { scrollTop: 100, clientHeight: 200, scrollHeight: 600, top: 50 }
+
+  // Already inside: the offset is returned untouched. This is the case that
+  // makes opening the panel a no-op for a list the user was reading.
+  assert.equal(revealOffset(box, { top: 90, height: 26 }), 100,
+    'a row fully inside the viewport is not moved')
+  assert.equal(revealOffset(box, { top: 50, height: 26 }), 100,
+    'a row flush with the top edge is already visible')
+  assert.equal(revealOffset(box, { top: 224, height: 26 }), 100,
+    'a row flush with the bottom edge is already visible')
+
+  // Below the fold: scroll DOWN by exactly the overflow, so the row's bottom
+  // lands on the viewport's bottom edge and nothing more is revealed.
+  // (The viewport shows content 100–300; a row at content 350–376 needs 176.)
+  assert.equal(revealOffset(box, { top: 300, height: 26 }), 176,
+    'a row below the fold is pulled up to the bottom edge')
+  assert.equal(revealOffset(box, { top: 320, height: 26 }), 196,
+    'a further row scrolls further, still ending at the bottom edge')
+
+  // Above the fold: scroll UP by exactly the shortfall, so the row's top lands
+  // on the viewport's top edge.
+  assert.equal(revealOffset(box, { top: 40, height: 26 }), 90,
+    'a row above the fold is pulled down to the top edge')
+  assert.equal(revealOffset(box, { top: -70, height: 26 }), 0,
+    'a row far above the fold lands at the top of the list, never negative')
+
+  // The scrollable range is the hard limit in both directions.
+  assert.equal(revealOffset({ ...box, scrollTop: 390 }, { top: 1000, height: 26 }), 400,
+    'the offset never exceeds scrollHeight - clientHeight')
+  assert.equal(revealOffset({ ...box, scrollTop: 0 }, { top: -80, height: 26 }), 0,
+    'the offset never goes below zero')
+
+  // A row TALLER than the viewport cannot be shown whole; its top wins, because
+  // that is the part a reader needs first.
+  assert.equal(revealOffset(box, { top: 120, height: 400 }), 170,
+    'an oversized row aligns its top to the viewport top')
+})
+
+test('revealSelectedRow scrolls the grid element and reports whether it moved', () => {
+  const { revealSelectedRow } = bundle.__test
+  const makeGrid = (scrollTop) => ({
+    scrollTop,
+    clientHeight: 200,
+    scrollHeight: 600,
+    getBoundingClientRect: () => ({ top: 50, height: 200 }),
+  })
+  const rowAt = top => ({ getBoundingClientRect: () => ({ top, height: 26 }) })
+
+  const below = makeGrid(0)
+  assert.equal(revealSelectedRow(below, rowAt(300)), true, 'a row below the fold scrolls the grid')
+  assert.equal(below.scrollTop, 76, 'and lands on the bottom edge')
+
+  const above = makeGrid(200)
+  assert.equal(revealSelectedRow(above, rowAt(20)), true, 'a row above the fold scrolls the grid')
+  assert.equal(above.scrollTop, 170, 'and lands on the top edge')
+
+  const inside = makeGrid(100)
+  assert.equal(revealSelectedRow(inside, rowAt(120)), false, 'a visible row reports no movement')
+  assert.equal(inside.scrollTop, 100, 'and leaves the offset alone')
+
+  // Degradations: a catalogue still loading draws no selected row, and a
+  // runtime without layout hands over elements that cannot measure. Neither is
+  // a crash, and neither writes to the grid.
+  assert.equal(revealSelectedRow(makeGrid(0), null), false, 'no selected row: nothing to do')
+  assert.equal(revealSelectedRow(null, rowAt(300)), false, 'no grid: nothing to do')
+  assert.equal(revealSelectedRow({ scrollTop: 0, clientHeight: 200, scrollHeight: 600 }, rowAt(300)),
+    false, 'an element that cannot measure is skipped instead of throwing')
+})
+
+test('opening the panel scrolls the grid to the current model, and only as far as needed', () => {
+  // The DOM path, end to end: the tree carries a ref on the grid and on the
+  // selected row, the post-layout effect reads both, and the grid ends up
+  // showing the current model. A fake element pair stands in for the browser's
+  // layout — the test runtime has none.
+  runtime.reset()
+  const { props } = makeProps(catalogState())
+  let tree = runtime.render(bundle.__component, props)
+  runtime.setRerender(() => { tree = runtime.render(bundle.__component, props) })
+  tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+
+  const grid = findAll(tree, node => hasClass(node, 'dshmf-grid'))[0]
+  const selected = gridRows(tree).find(row => row.props['aria-pressed'] === true)
+
+  // The panel is 320px tall; the grid viewport is what is left after the fixed
+  // sections. The selected row sits below it, so opening must scroll.
+  const gridEl = {
+    scrollTop: 0,
+    clientHeight: 200,
+    scrollHeight: 600,
+    getBoundingClientRect: () => ({ top: 50, height: 200 }),
+  }
+  const rowEl = { getBoundingClientRect: () => ({ top: 350, height: 26 }) }
+  grid.props.ref.current = gridEl
+  selected.props.ref.current = rowEl
+  runtime.flushLayoutEffects()
+  assert.equal(gridEl.scrollTop, 126, 'opening scrolls the selected row into view')
+
+  // Re-opening after the user scrolled elsewhere brings it back: the same
+  // effect runs again because the panel went closed and open.
+  gridEl.scrollTop = 0
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+  const reopenedGrid = findAll(tree, node => hasClass(node, 'dshmf-grid'))[0]
+  const reopenedRow = gridRows(tree).find(row => row.props['aria-pressed'] === true)
+  reopenedGrid.props.ref.current = gridEl
+  reopenedRow.props.ref.current = rowEl
+  runtime.flushLayoutEffects()
+  assert.equal(gridEl.scrollTop, 126, 're-opening reveals it again')
+
+  // A row that is already visible is NOT moved: opening a panel must not jump
+  // a list the reader was looking at.
+  gridEl.scrollTop = 150
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+  const quietGrid = findAll(tree, node => hasClass(node, 'dshmf-grid'))[0]
+  const quietRow = gridRows(tree).find(row => row.props['aria-pressed'] === true)
+  quietGrid.props.ref.current = gridEl
+  quietRow.props.ref.current = { getBoundingClientRect: () => ({ top: 120, height: 26 }) }
+  runtime.flushLayoutEffects()
+  assert.equal(gridEl.scrollTop, 150, 'an already-visible row leaves the offset alone')
+
+  // Browsing must not be dragged back. The user scrolls the grid themselves
+  // (the scroll event is what distinguishes their offset from ours), then
+  // switches the grouping — a reflow that changes the plan. The viewport stays
+  // where they put it instead of snapping back to the current model.
+  gridEl.scrollTop = 40
+  findAll(tree, node => hasClass(node, 'dshmf-grid'))[0].props.onScroll()
+  findAll(tree, node => hasClass(node, 'dshmf-segBtn'))
+    .find(button => button.props.title === 'group.family').props.onClick()
+  tree = runtime.render(bundle.__component, props)
+  const familyGrid = findAll(tree, node => hasClass(node, 'dshmf-grid'))[0]
+  const familyRow = gridRows(tree).find(row => row.props['aria-pressed'] === true)
+  familyGrid.props.ref.current = gridEl
+  familyRow.props.ref.current = rowEl
+  runtime.flushLayoutEffects()
+  assert.equal(gridEl.scrollTop, 40, 'a reflow does not re-yank the viewport to the selection')
+
+  // The plugin's own write is consumed by the echo it causes, so a LATER scroll
+  // to that same offset is still recognised as the user's.
+  gridEl.scrollTop = 126
+  findAll(tree, node => hasClass(node, 'dshmf-grid'))[0].props.onScroll()
+  assert.equal(
+    findAll(tree, node => hasClass(node, 'dshmf-grid'))[0].props.onScroll(),
+    undefined,
+    'a scroll back to the revealed offset is not mistaken for the plugin\'s own',
+  )
+
+  // ...and the reveal is not disabled for good: closing and re-opening the
+  // panel starts a fresh opening, so the current model is shown again.
+  gridEl.scrollTop = 0
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+  const freshGrid = findAll(tree, node => hasClass(node, 'dshmf-grid'))[0]
+  const freshRow = gridRows(tree).find(row => row.props['aria-pressed'] === true)
+  freshGrid.props.ref.current = gridEl
+  freshRow.props.ref.current = rowEl
+  runtime.flushLayoutEffects()
+  assert.equal(gridEl.scrollTop, 126, 'a new opening reveals the current model again')
+})
+
+test('a selected model that is not in the grid leaves the scroll alone', () => {
+  // The requirement is conditional: the reveal only applies when the current
+  // model is actually drawn. A search that filters it out (or a model the user
+  // switched off in Settings) leaves no selected row, and the grid must not
+  // scroll to nowhere.
+  runtime.reset()
+  const { props } = makeProps(catalogState())
+  let tree = runtime.render(bundle.__component, props)
+  runtime.setRerender(() => { tree = runtime.render(bundle.__component, props) })
+  tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+
+  // Narrow the grid to a provider that does not hold the current model.
+  findAll(tree, node => node.props?.role === 'searchbox')[0].props.onChange({ target: { value: 'grok' } })
+  tree = runtime.render(bundle.__component, props)
+  const rows = gridRows(tree)
+  assert.ok(rows.length > 0, 'the search still draws rows')
+  assert.equal(rows.filter(row => row.props['aria-pressed'] === true).length, 0,
+    'the current model is filtered out of the grid')
+
+  const grid = findAll(tree, node => hasClass(node, 'dshmf-grid'))[0]
+  const gridEl = {
+    scrollTop: 30,
+    clientHeight: 200,
+    scrollHeight: 600,
+    getBoundingClientRect: () => ({ top: 50, height: 200 }),
+  }
+  grid.props.ref.current = gridEl
+  runtime.flushLayoutEffects()
+  assert.equal(gridEl.scrollTop, 30, 'no selected row in the grid: nothing to reveal, nothing moves')
+})
+
+test('a model that arrives after the panel opened is revealed when it appears', () => {
+  // The panel opens before the catalogue is ready, so the first attempt has no
+  // row to reveal. It must stay pending and succeed once the current model is
+  // drawn — otherwise the requirement only holds on a warm catalogue.
+  runtime.reset()
+  const loading = catalogState({
+    current: null,
+    groups: [],
+    status: 'loading',
+  })
+  const { props } = makeProps(loading)
+  let tree = runtime.render(bundle.__component, props)
+  runtime.setRerender(() => { tree = runtime.render(bundle.__component, props) })
+  tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+
+  const gridEl = {
+    scrollTop: 0,
+    clientHeight: 200,
+    scrollHeight: 600,
+    getBoundingClientRect: () => ({ top: 50, height: 200 }),
+  }
+  findAll(tree, node => hasClass(node, 'dshmf-grid'))[0].props.ref.current = gridEl
+  runtime.flushLayoutEffects()
+  assert.equal(gridEl.scrollTop, 0, 'nothing to reveal while the catalogue is empty')
+
+  // The catalogue arrives: the store notifies, the panel re-renders with a
+  // current model, and the same effect now finds the row.
+  props.directory.set(catalogState())
+  tree = runtime.render(bundle.__component, props)
+  const grid = findAll(tree, node => hasClass(node, 'dshmf-grid'))[0]
+  const selected = gridRows(tree).find(row => row.props['aria-pressed'] === true)
+  assert.ok(selected, 'the current model is now drawn')
+  grid.props.ref.current = gridEl
+  selected.props.ref.current = { getBoundingClientRect: () => ({ top: 400, height: 26 }) }
+  runtime.flushLayoutEffects()
+  assert.equal(gridEl.scrollTop, 176, 'the late-arriving model is revealed once it exists')
+})
+test('the open panel marks the selected row and the grid for the reveal', () => {
+  runtime.reset()
+  const { props } = makeProps(catalogState())
+  let tree = runtime.render(bundle.__component, props)
+  runtime.setRerender(() => { tree = runtime.render(bundle.__component, props) })
+  tree = runtime.render(bundle.__component, props)
+  findAll(tree, node => hasClass(node, 'dshmf-trigger'))[0].props.onClick()
+  tree = runtime.render(bundle.__component, props)
+
+  const grid = findAll(tree, node => hasClass(node, 'dshmf-grid'))[0]
+  assert.ok(grid.props.ref, 'the grid carries the ref the reveal reads')
+
+  const rows = gridRows(tree)
+  const selected = rows.filter(row => row.props['aria-pressed'] === true)
+  assert.equal(selected.length, 1, 'exactly one row is the current model')
+  assert.match(textOf(selected[0]), /DeepSeek Chat/, 'and it is the catalogue current model')
+  assert.ok(selected[0].props.ref, 'the selected row carries the ref the reveal measures')
+  assert.equal(rows.filter(row => row.props.ref !== undefined).length, 1,
+    'only the selected row carries it — a stale ref would reveal the wrong model')
 })
 
 test('the group-title marquee CSS clips the window and shares the row keyframes', () => {

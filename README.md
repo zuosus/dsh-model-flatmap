@@ -61,6 +61,12 @@ levels, and the agent-teamwork switch on one surface:
 
 - **One surface.** The trigger opens one panel capped at 320 px. The header, the
   reasoning row, and the teamwork row stay fixed; only the model grid scrolls.
+- **It opens on the current model.** When the model in use is inside the grid,
+  opening the panel scrolls the grid to it — by the least amount that makes the
+  row whole, so a list already showing the selection is not moved at all. The
+  reveal runs per opening and per selection, so switching the grouping does not
+  drag the viewport back while you are browsing. A model filtered out of the
+  grid has no row, and then nothing scrolls; the trigger still names it.
 - **The trigger *and every model row* show what the native one shows.** Their
   names are not strings: the shipped picker renders the
   `conversation.input.model.label` slot there, and connection plugins use it for

@@ -971,6 +971,81 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       return Math.abs(next - previous) >= METRIC_HYSTERESIS
     }
 
+    /**
+     * The scroll offset that brings one rect inside a viewport, moving as little
+     * as possible (DEC-061).
+     *
+     * Opening the panel must SHOW the current model: the grid is the only
+     * scrolling region and the selected row can sit anywhere in it — below the
+     * fold, above it, or (in a multi-column plan) in a column the viewport
+     * already shows. The rule is therefore "reveal, do not centre": a row
+     * already fully inside is left exactly where it is (offset unchanged, so
+     * opening the panel never scrolls a list the user was reading), and a row
+     * outside is pulled in by the smallest amount that makes it whole.
+     *
+     * A row TALLER than the viewport cannot be fully revealed; its top is then
+     * aligned to the top edge, which is the part a reader needs first.
+     *
+     * @param {{scrollTop: number, scrollHeight: number, clientHeight: number}} box
+     *   the scrolling element's current offset and its extents.
+     * @param {{top: number, height: number}} rect - the target's position in the
+     *   SAME coordinate space as `box` (both read from getBoundingClientRect).
+     * @returns {number} the scroll offset to apply; never outside the scrollable
+     *   range, and equal to `box.scrollTop` when the target is already visible.
+     */
+    function revealOffset(box, rect) {
+      const scrollTop = Number(box?.scrollTop) || 0
+      const clientHeight = Number(box?.clientHeight) || 0
+      const scrollHeight = Number(box?.scrollHeight) || 0
+      const max = Math.max(0, scrollHeight - clientHeight)
+      const height = Math.max(0, Number(rect?.height) || 0)
+      // Where the target sits relative to the viewport's top edge: negative when
+      // it is above the fold, > clientHeight when it is below it.
+      const top = (Number(rect?.top) || 0) - (Number(box?.top) || 0) + scrollTop
+      const clamp = value => Math.min(max, Math.max(0, value))
+      if (height > clientHeight) return clamp(top)
+      const above = scrollTop - top
+      if (above > 0) return clamp(scrollTop - above)
+      const below = top + height - (scrollTop + clientHeight)
+      if (below > 0) return clamp(scrollTop + below)
+      return scrollTop
+    }
+
+    /**
+     * Bring the current model's row into the grid's viewport (DEC-061).
+     *
+     * The DOM half of `revealOffset`: reads the two boxes, applies the offset
+     * only when it actually moves the grid, and reports whether it did. Both
+     * elements are optional, because the panel may render while a catalogue is
+     * still loading (no row yet) or inside a runtime that has no layout at all.
+     * @param {Element|null|undefined} grid - the scrolling region.
+     * @param {Element|null|undefined} row - the row the current model draws.
+     * @returns {boolean} true when the grid was scrolled.
+     */
+    function revealSelectedRow(grid, row) {
+      if (grid === null || grid === undefined || row === null || row === undefined) return false
+      if (typeof grid.getBoundingClientRect !== 'function') return false
+      if (typeof row.getBoundingClientRect !== 'function') return false
+      const gridRect = grid.getBoundingClientRect()
+      const rowRect = row.getBoundingClientRect()
+      const scrollTop = Number(grid.scrollTop) || 0
+      const next = revealOffset(
+        {
+          scrollTop,
+          clientHeight: grid.clientHeight,
+          scrollHeight: grid.scrollHeight,
+          top: gridRect === null || gridRect === undefined ? 0 : gridRect.top,
+        },
+        {
+          top: rowRect === null || rowRect === undefined ? 0 : rowRect.top,
+          height: rowRect === null || rowRect === undefined ? 0 : rowRect.height,
+        },
+      )
+      if (!(Math.abs(next - scrollTop) >= 0.5)) return false
+      grid.scrollTop = next
+      return true
+    }
+
     const PATH_CHEVRON = 'M3.2 5.6 7 9.4 10.8 5.6'
     const PATH_CLOSE = 'M4 4 10 10M10 4 4 10'
     const PATH_INFO = 'M7 6.4v4.1M7 3.7v.8'
@@ -4239,6 +4314,18 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       const footerRef = useRef(null)
       const teamErrorRef = useRef(null)
       const confirmRef = useRef(null)
+      // The one scrolling region, plus the row the current model draws. Both are
+      // refs, not state: revealing the selection is a DOM measurement performed
+      // after layout, never something the tree needs to know about (DEC-061).
+      const gridRef = useRef(null)
+      const selectedRowRef = useRef(null)
+      /** The selection already revealed in this opening ('' = reveal pending). */
+      const revealKey = useRef('')
+      /** True once the user (not this plugin) has scrolled the grid. */
+      const gridTouched = useRef(false)
+      /** The offset this plugin wrote and has not yet seen echoed back as a
+       *  scroll event; null when there is nothing outstanding. */
+      const revealWrite = useRef(null)
       const id = useId()
 
       // ---- Model-name marquee (DEC-021)
@@ -4757,6 +4844,72 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         [units, availableHeight, replan],
       )
 
+      // ---- reveal: the panel opens showing the CURRENT model (DEC-061)
+      //
+      // The grid is the only scrolling region and the selected row can sit
+      // anywhere in it — off the bottom on a long catalogue, above the fold
+      // after a re-plan, in a column a narrower plan no longer shows. Opening
+      // the panel therefore scrolls the grid the LEAST amount that makes the
+      // selected row whole; a row already visible is left alone, so opening
+      // never jumps a list the user was reading.
+      //
+      // Two rules keep it from fighting the user:
+      //   - It re-runs while the grid is still being settled. The first frame
+      //     after opening measures with DEFAULT metrics, so the plan it lays
+      //     out is provisional; the row is revealed again once the real plan
+      //     arrives. Otherwise the panel could open on a 1-column guess and
+      //     leave the selection outside the 3-column layout it settles into.
+      //   - Once the POINTER OR THE KEYS have scrolled the grid, it stops: the
+      //     user is browsing somewhere else, and a re-plan must not drag the
+      //     viewport back. `gridTouched` records that, and `revealKey` records
+      //     which selection has already been revealed so a repeated layout
+      //     change for the same model is a no-op.
+      //
+      // A panel opened before the catalogue finished loading draws no selected
+      // row yet; that attempt records nothing, so the effect tries again on the
+      // next layout change (the plan re-computes when the groups arrive) and the
+      // model is revealed as soon as it exists.
+      const selectedRouteKey = state.current === null || state.current === undefined
+        ? ''
+        : `${state.current.provider}/${state.current.model}`
+      useLayoutEffect(() => {
+        if (!open) {
+          revealKey.current = ''
+          gridTouched.current = false
+          revealWrite.current = null
+          return
+        }
+        if (selectedRouteKey === '') return
+        const row = selectedRowRef.current
+        if (row === null || row === undefined) return
+        const alreadyRevealed = revealKey.current === selectedRouteKey
+        if (alreadyRevealed && gridTouched.current) return
+        if (revealSelectedRow(gridRef.current, row)) {
+          // Remember what we wrote, so the scroll event this causes is not read
+          // as the user taking over. It is CONSUMED on the echo (see below), so
+          // a later scroll back to the same offset is still recognised as the
+          // user's.
+          revealWrite.current = Number(gridRef.current?.scrollTop) || 0
+        }
+        revealKey.current = selectedRouteKey
+      }, [open, selectedRouteKey, plan])
+
+      // The grid's own scrolling is the user's, unless this plugin just wrote
+      // the offset itself (DEC-061). The write is remembered and CONSUMED by
+      // the one scroll event it causes — an event-order assumption would break
+      // on a browser that fires asynchronously, and a plain value comparison
+      // would let a scroll back to the same offset pass as ours.
+      const onGridScroll = () => {
+        const grid = gridRef.current
+        if (grid === null || grid === undefined) return
+        const offset = Number(grid.scrollTop) || 0
+        if (revealWrite.current !== null && Math.abs(offset - revealWrite.current) < 0.5) {
+          revealWrite.current = null
+          return
+        }
+        gridTouched.current = true
+      }
+
       if (!available) return null
       if (addressedChild || listedChild) return null
 
@@ -5015,6 +5168,9 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         const running = marquee.key === routeKey
         return h('button', {
           key: routeKey,
+          // The row the current model draws, so opening the panel can scroll the
+          // grid to it (DEC-061). One row carries this ref at a time.
+          ref: selected ? selectedRowRef : undefined,
           type: 'button',
           className: 'dshmf-row',
           'aria-pressed': selected,
@@ -5332,6 +5488,8 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
             // ---- the only scrolling region
             h('div', {
               className: 'dshmf-grid',
+              ref: gridRef,
+              onScroll: onGridScroll,
               style: {
                 gridTemplateColumns: showEmptyState
                   ? 'minmax(0, 1fr)'
@@ -6577,7 +6735,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       // Pure layout and grouping derivations plus the component itself,
       // exposed for `node --test` so grouping, filtering and the column
       // algorithm are pinned without a browser. The shell never reads this key.
-      __test: { diagnoseSeat, entryName, declaresSlot, SEAT_SLOT, NATIVE_MENU_SLOT, EMPTY_SEAT_HEALTH, SEAT_HEALTH_UNKNOWN, marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, readDisplayMode, writeDisplayMode, createDisplayModeStore, DISPLAY_MODE_KEY, DISPLAY_MODE_DEFAULT, FLAT_DISPLAY_MODE, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore, quantizeMetric, metricChanged, METRIC_HYSTERESIS, LabelBoundary, readLabelEntry, labelSeat, labelSlotSource, LABEL_SLOT, providerLabel, MARKETPLACE_URL, openInNewTab, providerHiddenKey, modelHiddenKey, modelIsVisible, visibleGroups, createHiddenStore, ALL_VISIBLE, hiddenKeysForGroup, groupVisibility, setGroupVisible, sameKeys, migrateLegacyHidden, NO_ALIASES, createAliasStore, aliasOf, aliasFor, sanitizeAlias, ALIAS_MAX, createCatalogStore, EMPTY_CATALOG, TELEMETRY_KEY, readTelemetryEnabled, writeTelemetryEnabled, syncTelemetryEnabled, createTelemetryStore, TELEMETRY_ON, TELEMETRY_SETTINGS_PATH, CONFIG_ROUTE_PATH, parseConfigPayload, loadConfigFromHost, syncConfigToHost, TEAM_DEFAULT_KEY, readTeamDefault, writeTeamDefault, createTeamDefaultStore, TEAM_DEFAULT_OFF, SETTINGS_NS, settingsDict, installSettingsNavIcon, SettingsSection, creditNotes, Switch },
+      __test: { diagnoseSeat, entryName, declaresSlot, SEAT_SLOT, NATIVE_MENU_SLOT, EMPTY_SEAT_HEALTH, SEAT_HEALTH_UNKNOWN, marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, revealOffset, revealSelectedRow, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, readDisplayMode, writeDisplayMode, createDisplayModeStore, DISPLAY_MODE_KEY, DISPLAY_MODE_DEFAULT, FLAT_DISPLAY_MODE, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore, quantizeMetric, metricChanged, METRIC_HYSTERESIS, LabelBoundary, readLabelEntry, labelSeat, labelSlotSource, LABEL_SLOT, providerLabel, MARKETPLACE_URL, openInNewTab, providerHiddenKey, modelHiddenKey, modelIsVisible, visibleGroups, createHiddenStore, ALL_VISIBLE, hiddenKeysForGroup, groupVisibility, setGroupVisible, sameKeys, migrateLegacyHidden, NO_ALIASES, createAliasStore, aliasOf, aliasFor, sanitizeAlias, ALIAS_MAX, createCatalogStore, EMPTY_CATALOG, TELEMETRY_KEY, readTelemetryEnabled, writeTelemetryEnabled, syncTelemetryEnabled, createTelemetryStore, TELEMETRY_ON, TELEMETRY_SETTINGS_PATH, CONFIG_ROUTE_PATH, parseConfigPayload, loadConfigFromHost, syncConfigToHost, TEAM_DEFAULT_KEY, readTeamDefault, writeTeamDefault, createTeamDefaultStore, TEAM_DEFAULT_OFF, SETTINGS_NS, settingsDict, installSettingsNavIcon, SettingsSection, creditNotes, Switch },
       __component: ModelFlatMap,
       __seat: Seat,
       __nativeMenuRow: NativeMenuRow,
