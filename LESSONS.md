@@ -4,6 +4,14 @@ Project-level lessons log for the dsh-model-flatmap plugin. Append-only: new
 entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
+## LES-048 — 2026-11-21 — 测试运行时补上 `useLayoutEffect` 时，flush 要给最小 `window`
+
+本插件的 render 测试用自建的 hook runtime 跑真组件。原先 `useLayoutEffect: () => { cursor += 1 }` 只是占掉一个槽位——组件里所有布局效应（测量、placement、定位）在测试里从未真正执行过。要测「打开面板时把网格滚动到选中行」就必须真的跑布局效应，于是把它改成和 `useEffect` 一样的排队 + `flushLayoutEffects()`。
+
+坑在于：一旦真的执行，面板自己的 placement 布局效应会调 `window.addEventListener('resize'/'scroll')`，而测试环境没有 `window`，直接 `ReferenceError: window is not defined`——报错点还在 `client.js` 里，看上去像产品代码的 bug。正确做法是在 flush 期间临时挂一个最小 `window`（`addEventListener`/`removeEventListener` 空实现 + `innerWidth`/`innerHeight`），flush 完在 `finally` 里还原。顺带这也验证了这些效应在「没有真实布局」时是安全降级的。
+
+另一条：写这类 DOM 交互的断言时，先手算一遍期望值再写进 `assert.equal`。本次四条期望值里有三条第一次算错（把「视口在文档中的偏移」当成视口高度、把 `getBoundingClientRect` 的绝对坐标当成相对坐标），红的原因全是算错而非实现错，白白多跑一轮。
+
 ## LES-047 — 2026-11-20 — 「只有一个 source of truth」意味着删掉缓存，而不是把它留作首帧便利
 
 用户说 `localStorage` 不参与、只能有一个 source of truth 时，正确动作是彻底删除缓存的读写与镜像，而不是保留一份「首帧先画缓存、Host 应答后文件覆盖」的折中——后者仍有两个数据源，且缓存与文件冲突时还要解释谁赢。删的时候同步删 `readStored`/`writeStored` 参数、`readHidden`/`writeHidden`/`readAliases`/`writeAliases` 函数与 `HIDDEN_KEY`/`ALIAS_KEY` 常量、`__test` 导出和文档提及，一处不留。

@@ -4,6 +4,18 @@ Project-level decision log for the dsh-model-flatmap plugin. Append-only: new
 entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
+## DEC-061 — 2026-11-21 — 打开面板时把网格滚动到当前选中模型，且只滚最小距离
+
+**Context.** 用户要求：点开插件的模型面板时，如果当前选中的模型在网格里，要保证网格滚动到能显示它。面板高度上限 320 px，网格是唯一可滚动区域，而当前模型在长目录里常常落在折叠线以下（按 provider 分组时尤其明显），打开面板后用户看不到自己正在用的那一行，还得手动找。
+
+**Decision.** 新增两个纯/半纯函数：`revealOffset(box, rect)` 计算目标滚动量，`revealSelectedRow(grid, row)` 读取两个 `getBoundingClientRect` 后只在真正需要时写 `grid.scrollTop`。规则是 **reveal, not centre**：选中行已完整可见 → 偏移原样返回（不滚动）；在折叠线以下 → 向下滚到该行底边贴住视口底边；在折叠线以上 → 向上滚到该行顶边贴住视口顶边；行高超过视口（固定 26 px 行实际不会发生，但守卫）→ 顶边对齐。两个方向都用 `scrollHeight - clientHeight` 与 0 双向夹紧。选中行通过 `ref={selected ? selectedRowRef : undefined}` 挂载，网格挂 `gridRef`。触发时机：`useLayoutEffect`，依赖 `[open, selectedRouteKey, plan]`；用三个 ref 决定「这次该不该滚」：`revealKey`（本次打开已定位过的选中项）、`gridTouched`（用户自己滚过网格）、`revealWrite`（本插件刚写入的偏移，被它引发的那一次 scroll 事件消费掉）。
+
+**Rationale.** （1）「最小滚动」而不是居中：打开面板是个高频动作，把用户正在读的列表居中会打断阅读；只在真的看不见时才动，是唯一不打扰的做法。（2）`useLayoutEffect` 而非 `useEffect`：在 paint 之前完成，用户不会看到「先闪一下顶部再跳过去」。（3）必须允许在「网格尚未稳定」时重跑：打开后的第一帧用的是**默认 metrics**，据此算出的列数是临时的，真实测量到达后布局会变；只在打开那一刻定位，会把选中行留在最终多列布局之外。所以定位按 `[open, selectedRouteKey, plan]` 触发，靠 `revealKey` 去重。（4）但一旦**用户自己滚过**（`gridTouched`），re-plan 就不再回拽——切换分组、搜索都会重排网格，若照样定位，用户刚翻到别处就被拽回当前模型，等于把滚动条从用户手里抢走。区分「用户滚的」和「插件滚的」不能靠比较数值（用户可能滚回同一偏移），也不能靠事件顺序（浏览器可能异步派发 scroll），所以写入时记下偏移、由它引发的那一次 scroll 事件把它消费掉。（5）目录未就绪时不记录 `revealKey`，让这次定位保持 pending，等行出现后的下一次布局变化再补上——否则「冷启动打开面板」这条最常见的路径反而失效。（6）当前模型不在网格里（被搜索过滤、或在设置里被关掉）时没有行可测，此时不滚动，触发器仍显示模型名——需求本身就是条件句。
+
+**Rejected.**（1）居中滚动（`scrollIntoView({block:'center'})`）：会移动本已可见的列表，且 `scrollIntoView` 还可能连带滚动外层容器。（2）每次 render 都定位：与 DEC-026 的教训同类，会让面板在 re-plan 与滚动之间自激。（3）用 `useEffect` 延后一帧：会看到明显的跳动。（4）把定位写进 `scrollTop` state：滚动位置不是渲染输入，进 state 只会制造额外渲染。（5）只在 `open` 变化时定位一次：首帧用的是默认 metrics，选中行可能落在最终布局之外——这是本条最初写错、被测试抓出来的地方。
+
+**Consequences.** `client.js` 新增 `revealOffset` / `revealSelectedRow`（均从 `__test` 导出）、`gridRef` / `selectedRowRef` / `revealKey` / `gridTouched` / `revealWrite` 五个 ref、一处 `useLayoutEffect`、网格上的 `onScroll`，以及选中行与网格上的 `ref`。`test/render.test.mjs` 的 hook runtime 新增 `useLayoutEffect` 队列与 `flushLayoutEffects()`（flush 期间临时提供最小 `window`，因为面板自己的 placement 布局效应会订阅 resize/scroll；见 LES-048），新增 6 条测试：偏移算术（含两个方向、双向夹紧、超高行）、DOM 层写入与降级（无行/无网格/不可测元素）、端到端打开即定位、已可见不移动、用户滚动后切换分组不回拽且重开面板仍定位、目录晚到后补定位。测试数 346 → 352，全绿；把 `client.js` 回退后这 6 条全红，红→绿证据成立。README / README.zh / docs/DETAIL.md 的「Layout behaviour」同步补充。
+
 ## DEC-060 — 2026-11-20 — 可见性开关与 Provider 重命名以 `$DSH_HOME/dsh-model-flatmap/config.yaml` 为唯一事实来源
 
 **Context.** 可见性（hidden，哪些 Provider/模型被关掉）与别名（aliases，用户重命名的 Provider 名）此前只存浏览器 `localStorage`。用户要求把它们改到 Host 侧的一个配置文件，并明确纠正：`localStorage` 不参与，只能有一个 source of truth。
