@@ -5613,7 +5613,7 @@ test('apply registers a Settings section with its own id, label and face', () =>
   assert.equal(typeof entry.component, 'function')
 })
 
-test('settings nav icon replaces the fallback gear with a list icon and survives redraws', () => {
+test('settings nav icon uses the monochrome flatmap mark and survives redraws', () => {
   const makeIcon = () => ({
     nodeType: 1,
     tagName: 'svg',
@@ -5623,6 +5623,12 @@ test('settings nav icon replaces the fallback gear with a list icon and survives
     setAttribute(name, value) { this.attributes.set(name, value) },
     getAttribute(name) { return this.attributes.get(name) ?? null },
     appendChild(child) { this.children.push(child); child.parentNode = this },
+  })
+  const makeShape = tagName => ({
+    tagName,
+    attributes: new Map(),
+    setAttribute(name, value) { this.attributes.set(name, value) },
+    getAttribute(name) { return this.attributes.get(name) ?? null },
   })
   const makeButton = (textContent, icon) => {
     const button = {
@@ -5659,7 +5665,7 @@ test('settings nav icon replaces the fallback gear with a list icon and survives
     createElementNS(namespace, tagName) {
       assert.equal(namespace, 'http://www.w3.org/2000/svg')
       if (tagName === 'svg') return makeIcon()
-      return { attributes: new Map(), setAttribute(name, value) { this.attributes.set(name, value) } }
+      return makeShape(tagName)
     },
   }
   let observeCallback
@@ -5677,7 +5683,16 @@ test('settings nav icon replaces the fallback gear with a list icon and survives
   for (const button of [english, chinese]) {
     assert.equal(button.icon.getAttribute('data-dshmf-settings-list'), '1')
     assert.equal(button.icon.getAttribute('aria-hidden'), 'true')
-    assert.equal(button.icon.children.length, 1)
+    assert.equal(button.icon.getAttribute('viewBox'), '0 0 36 36')
+    assert.equal(button.icon.children.length, 7)
+    assert.equal(button.icon.children[0].tagName, 'rect')
+    assert.equal(button.icon.children[0].getAttribute('stroke'), 'currentColor')
+    assert.equal(button.icon.children[0].getAttribute('fill'), 'none')
+    for (const shape of button.icon.children.slice(1)) {
+      assert.equal(shape.tagName, 'rect')
+      assert.equal(shape.getAttribute('fill'), 'currentColor')
+    }
+    assert.equal(button.icon.children[2].getAttribute('opacity'), '.38')
   }
   assert.equal(other.icon.getAttribute('data-dshmf-settings-list'), null, 'other settings entries are untouched')
 

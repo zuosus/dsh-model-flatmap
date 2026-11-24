@@ -3675,19 +3675,26 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
 
     function createSettingsListIcon(doc) {
       const svg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg')
-      svg.setAttribute('viewBox', '0 0 16 16')
+      svg.setAttribute('viewBox', '0 0 36 36')
       svg.setAttribute('width', '16')
       svg.setAttribute('height', '16')
-      svg.setAttribute('fill', 'none')
       svg.setAttribute('aria-hidden', 'true')
       svg.setAttribute('focusable', 'false')
       svg.setAttribute('data-dshmf-settings-list', '1')
-      const path = doc.createElementNS('http://www.w3.org/2000/svg', 'path')
-      path.setAttribute('d', 'M6 4h7M6 8h7M6 12h7M2.5 4h.01M2.5 8h.01M2.5 12h.01')
-      path.setAttribute('stroke', 'currentColor')
-      path.setAttribute('stroke-width', '1.4')
-      path.setAttribute('stroke-linecap', 'round')
-      svg.appendChild(path)
+      const rects = [
+        { x: '3.5', y: '6.5', width: '29', height: '23', rx: '4.5', fill: 'none', stroke: 'currentColor', 'stroke-width': '2.2' },
+        { x: '7.5', y: '11', width: '6.5', height: '6', rx: '1.6', fill: 'currentColor' },
+        { x: '14.75', y: '11', width: '6.5', height: '6', rx: '1.6', fill: 'currentColor', opacity: '.38' },
+        { x: '22', y: '11', width: '6.5', height: '6', rx: '1.6', fill: 'currentColor', opacity: '.38' },
+        { x: '7.5', y: '20', width: '6.5', height: '6', rx: '1.6', fill: 'currentColor', opacity: '.38' },
+        { x: '14.75', y: '20', width: '6.5', height: '6', rx: '1.6', fill: 'currentColor' },
+        { x: '22', y: '20', width: '6.5', height: '6', rx: '1.6', fill: 'currentColor', opacity: '.38' },
+      ]
+      for (const attributes of rects) {
+        const rect = doc.createElementNS('http://www.w3.org/2000/svg', 'rect')
+        for (const [name, value] of Object.entries(attributes)) rect.setAttribute(name, value)
+        svg.appendChild(rect)
+      }
       return svg
     }
 
