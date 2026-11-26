@@ -99,13 +99,17 @@ test('GET answers the file, and a hand-edit wins over anything cached', async ()
       // No file yet: the built-in defaults.
       const first = await invoke(route, 'GET')
       assert.equal(first.status, 200)
-      assert.deepEqual(JSON.parse(first.body), { ok: true, hidden: [], aliases: {} })
+      assert.deepEqual(JSON.parse(first.body),
+        { ok: true, hidden: [], aliases: {}, teamDefault: false },
+        'the built-in default for the teamwork preference is off, like the host')
 
       // The user edits the file by hand. The route must report THAT, because
       // the file is the source of truth — this is the whole point of the change.
-      await writeRaw(dir, 'hidden:\n  - p\n')
+      await writeRaw(dir, 'hidden:\n  - p\nteamDefault: true\n')
       const second = await invoke(route, 'GET')
-      assert.deepEqual(JSON.parse(second.body), { ok: true, hidden: ['p'], aliases: {} })
+      assert.deepEqual(JSON.parse(second.body),
+        { ok: true, hidden: ['p'], aliases: {}, teamDefault: true },
+        'a hand-written teamDefault is reported too, not just the two record sections')
     } finally {
       if (process.env.DSH_HOME === home) delete process.env.DSH_HOME
     }
@@ -154,13 +158,16 @@ test('POST rejects a body the file cannot represent', async () => {
         '{"aliases":"p"}',
         '{"aliases":{"p":1}}',
         '{"unknown":[]}',
+        '{"teamDefault":"yes"}',
+        '{"teamDefault":1}',
       ]
       for (const body of bad) {
         const answer = await invoke(route, 'POST', body)
         assert.equal(answer.status, 400, `bad body ${body}`)
       }
       // A rejected write leaves the previous state untouched.
-      assert.deepEqual(JSON.parse((await invoke(route, 'GET')).body), { ok: true, hidden: [], aliases: {} })
+      assert.deepEqual(JSON.parse((await invoke(route, 'GET')).body),
+        { ok: true, hidden: [], aliases: {}, teamDefault: false })
     } finally {
       if (process.env.DSH_HOME === home) delete process.env.DSH_HOME
     }

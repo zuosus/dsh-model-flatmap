@@ -110,7 +110,7 @@ async function readConfigBody(req) {
     const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8') || '')
     if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null
     for (const key of Object.keys(parsed)) {
-      if (key !== 'hidden' && key !== 'aliases') return null
+      if (key !== 'hidden' && key !== 'aliases' && key !== 'teamDefault') return null
     }
     const hidden = new Set()
     if (parsed.hidden !== undefined) {
@@ -128,7 +128,16 @@ async function readConfigBody(req) {
         aliases.set(id, name)
       }
     }
-    return { hidden, aliases }
+    // `teamDefault` is optional so an older browser build — one that predates
+    // the section — keeps writing the two record sections it knows about
+    // instead of having every save rejected. An absent field means "leave the
+    // file's value alone", which is the only reading that cannot surprise it.
+    let teamDefault = false
+    if (parsed.teamDefault !== undefined) {
+      if (typeof parsed.teamDefault !== 'boolean') return null
+      teamDefault = parsed.teamDefault
+    }
+    return { hidden, aliases, teamDefault }
   } catch {
     return null
   }
@@ -149,6 +158,7 @@ function configPayload(config) {
     aliases: Object.fromEntries([...config.aliases.entries()].sort(([left], [right]) => (
       left < right ? -1 : left > right ? 1 : 0
     ))),
+    teamDefault: config.teamDefault === true,
   })
 }
 
@@ -395,6 +405,103 @@ function trustRejection(ctx, req) {
  * after midnight actually sends anything. Six hours bounds how stale an answer
  * can get while keeping the timer trivially cheap.
  */
+/**
+ * Whether the user asked new Sessions to start with teamwork on (DEC-063).
+ *
+ * Read from `config.yaml` on EVERY use rather than cached: the file is the one
+ * source of truth, the user can edit it by hand, and a Session is created rarely
+ * enough that one small file read costs nothing. A missing or damaged file means
+ * "off", which is the built-in default and the same default the Host's own
+ * `agent-team.defaultEnabled` carries.
+ *
+ * @returns {Promise<boolean>} whether new roots should start enabled.
+ */
+async function readTeamDefaultPreference() {
+  try {
+    return readConfigFile(resolveConfigFile()).teamDefault === true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Whether this Session has ever saved a `team/mode` selection.
+ *
+ * The Team projection's client view always reports `enabled` as a BOOLEAN
+ * (`state.enabled === true`), so "nobody has chosen yet" is invisible from the
+ * browser: it looks exactly like an explicit "off". The durable event log is the
+ * only place that distinction still exists, so the check runs here, where the
+ * raw events are at hand.
+ *
+ * Events inherited from a fork are excluded, mirroring the projection's own rule
+ * (`event.seq < inheritedEventCount` means "not this Session's choice").
+ *
+ * @param {object} session - the live Session.
+ * @returns {boolean} whether a selection is already saved.
+ */
+function hasSavedTeamMode(session) {
+  const inherited = Number(session?.inheritedEventCount ?? 0)
+  let events = []
+  try {
+    events = typeof session?.ownEvents === 'function'
+      ? session.ownEvents()
+      : (typeof session?.snapshotEvents === 'function' ? session.snapshotEvents() : [])
+  } catch {
+    // An unreadable log must not be read as "no choice": that would override an
+    // explicit opt-out, which is worse than leaving the default unapplied.
+    return true
+  }
+  if (!Array.isArray(events)) return true
+  return events.some(event => event?.type === 'team/mode' && Number(event.seq ?? 0) >= inherited)
+}
+
+/** Read one Host service without letting a guarded context throw. */
+function optionalService(ctx, name) {
+  try {
+    return typeof ctx?.get === 'function' ? ctx.get(name) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Apply the stored teamwork default to newly activated root Sessions (DEC-063).
+ *
+ * This is the same hook, with the same conditions, that the Host's own
+ * `agent-team.defaultEnabled` uses: `agent/created` with `source === 'startup'`,
+ * roots only, and only when no selection is saved yet. Doing it HERE rather than
+ * in the panel matters for two reasons:
+ *
+ * 1. It runs before the Session's first model step, so the very first request
+ *    already carries the Team tools and guidance — a panel-side write would only
+ *    land once the user happened to open the picker.
+ * 2. The browser cannot tell "no selection" from "explicitly off" (see
+ *    `hasSavedTeamMode`), so the decision has to be made where that information
+ *    exists.
+ *
+ * Every failure is swallowed: a missing Team service, an unwritable read, or a
+ * rejected save must cost the Session nothing. The switch still works.
+ *
+ * @param {object} ctx - the Host plugin context.
+ * @returns {void}
+ */
+export function installTeamDefault(ctx) {
+  if (typeof ctx?.on !== 'function') return
+  try {
+    ctx.on('agent/created', async ({ agent, source }) => {
+      if (source !== 'startup') return
+      if (agent?.session?.header?.origin === 'subagent') return
+      const teams = optionalService(ctx, 'agentTeams')
+      if (teams === undefined || typeof teams.setEnabled !== 'function') return
+      if (hasSavedTeamMode(agent.session)) return
+      if (!(await readTeamDefaultPreference())) return
+      await teams.setEnabled(agent, true)
+    })
+  } catch (error) {
+    warnOnce(ctx, `dsh-model-flatmap: the teamwork default was not installed (plugin unaffected): ${String(error?.message ?? error)}`)
+  }
+}
+
 export const RECHECK_MS = 6 * 60 * 60 * 1000
 
 /**
@@ -538,4 +645,9 @@ export function apply(ctx) {
   // web server the browser keeps its localStorage cache and the file simply is
   // not reachable from the UI.
   registerConfigRoute(ctx)
+
+  // The teamwork default is applied here, not in the picker: only the Host can
+  // tell "no selection saved" from "saved off", and only the Host can write it
+  // before the Session's first model step (DEC-063).
+  installTeamDefault(ctx)
 }

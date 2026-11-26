@@ -5453,44 +5453,93 @@ test('the settings section renders the telemetry toggle at the bottom, ON by def
 // model-panel switch (which only writes the current Session's selection).
 // ---------------------------------------------------------------------------
 
-test('the teamwork default is OFF unless explicitly stored on', () => {
-  assert.equal(bundle.__test.readTeamDefault(), false, 'no storage means off')
-  const store = installStorage()
+test('the teamwork default starts OFF and takes the file value on adopt', () => {
+  // OFF is the built-in default, matching the host's own
+  // `agent-team.defaultEnabled: false`. Until `config.yaml` answers, that is
+  // all the plugin can honestly claim.
+  const face = bundle.__test.createTeamDefaultStore()
+  assert.equal(face.getSnapshot(), false, 'no file means off')
+  face.adopt(true)
+  assert.equal(face.getSnapshot(), true, 'the file turns it on')
+  face.adopt(false)
+  assert.equal(face.getSnapshot(), false, 'the file turns it off again')
+})
+
+test('the teamwork default lives in config.yaml, never in localStorage', () => {
+  // The guest that made this setting evaporate: the Desktop GUI is served from
+  // an ephemeral port, and `localStorage` is origin-scoped, so the choice died
+  // on every restart. The file outlives the port.
+  assert.equal(bundle.__test.TEAM_DEFAULT_KEY, undefined, 'there is no storage key any more')
+  assert.equal(bundle.__test.readTeamDefault, undefined, 'no storage reader')
+  assert.equal(bundle.__test.writeTeamDefault, undefined, 'no storage writer')
+  const source = readFileSync(join(here, '..', 'client.js'), 'utf8')
+  const block = source.slice(source.indexOf('function createTeamDefaultStore'))
+  const body = block.slice(0, block.indexOf('\n    }\n'))
+  assert.equal(body.includes('localStorage'), false, 'the store never touches storage')
+})
+
+test('a default write mirrors through the config route, not storage', async () => {
+  const syncs = []
+  const storage = installStorage()
   try {
-    for (const bad of ['{', '[]', 'null', '"x"', '{"enabled":"yes"}']) {
-      store.set(bundle.__test.TEAM_DEFAULT_KEY, bad)
-      assert.equal(bundle.__test.readTeamDefault(), false, 'garbage ' + bad + ' reads as off')
-    }
-    store.set(bundle.__test.TEAM_DEFAULT_KEY, '{"enabled":true}')
-    assert.equal(bundle.__test.readTeamDefault(), true, 'an explicit opt-in is honoured')
-    store.set(bundle.__test.TEAM_DEFAULT_KEY, '{"enabled":false}')
-    assert.equal(bundle.__test.readTeamDefault(), false, 'an explicit opt-out is honoured')
+    const face = bundle.__test.createTeamDefaultStore({
+      sync: value => { syncs.push(value); return Promise.resolve(true) },
+    })
+    face.setEnabled(true)
+    assert.deepEqual(syncs, [true], 'the new value is mirrored to the file')
+    face.setEnabled(false)
+    assert.deepEqual(syncs, [true, false], 'and so is the next one')
+    assert.equal(storage.size, 0, 'nothing was written to storage')
+    const seen = []
+    face.subscribe(() => { seen.push(face.getSnapshot()) })
+    face.setEnabled(true)
+    assert.deepEqual(seen, [true], 'subscribers are notified')
   } finally {
     delete globalThis.localStorage
   }
 })
 
-test('the team-default store persists locally and notifies without any host mirror', () => {
-  const storage = installStorage()
-  const face = bundle.__test.createTeamDefaultStore({
-    readStored: bundle.__test.readTeamDefault,
-    writeStored: bundle.__test.writeTeamDefault,
-  })
+test('an opt-in from the retired browser store is carried into the file, once', () => {
+  // The preference used to live in `localStorage`. A user who had switched it
+  // on must not lose that because the storage moved (DEC-063).
+  const storage = installStorage({ 'dshmf:teamDefault': '{"enabled":true}' })
   try {
-    assert.equal(face.getSnapshot(), false, 'off by default')
-    let seen
-    face.subscribe(() => { seen = face.getSnapshot() })
-    face.setEnabled(true)
-    assert.equal(face.getSnapshot(), true)
-    assert.equal(seen, true, 'subscribers are notified')
-    assert.equal(storage.get(bundle.__test.TEAM_DEFAULT_KEY), '{"enabled":true}', 'the choice is persisted')
-    face.setEnabled(true)
-    assert.equal(storage.get(bundle.__test.TEAM_DEFAULT_KEY), '{"enabled":true}', 'a redundant set does not rewrite storage')
-    face.setEnabled(false)
-    assert.equal(storage.get(bundle.__test.TEAM_DEFAULT_KEY), '{"enabled":false}')
+    assert.equal(bundle.__test.readLegacyTeamDefault(), true, 'the old opt-in is recognised')
+    bundle.__test.forgetLegacyTeamDefault()
+    assert.equal(storage.has('dshmf:teamDefault'), false, 'the retired key is dropped')
+    assert.equal(bundle.__test.readLegacyTeamDefault(), false, 'and it is gone, not re-read')
   } finally {
     delete globalThis.localStorage
   }
+  // A stored "off", garbage, or nothing at all is NOT an opt-in: there is
+  // nothing to rescue when the file's default already says off.
+  for (const stored of ['{"enabled":false}', '{', '[]', 'null', '"x"']) {
+    const store = installStorage({ 'dshmf:teamDefault': stored })
+    try {
+      assert.equal(bundle.__test.readLegacyTeamDefault(), false, `stored ${stored} is not an opt-in`)
+    } finally {
+      delete globalThis.localStorage
+    }
+    store.clear()
+  }
+})
+
+test('the retired key is read but never written back', () => {
+  // A migration that keeps writing the old key would keep the second source of
+  // truth alive, which is the whole reason the preference moved.
+  const source = readFileSync(join(here, '..', 'client.js'), 'utf8')
+  const block = source.slice(source.indexOf('function forgetLegacyTeamDefault'))
+  const body = block.slice(0, block.indexOf('\n    }\n'))
+  assert.equal(body.includes('setItem'), false, 'the retired key is only removed')
+})
+
+test('a local flip is not undone by a file read that was already in flight', () => {
+  // The read is asynchronous; the click is not. If the file's older value
+  // landed afterwards it would silently revert what the user just chose.
+  const face = bundle.__test.createTeamDefaultStore({ sync: () => Promise.resolve(true) })
+  face.setEnabled(true)
+  face.adopt(false)
+  assert.equal(face.getSnapshot(), true, 'the pending local edit wins over a stale read')
 })
 
 test('the settings section renders the teamwork-default toggle above telemetry', async () => {

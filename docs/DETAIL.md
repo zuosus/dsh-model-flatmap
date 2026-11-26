@@ -206,6 +206,38 @@ and the agent teamwork switch are all visible at once.
   lives in the shared footer line described under *Reasoning levels*,
   immediately right of the reasoning group when both fit on one line.
 
+- **The teamwork default actually applies.** Settings carries a preference about
+  sessions that have never saved a `team/mode` selection. It lives in
+  `config.yaml` as `teamDefault: true|false` (DEC-063), beside the visibility and
+  alias records, and the **Host** applies it: on `agent/created` with
+  `source === 'startup'`, a root Session that has no `team/mode` event of its own
+  gets one written from the default. A saved selection always wins — an explicit
+  "off" is never overridden — and subagents are skipped, because
+  `setEnabled` refuses a descendant and children share their root's selection.
+  - *Why the Host and not the panel.* The Team projection's client view renders
+    `enabled` as `state.enabled === true`, so after that coercion "nobody has
+    chosen yet" and "chose off" are the same value in the browser. Only the
+    durable event log keeps the distinction, and only the Host holds it.
+    Applying it here also lands before the Session's first model step, so the
+    very first request already carries the Team tools; a panel-side write would
+    wait for the user to open the picker.
+  - *Forked and unreadable logs.* Events inherited from a fork are excluded via
+    `inheritedEventCount`, mirroring the projection's own rule. If the log cannot
+    be read at all, the Session is treated as having a selection: refusing to act
+    is the safe failure, because the alternative silently re-enables teamwork for
+    someone who switched it off.
+  - *Why it moved out of the browser.* Storing a preference nothing read made the
+    toggle decorative: it claimed new sessions would start on while every new
+    session still started off. Moving it to the file was the second half: the
+    Desktop GUI is served from an ephemeral `127.0.0.1:<random>` port, and
+    `localStorage` is origin-scoped, so a restart silently discarded the choice.
+    The file outlives the port and is the same source of truth the other two
+    preferences already use.
+  - *Migration.* A `{enabled: true}` value left in the retired
+    `dshmf:teamDefault` key is written to the file once and the key removed;
+    anything else means the user never opted in, which is what the file's default
+    already says.
+
 ## The trigger
 
 The trigger is the same chip the shipped picker draws (13/20 regular, 28 px,
@@ -610,7 +642,8 @@ dropped rather than drawn as an empty heading.
 ### Persistence and reactivity
 
 The record is kept in the config file (`$DSH_HOME/dsh-model-flatmap/config.yaml`),
-which is the plugin's only source of truth for visibility, and a read or write
+which is the plugin's only source of truth for visibility (the same file also
+carries the provider aliases and the teamwork default), and a read or write
 failure degrades to "everything is visible": if the file cannot be read the
 panel loses the memory of the choice, never the models. One store per activation
 is shared by the settings section and every panel in the page, so a switch

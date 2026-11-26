@@ -192,6 +192,16 @@ test('a payload with missing sections is the default, not an error', () => {
   const parsed = api.parseConfigPayload({ ok: true })
   assert.equal(parsed.hidden.size, 0)
   assert.equal(parsed.aliases.size, 0)
+  assert.equal(parsed.teamDefault, false, 'an absent teamwork default is the built-in off')
+})
+
+test('the teamwork default travels in the same payload as the two records', () => {
+  const parsed = api.parseConfigPayload({ ok: true, teamDefault: true })
+  assert.equal(parsed.teamDefault, true)
+  const off = api.parseConfigPayload({ ok: true, teamDefault: false })
+  assert.equal(off.teamDefault, false)
+  assert.equal(api.parseConfigPayload({ ok: true, teamDefault: 'yes' }), null,
+    'a string is refused, not coerced')
 })
 
 test('a malformed payload is rejected rather than read as empty', () => {
@@ -207,6 +217,27 @@ test('a malformed payload is rejected rather than read as empty', () => {
   ]
   for (const payload of bad) {
     assert.equal(api.parseConfigPayload(payload), null, `payload ${JSON.stringify(payload)}`)
+  }
+})
+
+test('every section mirror posts the full record so none resets the others', async () => {
+  // A POST is a REPLACE. If the visibility mirror omitted the teamwork
+  // preference (or vice versa), clicking one switch would quietly reset the
+  // other section — the exact class of bug that made the old browser-only
+  // store lose the user's choice.
+  installRecordingStorage()
+  try {
+    const { impl, calls } = stubFetch(jsonResponse({ ok: true }))
+    await api.syncConfigToHost(
+      { hidden: new Set(['p']), aliases: new Map([['p', 'Name']]), teamDefault: true },
+      { fetchImpl: impl },
+    )
+    const body = JSON.parse(calls[0].init.body)
+    assert.deepEqual(body.hidden, ['p'], 'the hidden section is present')
+    assert.equal(body.aliases.p, 'Name', 'the alias section is present')
+    assert.equal(body.teamDefault, true, 'and the teamwork preference is present')
+  } finally {
+    delete globalThis.localStorage
   }
 })
 
@@ -315,6 +346,7 @@ test('a local change is written to the file', async () => {
     const body = JSON.parse(calls[0].init.body)
     assert.deepEqual(body.hidden, ['p'])
     assert.equal(body.aliases.p, 'Name')
+    assert.equal(body.teamDefault, false, 'the replace carries the third section too')
   } finally {
     delete globalThis.localStorage
   }

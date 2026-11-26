@@ -2448,7 +2448,14 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
           aliases.set(id, name)
         }
       }
-      return { hidden, aliases }
+      // Optional so a Host that predates this section still answers: an absent
+      // field means the file says nothing, i.e. the built-in default.
+      let teamDefault = false
+      if (payload.teamDefault !== undefined) {
+        if (typeof payload.teamDefault !== 'boolean') return null
+        teamDefault = payload.teamDefault
+      }
+      return { hidden, aliases, teamDefault }
     }
 
     /**
@@ -2497,7 +2504,12 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       }
       const parsed = parseConfigPayload(payload)
       if (parsed === null) return { status: 'unavailable' }
-      return { status: 'ready', hidden: parsed.hidden, aliases: parsed.aliases }
+      return {
+        status: 'ready',
+        hidden: parsed.hidden,
+        aliases: parsed.aliases,
+        teamDefault: parsed.teamDefault,
+      }
     }
 
     /**
@@ -2521,6 +2533,9 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         aliases: Object.fromEntries([...(record?.aliases ?? [])]
           .map(([id, name]) => [String(id), String(name ?? '')])
           .filter(([id, name]) => id !== '' && name !== '')),
+        // Both halves must send the section: the POST is a replace, so leaving
+        // it out would silently reset the preference on every visibility change.
+        teamDefault: record?.teamDefault === true,
       }
       try {
         const response = await doFetch(CONFIG_ROUTE_PATH, {
@@ -2667,25 +2682,46 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
     // Agent-teamwork DEFAULT — a preference about NEW sessions, not a switch
     // on the current one. The model-panel switch writes the Session's own
     // `team/mode` selection through `remote.agentTeams.setEnabled(sessionId,`
-    // enabled)` and NEVER touches this record (DEC-057). This default is the
-    // client-side counterpart of the host's `agent-team.defaultEnabled` config
-    // field: it decides what a session with no saved selection starts as.
-    // A missing or unreadable record means OFF, matching the host's default.
-    // There is no Host mirror: no host-side business consumes this record, so
-    // the browser is the single source of truth, exactly like the grouping and
-    // visibility choices.
+    // enabled)` and NEVER touches this record (DEC-057). This default decides
+    // what a session with no saved selection starts as.
+    //
+    // **It lives in `config.yaml`, not `localStorage` (DEC-063).** The first
+    // version of this preference was browser-only, which failed twice over:
+    //
+    // 1. Nothing read it, so it could never change a Session's behaviour.
+    // 2. The Desktop GUI is served from an ephemeral port (`127.0.0.1:<random>`
+    //    every launch — 56602, 54238, 56668… on one machine). `localStorage` is
+    //    origin-scoped, so a port change silently discarded the choice. The
+    //    user set it, restarted, and the setting was gone.
+    //
+    // The plugin's own file already holds the other two preferences for exactly
+    // this reason (DEC-060), so the third one goes beside them: readable,
+    // diffable, hand-editable, and independent of which port served the page.
     // ---------------------------------------------------------------------
-    const TEAM_DEFAULT_KEY = 'dshmf:teamDefault'
 
     /**
-     * Read the stored teamwork default, or **false** when storage is missing,
-     * holds garbage, or throws. Only an explicit `true` opts in.
-     * @returns {boolean} whether new sessions should start with teamwork on.
+     * The key the preference used before DEC-063, when it lived only in the
+     * browser.
+     *
+     * It is read ONCE, to rescue an opt-in the user already expressed, and then
+     * removed. Nothing reads it again: the file is the source of truth, and a
+     * second live source is exactly what made this preference unreliable.
      */
-    function readTeamDefault() {
+    const TEAM_DEFAULT_LEGACY_KEY = 'dshmf:teamDefault'
+
+    /**
+     * Read the retired browser value, or `false` when there is none.
+     *
+     * Only an explicit `{enabled: true}` counts. Anything else — absent,
+     * damaged, `false` — means the user never opted in, which is the same thing
+     * the file's default says, so there is nothing to carry over.
+     *
+     * @returns {boolean} whether the user had opted in through the old store.
+     */
+    function readLegacyTeamDefault() {
       try {
         if (typeof localStorage === 'undefined') return false
-        const text = localStorage.getItem(TEAM_DEFAULT_KEY)
+        const text = localStorage.getItem(TEAM_DEFAULT_LEGACY_KEY)
         if (text === null || text === '') return false
         const parsed = JSON.parse(text)
         if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return false
@@ -2695,24 +2731,34 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       }
     }
 
-    /** Persist the teamwork default; a write failure costs memory, not control. */
-    function writeTeamDefault(enabled) {
+    /** Drop the retired key once its value has been carried into the file. */
+    function forgetLegacyTeamDefault() {
       try {
         if (typeof localStorage === 'undefined') return
-        localStorage.setItem(TEAM_DEFAULT_KEY, JSON.stringify({ enabled: enabled === true }))
+        localStorage.removeItem(TEAM_DEFAULT_LEGACY_KEY)
       } catch {
-        /* storage unavailable — the in-memory choice still applies */
+        /* storage unavailable — the file already has the value */
       }
     }
 
     /**
-     * The ONE team-default store per plugin generation, shared by the Settings
-     * toggle (the only writer) and any future reader. Mirrors the telemetry
-     * store's shape minus the host mirror. Has no `sync`, no `syncNow`, and no
-     * per-Session face — deliberately, so the panel switch cannot reach it.
+     * The ONE team-default store per plugin generation.
+     *
+     * Shaped like the hidden/alias stores because it is persisted the same way:
+     * it starts from the built-in default, `adopt()` takes the file's value once
+     * the Host answers, and `setEnabled` mirrors the new record back. It keeps
+     * no copy in `localStorage` — the file is the only source of truth, and a
+     * second store would be a second answer to "what is the default".
+     *
+     * @param deps - `sync(record)` mirrors to the file; injected for tests.
+     * @returns the store.
      */
-    function createTeamDefaultStore(deps) {
-      let enabled = typeof deps.readStored === 'function' ? deps.readStored() : false
+    function createTeamDefaultStore(deps = {}) {
+      let enabled = deps.initial === true
+      // A local edit that has not been confirmed by the file yet. `adopt` must
+      // not clobber it: the read is in flight while the user may be flipping the
+      // switch, and the file's older value would silently undo their click.
+      let dirty = false
       const listeners = new Set()
       const notify = () => {
         for (const listener of [...listeners]) {
@@ -2725,14 +2771,31 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
           listeners.add(listener)
           return () => { listeners.delete(listener) }
         },
-        setEnabled: next => {
+        /**
+         * Take the value `config.yaml` answered with.
+         *
+         * A missing or unreadable file means the built-in default (`false`,
+         * matching the host's own `agent-team.defaultEnabled`), so `adopt` is
+         * also how "no file" is expressed: pass `false`.
+         * @param {unknown} next - the file's value.
+         */
+        adopt: next => {
+          if (dirty) return
           const value = next === true
           if (value === enabled) return
           enabled = value
-          try {
-            if (typeof deps.writeStored === 'function') deps.writeStored(value)
-          } catch {
-            /* storage unavailable — the in-memory value still applies */
+          notify()
+        },
+        setEnabled: next => {
+          const value = next === true
+          if (value === enabled) {
+            dirty = true
+            return
+          }
+          enabled = value
+          dirty = true
+          if (typeof deps.sync === 'function') {
+            try { void Promise.resolve(deps.sync(value)).catch(() => {}) } catch { /* never throws */ }
           }
           notify()
         },
@@ -6737,7 +6800,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
       // Pure layout and grouping derivations plus the component itself,
       // exposed for `node --test` so grouping, filtering and the column
       // algorithm are pinned without a browser. The shell never reads this key.
-      __test: { diagnoseSeat, entryName, declaresSlot, SEAT_SLOT, NATIVE_MENU_SLOT, EMPTY_SEAT_HEALTH, SEAT_HEALTH_UNKNOWN, marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, revealOffset, revealSelectedRow, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, readDisplayMode, writeDisplayMode, createDisplayModeStore, DISPLAY_MODE_KEY, DISPLAY_MODE_DEFAULT, FLAT_DISPLAY_MODE, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore, quantizeMetric, metricChanged, METRIC_HYSTERESIS, LabelBoundary, readLabelEntry, labelSeat, labelSlotSource, LABEL_SLOT, providerLabel, MARKETPLACE_URL, openInNewTab, providerHiddenKey, modelHiddenKey, modelIsVisible, visibleGroups, createHiddenStore, ALL_VISIBLE, hiddenKeysForGroup, groupVisibility, setGroupVisible, sameKeys, migrateLegacyHidden, NO_ALIASES, createAliasStore, aliasOf, aliasFor, sanitizeAlias, ALIAS_MAX, createCatalogStore, EMPTY_CATALOG, TELEMETRY_KEY, readTelemetryEnabled, writeTelemetryEnabled, syncTelemetryEnabled, createTelemetryStore, TELEMETRY_ON, TELEMETRY_SETTINGS_PATH, CONFIG_ROUTE_PATH, parseConfigPayload, loadConfigFromHost, syncConfigToHost, TEAM_DEFAULT_KEY, readTeamDefault, writeTeamDefault, createTeamDefaultStore, TEAM_DEFAULT_OFF, SETTINGS_NS, settingsDict, installSettingsNavIcon, SettingsSection, creditNotes, Switch },
+      __test: { diagnoseSeat, entryName, declaresSlot, SEAT_SLOT, NATIVE_MENU_SLOT, EMPTY_SEAT_HEALTH, SEAT_HEALTH_UNKNOWN, marqueePassGeometry, nameClippedBy, MARQUEE_DELAY, MARQUEE_PX_PER_SECOND, MARQUEE_MIN_MS, familyOf, familyRank, familyVariant: rowVariantOf, idVariantOf, matchScore, providerScore, searchTokens, revealOffset, revealSelectedRow, buildUnits, columnHeight, packColumns, planColumns, readGrouping, writeGrouping, GROUPING_KEY, GROUPING_DEFAULT, readDisplayMode, writeDisplayMode, createDisplayModeStore, DISPLAY_MODE_KEY, DISPLAY_MODE_DEFAULT, FLAT_DISPLAY_MODE, isInsufficientBalance, decideMark, eventTimeOf, foldInsufficient, foldMarkEntry, routeOfHeader, routeKeyOf, MARKS_KEY, MARKS_TTL, STRIKE_TTL, markIsLive, parseMarks, serializeMarks, readMarks, writeMarks, createMarkStore, quantizeMetric, metricChanged, METRIC_HYSTERESIS, LabelBoundary, readLabelEntry, labelSeat, labelSlotSource, LABEL_SLOT, providerLabel, MARKETPLACE_URL, openInNewTab, providerHiddenKey, modelHiddenKey, modelIsVisible, visibleGroups, createHiddenStore, ALL_VISIBLE, hiddenKeysForGroup, groupVisibility, setGroupVisible, sameKeys, migrateLegacyHidden, NO_ALIASES, createAliasStore, aliasOf, aliasFor, sanitizeAlias, ALIAS_MAX, createCatalogStore, EMPTY_CATALOG, TELEMETRY_KEY, readTelemetryEnabled, writeTelemetryEnabled, syncTelemetryEnabled, createTelemetryStore, TELEMETRY_ON, TELEMETRY_SETTINGS_PATH, CONFIG_ROUTE_PATH, parseConfigPayload, loadConfigFromHost, syncConfigToHost, createTeamDefaultStore, TEAM_DEFAULT_OFF, TEAM_DEFAULT_LEGACY_KEY, readLegacyTeamDefault, forgetLegacyTeamDefault, SETTINGS_NS, settingsDict, installSettingsNavIcon, SettingsSection, creditNotes, Switch },
       __component: ModelFlatMap,
       __seat: Seat,
       __nativeMenuRow: NativeMenuRow,
@@ -6807,6 +6870,10 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         // reaches the file is always the one on screen.
         const hiddenStoreForSync = () => (hiddenStore?.getSnapshot?.() ?? new Set())
         const aliasStoreForSync = () => (aliasStore?.getSnapshot?.() ?? new Map())
+        // Read through the CURRENT store, the same way the other two halves are
+        // read: each section's mirror must carry all three values, or a POST
+        // from one section would reset the other two.
+        const teamDefaultStoreForSync = () => teamDefaultStore?.getSnapshot?.() === true
 
         // ---- the GLOBAL insufficient-balance store
         //
@@ -6866,7 +6933,11 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
             // Every switch reaches the config file, which is the ONLY source of
             // truth (DEC-060). The alias store's mirror carries the alias half,
             // so the two never fight over one POST.
-            sync: record => syncConfigToHost({ hidden: record, aliases: aliasStoreForSync() }),
+            sync: record => syncConfigToHost({
+              hidden: record,
+              aliases: aliasStoreForSync(),
+              teamDefault: teamDefaultStoreForSync(),
+            }),
           })
           ctx.effect(() => () => { hiddenStore.dispose?.() }, 'dsh-model-flatmap: visibility')
         } catch (error) {
@@ -6907,10 +6978,27 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         // it is a browser preference just like grouping and visibility.
         let teamDefaultStore
         try {
+          // Carry an opt-in the user already expressed through the retired
+          // browser store into the file, once (DEC-063). The read is drained
+          // here rather than kept alive: after this the file is the only answer.
+          const legacyTeamDefault = readLegacyTeamDefault()
           teamDefaultStore = createTeamDefaultStore({
-            readStored: readTeamDefault,
-            writeStored: writeTeamDefault,
+            initial: legacyTeamDefault,
+            // The file is the only source of truth, so a write mirrors the
+            // WHOLE record: the POST is a replace, and sending only this
+            // section would reset the other two on every click.
+            sync: teamDefault => syncConfigToHost({
+              hidden: hiddenStoreForSync(),
+              aliases: aliasStoreForSync(),
+              teamDefault,
+            }),
           })
+          if (legacyTeamDefault) {
+            // Mirror it before dropping the key, so a failed write leaves the
+            // old value readable for the next launch instead of losing it.
+            try { void Promise.resolve(teamDefaultStore.setEnabled(true)).catch(() => {}) } catch { /* never throws */ }
+            forgetLegacyTeamDefault()
+          }
           ctx.effect(() => () => { teamDefaultStore.dispose?.() }, 'dsh-model-flatmap: team default')
         } catch (error) {
           console.error('dsh-model-flatmap: the team-default store failed to start', error)
@@ -6925,7 +7013,11 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         let aliasStore
         try {
           aliasStore = createAliasStore({
-            sync: aliases => syncConfigToHost({ hidden: hiddenStoreForSync(), aliases }),
+            sync: aliases => syncConfigToHost({
+              hidden: hiddenStoreForSync(),
+              aliases,
+              teamDefault: teamDefaultStoreForSync(),
+            }),
           })
           ctx.effect(() => () => { aliasStore.dispose?.() }, 'dsh-model-flatmap: provider names')
         } catch (error) {
@@ -6956,6 +7048,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
               if (result?.status === 'ready') {
                 hiddenStore.adopt?.(result.hidden)
                 aliasStore.adopt?.(result.aliases)
+                teamDefaultStore.adopt?.(result.teamDefault)
                 return
               }
               if (result?.status === 'broken') {

@@ -4,6 +4,19 @@ Project-level decision log for the dsh-model-flatmap plugin. Append-only: new
 entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
+## DEC-063 — 2026-11-26 — 团队协作默认值搬进 `config.yaml` 并真正应用到新会话（推翻 DEC-057 的浏览器 `localStorage` 方案）
+
+**Context.** 用户反馈：「我记得这个『启动智能体团队协作』已经嘱咐过 DSH 要默认开启；可是实践中我看到的常常是默认关闭。」查证后发现两个独立缺陷，叠加起来让这个设置完全无效：（1）DEC-057 引入的默认值只写进浏览器 `localStorage`，**宿主侧没有任何消费者**——面板从不读它，所以它无论如何都不可能改变任何会话的行为，开关是装饰性的；（2）桌面版 GUI 每次启动都监听不同的 `127.0.0.1:<随机端口>`（本机历史有 56602、54238、56668、58280……），而 `localStorage` 按 origin 隔离，端口一变，这个偏好就凭空丢失。也就是说用户即使只想要第（1）条的修复，光「能读到」还不够——读到的必须是不会随端口消失的值。
+
+**Decision.** 三件事一起做。（1）**真正应用，且在 Host 侧**：`index.js` 新增 `installTeamDefault(ctx)`，订阅 `agent/created`，条件是 `source === 'startup'`、非 subagent、且该 Session 的日志里**没有属于自己**的 `team/mode` 事件，满足则 `ctx.get('agentTeams').setEnabled(agent, true)`。这与宿主自己 `defaultEnabled` 的钩子同形，但读数来自 `config.yaml`，因此插件可配置。**为什么不放在面板里**：宿主的投影 wire 视图是 `enabled: state.enabled === true`（`buildTeamProjection`），布尔化之后「从未选择」和「显式关闭」在客户端完全同形——面板根本无法区分，任何面板端判断都会把用户的显式 opt-out 覆盖掉。原始事件日志才保留这个区别，而它只有 Host 侧拿得到。放 Host 侧的第二个好处是时机：`agent/created` 在该 Session 第一个模型步之前，因此第一轮请求就带上 Team 工具与协作提示，面板端要等用户打开选择器才可能生效。继承自 fork 的事件通过 `inheritedEventCount` 水位排除，与投影自身的规则一致；日志读不出来时按「已有选择」处理（宁可不动，也不覆盖用户的选择）。（2）**换存储**：这个偏好从 `localStorage` 移到插件自有配置文件 `$DSH_HOME/dsh-model-flatmap/config.yaml` 的 `teamDefault: true|false`，与 `hidden` / `aliases` 同一个文件（DEC-060 的「唯一事实来源 + 无缓存 + 无镜像」规则照旧适用）。config 路由的 GET/POST 与客户端的 `parseConfigPayload` / `loadConfigFromHost` / `syncConfigToHost` 全部携带这第三个字段；三个 section 的镜像 POST 都发送**完整记录**，因为 POST 是整体替换，只发自己那一半会把另外两个 section 重置。（3）**一次性迁移**：若旧 `dshmf:teamDefault` 键里是 `{enabled:true}`（用户已经表达过的 opt-in），写入文件一次并删除该键；其余情况（缺失、损坏、`false`）不做任何事——文件默认本来就是 `false`。
+
+**Rationale.** 一个「默认值」只有在没人读它的时候才会显得正确而无害；这次的事实是该设置从未生效过，属于「功能假装存在」。应用点必须在 Host：这不只是「哪里方便」的问题，而是「哪里看得见真相」——客户端视图把 `enabled` 布尔化了，唯一能区分「没选过」与「选了关」的原始日志就在宿主手上。把存储换到文件，是因为端口随机 → origin 随机 → `localStorage` 不可靠，这不是「顺手改」，而是同一个缺陷的第二半：即使读了，读到的也还是个会消失的值。用文件还能让用户手改、diff、备份，与另外两个偏好一致。
+
+**Rejected.** （0）**在面板里应用**（本条最初就是这么写的，实现到一半才被宿主源码纠正）：客户端的 `agentTeam` 投影已经把 `enabled` 布尔化，`enabled === undefined` 在生产里永远不成立，面板端判断只会把每个显式关闭的会话都"修正"成开启。测试之所以先绿，是因为测试桩伪造了宿主不会发出的形状——这是本次最大的教训（见 LES-050）。（1）**在插件里直接改宿主的 `agent-team.defaultEnabled` 配置**：那是 profile 的 plugin config 字段，插件没有写入通道；而且它是 profile 级的全局开关，用户就无法在设置页里改，等于把一个用户偏好变成改配置文件。（2）**只保留 `localStorage` 但让面板去读**：修好了「没人读」，没修「端口一变就丢」，用户下次重启仍然看到关闭。（3）**只搬文件、不接应用点**：文件写得很漂亮，行为仍是关闭——正是这次要修的东西。（4）**用 `localStorage` 缓存文件值做首帧**：违反 DEC-060 的「只有一个 source of truth」，还会让「谁是默认值」重新变成两个答案。（5）**写进 `$DSH_HOME/plugins/dsh-model-flatmap/`（telemetry 所在目录）**：那是遥测数据目录，`config.yaml` 历来在 `$DSH_HOME/dsh-model-flatmap/`，拆成两处会让用户找不到。（6）**迁移时把旧的 `false` 也写进文件**：文件默认就是 `false`，写一遍除了产生一次无意义 IO 和 diff 之外没有任何差异。
+
+**Consequences.** `index.js` 新增 `installTeamDefault` / `hasSavedTeamMode` / `readTeamDefaultPreference`（`installTeamDefault` 从 `__test` 导出以便直接测试）并在 `apply()` 里调用；`config.js` 的 `KNOWN_SECTIONS` 增加 `teamDefault`，`emptyConfig()`/`EMPTY_CONFIG` 带上 `teamDefault: false`，`parseConfig` 只接受 `true`/`false`（其余写法直接报错，避免一次手误把用户的「开」静默变成「关」），`serializeConfig` 在文件末尾追加带注释的标量行；`index.js` 的 config 路由接受并回传该字段（浏览器不发该字段时保留文件原值）；`client.js` 的 `createTeamDefaultStore` 重写为「内置默认 → `adopt(文件值)` → `setEnabled` 镜像 + `dirty` 守卫」，删除 `TEAM_DEFAULT_KEY` / `readTeamDefault` / `writeTeamDefault`，新增 `readLegacyTeamDefault` / `forgetLegacyTeamDefault`；面板**不**新增任何应用逻辑（它的投影看不到真相），设置页仍是唯一写入方。测试 356 → 374，全绿且连跑三次稳定；把 `apply()` 里的 `installTeamDefault(ctx)` 注释掉转红 3 条，把 `hasSavedTeamMode` 守卫去掉转红 2 条（含"显式关闭不被覆盖"与"日志不可读时不乱动"），把 store 换回 `localStorage` 版本转红 7 条，红→绿证据成立。`README.zh.md` 新增该偏好的说明，`docs/DETAIL.md` 的 *Agent teamwork* 小节补充应用点、换存储的理由与迁移规则。
+
+
 ## DEC-062 — 2026-11-26 — 团队协作行的标题改为裸名词，说明改由标题自身的 hover hint 承担，删掉右侧 `i` 图标
 
 **Context.** 用户要求三件事：标题 `启用智能体团队协作` 去掉前缀「启动」；鼠标悬停在这个标题上时出现 hint「通过共享任务板协调多个智能体的分工与进度，复杂任务表现更佳，token 开销也相应更高。」；它右侧的 `i` 图标去掉。

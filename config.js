@@ -19,6 +19,7 @@
  *   - third-party/grok-4
  * aliases:
  *   third-party: 第三方
+ * teamDefault: true
  * ```
  *
  * It is NOT a general YAML parser and must not grow into one. Anything outside
@@ -49,7 +50,7 @@ const PLUGIN_DIR_NAME = 'dsh-model-flatmap'
 const DSH_HOME_ENV = 'DSH_HOME'
 
 /** The two top-level keys this file may carry. Anything else is a typo. */
-const KNOWN_SECTIONS = new Set(['hidden', 'aliases'])
+const KNOWN_SECTIONS = new Set(['hidden', 'aliases', 'teamDefault'])
 
 /**
  * The built-in defaults: nothing hidden, nothing renamed.
@@ -62,6 +63,7 @@ const KNOWN_SECTIONS = new Set(['hidden', 'aliases'])
 export const EMPTY_CONFIG = Object.freeze({
   hidden: new Set(),
   aliases: new Map(),
+  teamDefault: false,
 })
 
 /**
@@ -70,7 +72,7 @@ export const EMPTY_CONFIG = Object.freeze({
  * @returns {{hidden: Set<string>, aliases: Map<string, string>}} empty config.
  */
 function emptyConfig() {
-  return { hidden: new Set(), aliases: new Map() }
+  return { hidden: new Set(), aliases: new Map(), teamDefault: false }
 }
 
 /**
@@ -194,14 +196,29 @@ export function parseConfig(text) {
       }
       const inline = rest.trim()
       if (inline.length > 0) {
-        // The writer emits the empty flow forms for an empty section, so they
-        // have to read back. Anything else on the key line is a mistake.
+        // `teamDefault` is a scalar that lives ON its key line; the two record
+        // sections only accept their empty flow forms there. Anything else is a
+        // mistake, not a value to guess at.
+        if (key === 'teamDefault') {
+          const value = parseScalar(inline)
+          if (value !== 'true' && value !== 'false') {
+            throw new Error(`${CONFIG_FILE_NAME} 第 ${index + 1} 行：teamDefault 只能是 true 或 false`)
+          }
+          config.teamDefault = value === 'true'
+          section = null
+          continue
+        }
         const emptyFlow = (key === 'hidden' && inline === '[]') || (key === 'aliases' && inline === '{}')
         if (!emptyFlow) {
           throw new Error(`${CONFIG_FILE_NAME} 第 ${index + 1} 行："${key}" 下面必须是缩进的列表或映射`)
         }
         section = null
         continue
+      }
+      if (key === 'teamDefault') {
+        // The writer always emits a value, so a bare key is a half-finished edit
+        // rather than "false": say so instead of silently turning it off.
+        throw new Error(`${CONFIG_FILE_NAME} 第 ${index + 1} 行：teamDefault 后面必须跟 true 或 false`)
       }
       section = key
       continue
@@ -216,6 +233,10 @@ export function parseConfig(text) {
       throw new Error(`${CONFIG_FILE_NAME} 第 ${index + 1} 行：这一行没有缩进，无法归到 "${section}" 下面`)
     }
     const body = line.trim()
+
+    if (section === 'teamDefault') {
+      throw new Error(`${CONFIG_FILE_NAME} 第 ${index + 1} 行：teamDefault 是单个值，不写缩进内容`)
+    }
 
     if (section === 'hidden') {
       const item = /^-\s*(.*)$/.exec(body)
@@ -287,7 +308,8 @@ export function serializeConfig(config) {
   const lines = [
     '# dsh-model-flatmap 插件自有配置',
     '#',
-    '# 这个文件归插件自己所有，模型面板的显示开关与 Provider 重命名都存在这里。',
+    '# 这个文件归插件自己所有：模型面板的显示开关、Provider 重命名、以及',
+    '# 新会话是否默认开启智能体团队协作，都存在这里。',
     '# 可以直接编辑；保存后重启 DSH 生效。设置页的改动也会写回这里。',
     '#',
     '# hidden: 被关掉的 Provider id 或 "provider/model" 路由。没列出的就是显示。',
@@ -307,6 +329,10 @@ export function serializeConfig(config) {
     lines.push('aliases:')
     for (const [id, name] of aliases) lines.push(`  ${formatScalar(id)}: ${formatScalar(name)}`)
   }
+
+  lines.push('')
+  lines.push('# teamDefault: 新会话是否默认开启智能体团队协作。已有会话保存过的选择不受影响。')
+  lines.push(`teamDefault: ${config?.teamDefault === true ? 'true' : 'false'}`)
 
   return `${lines.join('\n')}\n`
 }

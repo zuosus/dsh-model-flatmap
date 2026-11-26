@@ -189,6 +189,27 @@ test('an empty config serialises to a file that parses back to empty', () => {
   assert.equal(back.aliases.size, 0)
 })
 
+test('the teamwork default round-trips as a plain scalar', () => {
+  // It lives in the same file as the two record sections (DEC-063) and must
+  // survive both directions, or the preference resets on every save.
+  for (const value of [true, false]) {
+    const text = serializeConfig({ hidden: new Set(), aliases: new Map(), teamDefault: value })
+    assert.match(text, new RegExp(`teamDefault: ${String(value)}`), 'written as a scalar on its own line')
+    assert.equal(parseConfig(text).teamDefault, value, 'and reads back unchanged')
+  }
+  // A missing line is the built-in default, same as a missing section.
+  assert.equal(parseConfig('hidden: []').teamDefault, false)
+  assert.equal(parseConfig('').teamDefault, false)
+})
+
+test('a malformed teamwork default is an error, not a silent reset', () => {
+  // Turning a user's "on" into "off" because of a typo is the failure mode this
+  // whole file exists to avoid.
+  for (const bad of ['teamDefault: yes', 'teamDefault: 1', 'teamDefault:', 'teamDefault:\n  - true']) {
+    assert.throws(() => parseConfig(bad), /teamDefault/, `bad document ${JSON.stringify(bad)}`)
+  }
+})
+
 test('a value that needs quoting is quoted, and still parses back', () => {
   const tricky = new Map([
     ['p', 'has: colon'],

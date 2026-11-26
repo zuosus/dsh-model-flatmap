@@ -47,6 +47,7 @@ import {
   shanghaiDay,
   writeSettingsFile,
 } from '../telemetry.js'
+import { writeConfigFile } from '../config.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const PLUGIN = 'dsh-model-flatmap'
@@ -849,5 +850,217 @@ test('the telemetry-settings route writes a POSTed choice and rejects bad bodies
     } finally {
       if (process.env.DSH_HOME === home) delete process.env.DSH_HOME
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The teamwork DEFAULT actually applies (DEC-063).
+//
+// Two defects made the Settings toggle decorative: nothing read the preference,
+// and it lived in `localStorage`, which the Desktop GUI loses on every restart
+// because its port — and therefore the origin — changes. The preference now
+// lives in `config.yaml`, and the Host applies it on `agent/created`, which runs
+// BEFORE the Session's first model step.
+//
+// The Host is the only place this can work: the Team projection's client view
+// always reports `enabled` as a boolean, so the browser cannot distinguish
+// "nobody chose" from "chose off". The durable event log can.
+// ---------------------------------------------------------------------------
+
+/** A fake Host context that records the events the plugin subscribes to. */
+function teamHost(options = {}) {
+  const handlers = new Map()
+  const calls = []
+  const teams = options.noService === true ? undefined : {
+    setEnabled: async (agent, enabled) => { calls.push([agent, enabled]); return undefined },
+  }
+  const services = { agentTeams: teams }
+  return {
+    calls,
+    handlers,
+    ctx: {
+      get: name => services[name],
+      effect: fn => fn(),
+      logger: { warn: () => {} },
+      on: (type, handler) => {
+        handlers.set(type, handler)
+        return () => { handlers.delete(type) }
+      },
+    },
+  }
+}
+
+/** A fake live root agent; `events` are the ones its log already holds. */
+function fakeAgent(events = [], origin) {
+  return {
+    session: {
+      header: { origin },
+      inheritedEventCount: 0,
+      ownEvents: () => events,
+    },
+  }
+}
+
+/**
+ * Run the teamwork-default installer against a temp home.
+ *
+ * The installer is called directly rather than through `apply()`: `apply()` also
+ * fires the heartbeat, whose background write would race this cleanup. The one
+ * test that does go through `apply()` tolerates that.
+ */
+async function withTeamHost(preference, run) {
+  const { installTeamDefault } = await import('../index.js')
+  await withTempDir(async (dir) => {
+    const home = process.env.DSH_HOME
+    try {
+      process.env.DSH_HOME = dir
+      const written = await import('../config.js')
+      if (preference !== undefined) {
+        writeConfigFile(written.resolveConfigFile(),
+          { hidden: new Set(), aliases: new Map(), teamDefault: preference })
+      }
+      const host = teamHost()
+      installTeamDefault(host.ctx)
+      const created = host.handlers.get('agent/created')
+      assert.equal(typeof created, 'function', 'the Host subscribes to agent creation')
+      return await run({ created, host, dir })
+    } finally {
+      if (process.env.DSH_HOME === home) delete process.env.DSH_HOME
+    }
+  })
+}
+
+test('a new root Session gets teamwork on when the preference is on', async () => {
+  await withTeamHost(true, async ({ created, host }) => {
+    const agent = fakeAgent([])
+    await created({ agent, source: 'startup' })
+    assert.equal(host.calls.length, 1, 'the default is written')
+    assert.equal(host.calls[0][0], agent, 'for this Session')
+    assert.equal(host.calls[0][1], true, 'and it says on')
+  })
+})
+
+test('a preference that is off writes nothing', async () => {
+  await withTeamHost(false, async ({ created, host }) => {
+    await created({ agent: fakeAgent([]), source: 'startup' })
+    assert.deepEqual(host.calls, [], 'off is the absence of a write, not a write of false')
+  })
+})
+
+test('no config file at all means off, like the host default', async () => {
+  await withTeamHost(undefined, async ({ created, host }) => {
+    await created({ agent: fakeAgent([]), source: 'startup' })
+    assert.deepEqual(host.calls, [], 'a machine that never configured it gets the host default')
+  })
+})
+
+test('a Session that already saved a selection is never overridden', async () => {
+  // This is the case the browser CANNOT see: the wire view renders a saved
+  // "off" and "never chosen" identically. Overriding an explicit opt-out is
+  // worse than not applying the default, so the check runs on the event log.
+  for (const enabled of [false, true]) {
+    await withTeamHost(true, async ({ created, host }) => {
+      const saved = [{ type: 'team/mode', seq: 3, data: { enabled } }]
+      await created({ agent: fakeAgent(saved), source: 'startup' })
+      assert.deepEqual(host.calls, [], `an explicit ${String(enabled)} is left alone`)
+    })
+  }
+})
+
+test('a resumed Session keeps whatever it had', async () => {
+  await withTeamHost(true, async ({ created, host }) => {
+    await created({ agent: fakeAgent([]), source: 'resume' })
+    assert.deepEqual(host.calls, [], 'resuming never applies the default')
+    await created({ agent: fakeAgent([]), source: 'compact' })
+    assert.deepEqual(host.calls, [], 'nor does compaction')
+  })
+})
+
+test('a subagent never gets the default applied', async () => {
+  // `setEnabled` refuses a descendant outright, so attempting it would only
+  // produce a rejected promise on every child activation.
+  await withTeamHost(true, async ({ created, host }) => {
+    await created({ agent: fakeAgent([], 'subagent'), source: 'startup' })
+    assert.deepEqual(host.calls, [], 'children share their root selection')
+  })
+})
+
+test('a team/mode inherited from a fork is not this Session\'s choice', async () => {
+  await withTeamHost(true, async ({ created, host }) => {
+    const inherited = [{ type: 'team/mode', seq: 1, data: { enabled: false } }]
+    const agent = {
+      session: {
+        header: {},
+        inheritedEventCount: 5,
+        ownEvents: () => inherited,
+      },
+    }
+    await created({ agent, source: 'startup' })
+    assert.equal(host.calls.length, 1, 'a forked event below the watermark does not count as saved')
+  })
+})
+
+test('a Host without the Team service is left alone', async () => {
+  await withTeamHost(true, async ({ created }) => {
+    const host = teamHost({ noService: true })
+    const { installTeamDefault } = await import('../index.js')
+    installTeamDefault(host.ctx)
+    await assert.doesNotReject(host.handlers.get('agent/created')({ agent: fakeAgent([]), source: 'startup' }),
+      'a composition without Agent Teams must not fault')
+    assert.equal(typeof created, 'function')
+  })
+})
+
+test('apply() installs the teamwork default alongside the other Host jobs', async () => {
+  // Pins the wiring, which the direct-call tests above deliberately bypass.
+  //
+  // The state file is pre-seeded with today's attempt so the activation
+  // heartbeat decides "already done today" and performs NO write. Without that
+  // its fire-and-forget write outlives the test and races the cleanup.
+  const { apply } = await import('../index.js')
+  await withTempDir(async (dir) => {
+    const home = process.env.DSH_HOME
+    try {
+      process.env.DSH_HOME = dir
+      const today = shanghaiDay(Date.parse('2026-11-14T02:00:00Z'))
+      await mkdir(join(resolveDataDir(), '..'), { recursive: true })
+      await mkdir(resolveDataDir(), { recursive: true })
+      await writeFile(join(resolveDataDir(), STATE_FILE), serializeState({
+        installId: newInstallId(),
+        firstRunAt: Date.parse('2026-11-13T02:00:00Z'),
+        firstVersion: PLUGIN,
+        lastSentDay: today,
+        lastAttemptDay: today,
+        lastOkDay: today,
+        failures: 0,
+        degraded: false,
+      }))
+      const events = []
+      apply({
+        get: () => undefined,
+        effect: fn => fn(),
+        logger: { warn: () => {} },
+        on: type => { events.push(type); return () => {} },
+      })
+      assert.ok(events.includes('agent/created'), 'the subscription is made on activation')
+    } finally {
+      if (process.env.DSH_HOME === home) delete process.env.DSH_HOME
+    }
+  })
+})
+
+test('an unreadable event log leaves the selection alone', async () => {
+  // Reading a broken log as "no choice" would turn teamwork back on for a user
+  // who switched it off — the exact override the event check exists to prevent.
+  await withTeamHost(true, async ({ created, host }) => {
+    const agent = {
+      session: {
+        header: {},
+        inheritedEventCount: 0,
+        ownEvents() { throw new Error('log unavailable') },
+      },
+    }
+    await created({ agent, source: 'startup' })
+    assert.deepEqual(host.calls, [], 'an unknown selection is not treated as absent')
   })
 })
