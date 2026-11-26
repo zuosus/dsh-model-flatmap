@@ -21,6 +21,7 @@
   },
   "files": [
     "index.js",
+    "config.js",
     "repo-url.js",
     "telemetry.js",
     "client.js",

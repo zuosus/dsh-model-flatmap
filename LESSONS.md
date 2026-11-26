@@ -4,6 +4,19 @@ Project-level lessons log for the dsh-model-flatmap plugin. Append-only: new
 entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
+## LES-051 — 2026-11-26 — `files` 数组漏了被 import 的模块，发布出去的 1.6.0 装完就报 `ERR_MODULE_NOT_FOUND`
+
+`index.js` 里 `import { readConfigFile } from './config.js'`，但 `package.json` 的 `files` 只列了 `index.js` / `repo-url.js` / `telemetry.js` / `client.js` / `cordis.patch.yml` / `locale/*.json` / `docs` / `icon.svg`。`config.js` 缺失，于是 1.6.0 的 tarball 里根本没有它——**每一个从 npm 安装的用户，宿主半边都加载失败**。而本地 checkout 里 `config.js` 一直在，全部 374 条测试也一直全绿，因为测试跑的是工作树，不是 tarball。
+
+这是「测试覆盖了代码正确性，却没覆盖产物完整性」的典型缺口。三步自查，按代价从低到高：
+
+1. **改完 import 就扫一眼 `files`**：新增一个被入口 import 的相对模块时，`files` 必须同步。这条靠自觉，最容易漏。
+2. **加一条声明式测试**（成本极低，已落地为 `test/package.test.mjs`）：遍历 `index.js` / `client.js` 的相对 import 图，断言每个节点都能被某个 `files` 条目匹配到。它不跑 npm，只读 manifest，所以毫秒级。注意 npm 特性：`package.json`、`README*`、`LICENSE` 无论如何都会被打包，对它们断言 `files` 是假阳性。
+3. **发版前真的解包验证一次**：`npm pack --pack-destination /tmp/x` → `tar xzf` → `node -e "import('./package/index.js')"`。这是唯一能证明「用户拿到的那个东西能跑」的检查。`npm pack --dry-run` 只列出文件，不证明它们能互相解析。
+
+顺带：`npm view` / `npm pack` 在沙箱里若报 `EPERM` 指向 `~/.config/npm/cache`，是缓存目录权限问题而非网络或凭据问题，加 `--cache <临时目录>` 即可，别误判成需要重登。
+
+
 ## LES-050 — 2026-11-26 — 一个「偏好」开关，要有读它的人、要在会活下来的地方；两者缺一都等于没做
 
 用户说「我嘱咐过要默认开启，但实践中常常是关闭的」。查下去是两个缺陷叠在一起，而且**任何一个单独修好都不会改变用户看到的现象**：

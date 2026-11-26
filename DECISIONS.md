@@ -4,6 +4,19 @@ Project-level decision log for the dsh-model-flatmap plugin. Append-only: new
 entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
+## DEC-064 — 2026-11-26 — `config.js` 补进 `files`，并加一条测试盯住「被 import 的模块必须随包发布」
+
+**Context.** 发 1.7.0 前解包核对已发布的 1.6.0，发现 tarball 里没有 `config.js`，而 `index.js` 第 49 行 `import ... from './config.js'`。实际验证：解包后 `import('./index.js')` 直接抛 `ERR_MODULE_NOT_FOUND`。也就是说 1.6.0 是坏的——凡从 npm 安装者，宿主半边加载失败，整个插件不可用（DEC-060 把可见性/别名搬进 `config.yaml` 时新增了 `config.js`，但只加了 import，没加 `files` 条目）。本地 374 条测试全绿，因为它们跑在工作树里，`config.js` 一直在。
+
+**Decision.** 两件事：（1）`package.json` 的 `files` 增加 `config.js`；（2）新增 `test/package.test.mjs`，遍历 `index.js` 与 `client.js` 的相对 import 图，断言每个被导入的文件都能被某个 `files` 条目覆盖，并断言 `exports` 里的具体路径（glob 与 npm 恒定包含的 `package.json` / `README*` / `LICENSE` 除外）同样在发布范围内。
+
+**Rationale.** 这个缺陷的性质是「代码对、产物错」，而所有既有测试的输入都是源码树，没有任何一条会去看 npm 会打包什么——所以它不是「再加一条普通断言」能防住的，必须有一条测试专门读 manifest 与 import 图。声明式检查（读 manifest、不跑 npm）毫秒级、无副作用，能拦住同类问题；真实解包验证成本高一些，留给发版流程。
+
+**Rejected.** （1）把 `files` 改成不限制（删掉该字段）：会把 `.DS_Store`、`.agents`、`test/`、`DECISIONS.md`、`LESSONS.md` 一并打进去，包体从 ~650KB 涨到不可控，且把内部文档暴露给使用者。（2）用 `npm pack --dry-run` 的文本输出做断言：那是给人看的表格，格式不稳，而且它只证明文件在列表里、不证明能互相解析。（3）只在 CI 里解包验证：抓到问题时版本号已 bump，回滚麻烦；声明式测试更早、更便宜。（4）把 `config.js` 的内容并进 `index.js` 回避问题：`config.js` 有独立的解析/序列化职责与 20 条测试，合并会让 `index.js` 超过尺寸预算（见 ai-coding skill）。
+
+**Consequences.** `package.json` 的 `files` 增至 9 项；新增 `test/package.test.mjs` 4 条测试（import 图覆盖、exports 覆盖、文件真实存在、零运行时依赖）；测试 374 → 378，全绿。`LESSONS.md` 追加 LES-051。已用 `npm pack --pack-destination` + `tar xzf` + `import('./package/index.js')` 实测通过，导出 7 项。此条同时是 1.7.0 发布的必要前置：不修它，新版本一样装不起来。
+
+
 ## DEC-063 — 2026-11-26 — 团队协作默认值搬进 `config.yaml` 并真正应用到新会话（推翻 DEC-057 的浏览器 `localStorage` 方案）
 
 **Context.** 用户反馈：「我记得这个『启动智能体团队协作』已经嘱咐过 DSH 要默认开启；可是实践中我看到的常常是默认关闭。」查证后发现两个独立缺陷，叠加起来让这个设置完全无效：（1）DEC-057 引入的默认值只写进浏览器 `localStorage`，**宿主侧没有任何消费者**——面板从不读它，所以它无论如何都不可能改变任何会话的行为，开关是装饰性的；（2）桌面版 GUI 每次启动都监听不同的 `127.0.0.1:<随机端口>`（本机历史有 56602、54238、56668、58280……），而 `localStorage` 按 origin 隔离，端口一变，这个偏好就凭空丢失。也就是说用户即使只想要第（1）条的修复，光「能读到」还不够——读到的必须是不会随端口消失的值。
