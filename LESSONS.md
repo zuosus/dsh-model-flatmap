@@ -4,6 +4,15 @@ Project-level lessons log for the dsh-model-flatmap plugin. Append-only: new
 entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
+## LES-049 — 2026-11-26 — `client.js` 的整段 CSS 在一个模板字符串里，注释里写反引号会让整个文件语法错误
+
+本插件的 CSS 不是独立文件，而是 `const CSS = \`...\`` 这段模板字符串。想给某条规则补一句注释、顺手用反引号标出属性名（例如「它自己的 \`title\` hint」）时，那个反引号会**提前结束模板字符串**，后面的英文单词变成裸标识符——`SyntaxError: Unexpected identifier 'title'`。
+
+后果有迷惑性：`node --test test/` 会把 `plan.test.mjs`、`render.test.mjs` 等每个测试文件都报成 `'test failed'`，看上去像五处独立故障，实际只有一处语法错误。排查顺序应该是先 `node --check client.js`，再跑测试。
+
+对策：CSS 注释里不要用反引号，需要强调就写成普通词（`title hint` 而不是 \`title\` hint）；改完 CSS 字符串后先 `node --check`，再跑测试集。另外，删除一条 CSS 规则时，测试里按「下一条规则的选择器」切片的断言也要同步改锚点——本次删掉 `.dshmf-teamLabel` 后，一处 `css.slice(indexOf(".dshmf-team {"), indexOf(".dshmf-teamLabel {"))` 会静默切到文件末尾，断言照样通过但覆盖范围变了，属于「测试变绿但失效」的隐患。
+
+
 ## LES-048 — 2026-11-21 — 测试运行时补上 `useLayoutEffect` 时，flush 要给最小 `window`
 
 本插件的 render 测试用自建的 hook runtime 跑真组件。原先 `useLayoutEffect: () => { cursor += 1 }` 只是占掉一个槽位——组件里所有布局效应（测量、placement、定位）在测试里从未真正执行过。要测「打开面板时把网格滚动到选中行」就必须真的跑布局效应，于是把它改成和 `useEffect` 一样的排队 + `flushLayoutEffects()`。

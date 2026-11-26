@@ -1442,6 +1442,48 @@ test('turning the teamwork switch ON calls setEnabled(sessionId, true)', () => {
   assert.deepEqual(calls, [['session-1', true]])
 })
 
+// The row's title is a bare noun: the verb belongs to the switch, and the
+// switch already says on/off. The description is no longer a separate `i`
+// icon: hovering the title itself must reveal it.
+test('the teamwork title drops the leading verb in both languages', () => {
+  runtime.reset()
+  const { ctx, dictionaryRegistrations } = makeCtx()
+  bundle.apply(ctx)
+  const dicts = dictionaryRegistrations[0].dicts
+  assert.equal(dicts.zh['team.label'], '智能体团队协作')
+  assert.equal(dicts.en['team.label'], 'Agent teamwork')
+  assert.equal(dicts.zh['team.description'],
+    '通过共享任务板协调多个智能体的分工与进度，复杂任务表现更佳，token 开销也相应更高。',
+    'the hint keeps the host wording, character for character')
+})
+
+test('hovering the teamwork title reveals the description as its hint', () => {
+  const { tree } = openPanel(catalogState())
+  const name = findAll(tree, node => hasClass(node, 'dshmf-teamName'))[0]
+  assert.ok(name, 'the title is its own node so it can carry the hint')
+  assert.equal(name.props.title, 'team.description',
+    'the title itself carries the hover hint, not a sibling icon')
+})
+
+test('the title hint degrades to the unavailable reason when the service is missing', () => {
+  const { tree } = openPanel(catalogState(), { inject: { teamAvailable: () => false } })
+  const name = findAll(tree, node => hasClass(node, 'dshmf-teamName'))[0]
+  assert.equal(name.props.title, 'team.unavailable',
+    'a broken row explains itself on hover instead of going silent')
+})
+
+test('the info icon beside the teamwork title is gone', () => {
+  const { tree } = openPanel(catalogState())
+  assert.equal(findAll(tree, node => hasClass(node, 'dshmf-info')).length, 0,
+    'no `i` glyph is drawn next to the title')
+  assert.equal(findAll(tree, node => node.type === 'svg' && node.props?.width === 12
+    && node.children?.some(child => child?.props?.d === 'M7 6.4v4.1M7 3.7v.8')).length, 0,
+    'the info glyph path is no longer rendered anywhere in the row')
+  const css = source.match(/const CSS = `([\s\S]*?)`/)[1]
+  assert.equal(css.includes('.dshmf-info'), false, 'its rule is removed with it')
+  assert.equal(source.includes('PATH_INFO'), false, 'and the unused path constant too')
+})
+
 test('the teamwork row stays visible but disabled when remote.agentTeams is absent', () => {
   runtime.reset()
   const { ctx, seat } = makeCtx({ services: {} })
@@ -1727,7 +1769,7 @@ test("a single grey divider sits above the whole footer, on neither group", () =
   const css = source.match(/const CSS = `([\s\S]*?)`/)[1]
   const footer = css.match(/\.dshmf-footer \{([\s\S]*?)\}/)[1]
   const reason = css.slice(css.indexOf(".dshmf-reason {"), css.indexOf(".dshmf-reasonLabel {"))
-  const team = css.slice(css.indexOf(".dshmf-team {"), css.indexOf(".dshmf-teamLabel {"))
+  const team = css.slice(css.indexOf(".dshmf-team {"), css.indexOf(".dshmf-teamName {"))
 
   assert.ok(footer.includes("border-top: 1px solid #9CA3AF"), "ordinary grey line above the footer block")
   assert.ok(css.includes("body[data-ds-dark-theme] .dshmf-footer"), "dark theme switches to a lighter grey")

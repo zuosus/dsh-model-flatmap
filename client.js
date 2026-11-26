@@ -849,20 +849,16 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
 .dshmf-pill:disabled[aria-checked="true"] { opacity: .5; }
 .dshmf-pill:focus-visible { outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: -2px; }
 
-/* Teamwork row: label, info button and switch all left-aligned on one line,
-   so the switch sits immediately to the right of the title. */
+/* Teamwork row: title and switch left-aligned on one line, so the switch sits
+   immediately to the right of the title. The title carries the explanation as
+   its own title hint; there is no separate info glyph to align. */
 .dshmf-team {
   flex: 0 0 auto; display: flex; align-items: center; justify-content: flex-start; gap: 8px;
   max-width: 100%;
   min-height: 30px; padding: 0 6px;
   color: var(--dsw-alias-label-primary); font-size: 12px; line-height: 18px;
 }
-.dshmf-teamLabel { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
-.dshmf-teamName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dshmf-info {
-  flex: none; display: inline-flex; align-items: center; justify-content: center;
-  width: 16px; height: 16px; color: var(--dsw-alias-label-caption);
-}
+.dshmf-teamName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dshmf-switch {
   box-sizing: border-box; position: relative; flex: 0 0 auto; width: 36px; height: 20px; padding: 2px;
   border: 0; border-radius: 999px; corner-shape: round; background: var(--dsw-alias-border-l3); cursor: pointer;
@@ -1048,7 +1044,6 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
 
     const PATH_CHEVRON = 'M3.2 5.6 7 9.4 10.8 5.6'
     const PATH_CLOSE = 'M4 4 10 10M10 4 4 10'
-    const PATH_INFO = 'M7 6.4v4.1M7 3.7v.8'
     const PATH_SPARK = 'M7 1.6 8.3 5.7 12.4 7 8.3 8.3 7 12.4 5.7 8.3 1.6 7 5.7 5.7 7 1.6Z'
     const PATH_MODELS = 'M7 2.1 11.9 4.7 7 7.3 2.1 4.7 7 2.1Zm-4.9 5.1L7 9.8l4.9-2.6M2.1 10.3 7 12.9l4.9-2.6'
     /* Four tiles: the flat panel this control returns to, so the icon names the
@@ -3477,7 +3472,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         'effort.default': 'Default',
         'effort.label': '推理等级',
         'effort.hint': '调整模型的思考强度：档位越高，思考越深入，但速度更慢、token 开销更大。',
-        'team.label': '启用智能体团队协作',
+        'team.label': '智能体团队协作',
         'team.description': '通过共享任务板协调多个智能体的分工与进度，复杂任务表现更佳，token 开销也相应更高。',
         'team.unavailable': '当前会话尚未加载团队协作服务；请重启 DeepSeek Harness 或在新会话中开启 Agent Teams 后再试。',
         'team.failed': '无法确认智能体团队协作设置已保存，请重试：{message}',
@@ -3516,7 +3511,7 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
         'effort.default': 'Default',
         'effort.label': 'Reasoning effort',
         'effort.hint': 'Adjusts how deeply the model thinks: higher levels reason more deeply, but are slower and cost more tokens.',
-        'team.label': 'Enable agent teamwork',
+        'team.label': 'Agent teamwork',
         'team.description': 'Coordinate work and progress across agents with a shared task board for better results on complex tasks, with correspondingly higher token costs.',
         'team.unavailable': 'Agent teamwork is not available in this session yet. Restart DeepSeek Harness or enable Agent Teams in a new session, then try again.',
         'team.failed': 'Could not confirm the agent teamwork setting was saved. Try again: {message}',
@@ -5551,14 +5546,14 @@ html[data-ds-dark-theme] .dshmf-footer { border-top-color: #6B7280; }
                   })),
                 ),
                 h('div', { className: 'dshmf-team', ref: teamRef },
-                  h('span', { className: 'dshmf-teamLabel' },
-                    h('span', { className: 'dshmf-teamName' }, t('team.label')),
-                    h('span', {
-                      className: 'dshmf-info',
-                      title: teamReady ? t('team.description') : t('team.unavailable'),
-                      'aria-hidden': 'true',
-                    }, svg(PATH_INFO, 12)),
-                  ),
+                  // The title carries the explanation as its own `title`: an
+                  // `i` glyph beside it was one more thing to decode before
+                  // the same sentence appeared. Hovering the words themselves
+                  // is the shortest path to the hint.
+                  h('span', {
+                    className: 'dshmf-teamName',
+                    title: teamReady ? t('team.description') : t('team.unavailable'),
+                  }, t('team.label')),
                   h('button', {
                     type: 'button',
                     role: 'switch',

@@ -4,6 +4,19 @@ Project-level decision log for the dsh-model-flatmap plugin. Append-only: new
 entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
+## DEC-062 — 2026-11-26 — 团队协作行的标题改为裸名词，说明改由标题自身的 hover hint 承担，删掉右侧 `i` 图标
+
+**Context.** 用户要求三件事：标题 `启用智能体团队协作` 去掉前缀「启动」；鼠标悬停在这个标题上时出现 hint「通过共享任务板协调多个智能体的分工与进度，复杂任务表现更佳，token 开销也相应更高。」；它右侧的 `i` 图标去掉。
+
+**Decision.** （1）`team.label` 从 `启用智能体团队协作` / `Enable agent teamwork` 改为 `智能体团队协作` / `Agent teamwork`——开关本身已经表达开/关，标题再带动词是重复。（2）把 `team.description` / `team.unavailable` 的 `title` 从那个 `i` 图标搬到标题节点 `.dshmf-teamName` 上，悬停标题即可看到说明；服务不可用时同一个 hint 改为给出 `team.unavailable` 的原因。（3）删除 `i` 图标节点、它的 `.dshmf-info` CSS 规则、只为它存在的 `PATH_INFO` 路径常量，以及中间那层 `.dshmf-teamLabel` 包裹（它原本只负责给图标和标题排版）。（4）开关按钮自己的 `title` 与 `aria-label` 保持不变：开关仍然可被悬停与读屏解释。
+
+**Rationale.** 标题是名词短语，动作属于开关；一个 `i` 图标所预览的正是它旁边那句说明，等于把一步拆成两步。把 hint 直接挂在标题上，是到达同一句话的最短路径，且不增加任何新控件。保留开关自身的 `title` 是因为它是可交互元素，鼠标停上去仍需要一个解释。
+
+**Rejected.** （1）只改文案、保留 `i`：用户明确要求删掉它，且删掉后 hint 的位置正好落在标题上。（2）保留 `i` 但把标题 hint 也加上：同一个说明有两个入口，属于冗余控件。（3）用 `aria-label` 替换可见标题：标题必须可见可读。（4）把 hint 做成自绘 tooltip：原生 `title` 已满足需求，自绘会引入定位、层级与主题的额外复杂度。
+
+**Consequences.** `client.js` 删掉 `.dshmf-teamLabel` / `.dshmf-info` 两条 CSS 与 `PATH_INFO`，`.dshmf-teamName` 承接 `min-width: 0` 的省略号规则；`test/render.test.mjs` 新增 4 条测试（两种语言的标题文案、标题自带 hint、服务缺失时 hint 降级为 `team.unavailable`、`i` 图标与其 CSS/常量彻底消失），并修正一条按 `.dshmf-teamLabel` 切片的旧 CSS 断言；测试数 352 → 356，全绿。`docs/DETAIL.md` 的 *Agent teamwork* 小节同步改写。
+
+
 ## DEC-061 — 2026-11-21 — 打开面板时把网格滚动到当前选中模型，且只滚最小距离
 
 **Context.** 用户要求：点开插件的模型面板时，如果当前选中的模型在网格里，要保证网格滚动到能显示它。面板高度上限 320 px，网格是唯一可滚动区域，而当前模型在长目录里常常落在折叠线以下（按 provider 分组时尤其明显），打开面板后用户看不到自己正在用的那一行，还得手动找。

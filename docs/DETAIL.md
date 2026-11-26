@@ -194,11 +194,17 @@ and the agent teamwork switch are all visible at once.
     replaced. No Host change is involved. A history replacement refolds that
     Session from scratch; `prepend` pages in older history and cannot change a
     mark, so it is ignored.
-- **Agent teamwork.** The switch keeps the host's semantics: the same label,
-  the same confirmation before disabling it mid-conversation, and no optimistic
-  update — the state comes from the `agentTeam` projection. The row lives in
-  the shared footer line described under *Reasoning levels*, immediately right
-  of the reasoning group when both fit on one line.
+- **Agent teamwork.** The switch keeps the host's semantics: the same
+  confirmation before disabling it mid-conversation, and no optimistic update —
+  the state comes from the `agentTeam` projection. The title is the bare noun
+  (`智能体团队协作` / `Agent teamwork`): on/off already belongs to the switch, so
+  the leading verb was noise. Hovering the title reveals the host's description
+  (`team.description`, the sentence about the shared task board and the token
+  cost); when the service is missing the same hint carries `team.unavailable`
+  instead. There is no separate `i` glyph — an icon that only previews the
+  sentence printed one pixel away is a second step for no information. The row
+  lives in the shared footer line described under *Reasoning levels*,
+  immediately right of the reasoning group when both fit on one line.
 
 ## The trigger
 
