@@ -152,3 +152,19 @@ test('the package still declares zero runtime dependencies', () => {
   // also make the tarball unable to load from a bare `npm install`.
   assert.equal(manifest.dependencies, undefined, 'no runtime dependencies')
 })
+
+test('the hero image follows the unified shipping convention', () => {
+  // One hero image, named exactly `hero.png`, a real PNG at the repo root,
+  // linked from both READMEs, and declared in `files` so `npm pack` ships it.
+  const header = readFileSync(join(root, 'hero.png')).subarray(0, 8)
+  assert.deepEqual([...header], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+    'hero.png exists at the repo root and is a real PNG')
+
+  for (const readme of ['README.md', 'README.zh.md']) {
+    const text = readFileSync(join(root, readme), 'utf8')
+    assert.match(text, /\]\(\.\/hero\.png\)/u, `${readme} links ./hero.png`)
+  }
+
+  assert.ok((manifest.files ?? []).includes('hero.png'),
+    'hero.png is declared in package "files" so it ships with the tarball')
+})

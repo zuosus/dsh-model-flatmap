@@ -12,6 +12,9 @@
   },
   "homepage": "https://github.com/zuosus/dsh-model-flatmap#readme",
   "type": "module",
+  "scripts": {
+    "test": "node --test test/"
+  },
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -28,7 +31,8 @@
     "cordis.patch.yml",
     "locale/*.json",
     "docs",
-    "icon.svg"
+    "icon.svg",
+    "hero.png"
   ],
   "dsh": {
     "bundle": {

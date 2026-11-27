@@ -4,6 +4,19 @@ Project-level decision log for the dsh-model-flatmap plugin. Append-only: new
 entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
+## DEC-065 — 2026-11-27 — 统一 hero 图约定：`hero.png` 置于仓库根、双 README 引用、纳入 `files`，并补测试与 `npm test` 脚本
+
+**Context.** 统一 hero 图约定要求：文件名恰为 `hero.png`、PNG 格式、位于仓库根目录，被 `README.md` 与 `README.zh.md` 以 `./hero.png` 引用，并列入 `package.json` 的 `files` 以便随包发布。核查本仓库：`hero.png` 确为 PNG（`file` 输出 `PNG image data, 1536 x 656, 8-bit/color RGB, non-interlaced`，魔数 `89 50 4e 47 0d 0a 1a 0a`），位于仓库根，两份 README 第 3 行均引用 `./hero.png`——这三点已符合。但 `package.json` 的 `files` 只有 9 项（index.js / config.js / repo-url.js / telemetry.js / client.js / cordis.patch.yml / locale/*.json / docs / icon.svg），**不含 `hero.png`**，因此 `npm pack` 不会把它打进 tarball，README 里的图在安装后的包里会失效。此外仓库没有 `scripts.test`，`npm test` 直接报 `Missing script: "test"`，实际测试入口是 `node --test test/`（基线 378 条全绿）。
+
+**Decision.** 三件事。（1）`package.json` 的 `files` 增加 `hero.png`（10 项）——`test/package.test.mjs` 只校验「被 import 的文件必须随包发布」，额外的数据文件是允许的，不会破坏既有断言。（2）新增 `scripts.test: "node --test test/"`，让约定的验收命令 `npm test` 可直接运行。（3）在 `test/package.test.mjs` 新增测试 `the hero image follows the unified shipping convention`：校验 `hero.png` 的 PNG 魔数、两份 README 均含 `](./hero.png)`、且 `files` 含 `hero.png`，把整个约定变成可执行的守护。
+
+**Rationale.** 约定若只写在文档里，就会像 1.6.0 漏掉 `config.js`（DEC-064 / LES-051）那样静默回退——这次的缺口正是「图在仓库里、README 也写了，但发布产物里没有」。用测试同时覆盖格式、位置、引用与发布范围，是对「代码对、产物错」这一类问题的低成本防复发。加 `npm test` 脚本而非改测试框架，是因为测试本就用 Node 内置 `node:test`、无第三方依赖，无需 node_modules，脚本只是给标准命令一个入口。
+
+**Rejected.** （1）把 `hero.png` 塞进 `docs/` 再改 README 引用：`docs` 已在 `files`，能发布，但违背「仓库根、文件名恰为 `hero.png`、引用 `./hero.png`」的统一约定。（2）用 `README*` 的 npm 恒定包含特性指望图片一起打包：npm 只恒定包含 README 文本文件，不会包含它引用的图片。（3）把 `files` 删掉让 npm 全打包：会把 test/、内部文档、`.DS_Store` 一并发布（DEC-064 已否决）。
+
+**Consequences.** 改动 `package.json`（+`scripts.test`、+`files: hero.png`）与 `test/package.test.mjs`（+1 条测试）。红→绿证据：先写测试，未改 manifest 时 `node --test test/package.test.mjs` 5 条中 1 条红（`hero.png is declared in package "files"`）；加 `hero.png` 到 `files` 后全绿。`npm test` 379 → 379（新增 1 条，基线 378），全绿、退出码 0。`npm pack --dry-run` 解包清单确认 `hero.png` 在 tarball 中（共 16 个文件）。
+
+
 ## DEC-064 — 2026-11-26 — `config.js` 补进 `files`，并加一条测试盯住「被 import 的模块必须随包发布」
 
 **Context.** 发 1.7.0 前解包核对已发布的 1.6.0，发现 tarball 里没有 `config.js`，而 `index.js` 第 49 行 `import ... from './config.js'`。实际验证：解包后 `import('./index.js')` 直接抛 `ERR_MODULE_NOT_FOUND`。也就是说 1.6.0 是坏的——凡从 npm 安装者，宿主半边加载失败，整个插件不可用（DEC-060 把可见性/别名搬进 `config.yaml` 时新增了 `config.js`，但只加了 import，没加 `files` 条目）。本地 374 条测试全绿，因为它们跑在工作树里，`config.js` 一直在。
