@@ -1,5 +1,7 @@
 # dsh-model-flatmap
 
+![dsh-model-flatmap hero](./hero.png)
+
 > 一个平铺、无二级菜单的 DeepSeek Harness（DSH）模型选择器：所有模型与推理等级
 > 都在同一平面上，没有层层弹层。
 

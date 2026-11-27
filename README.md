@@ -1,5 +1,7 @@
 # dsh-model-flatmap
 
+![dsh-model-flatmap hero](./hero.png)
+
 > A flat, two-level-free model picker for the DeepSeek Harness (DSH) composer:
 > every model and reasoning level on one surface, no second-level menus.
 
