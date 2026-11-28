@@ -288,3 +288,62 @@ test('a pre-existing config survives a POST that only touches aliases', async ()
     }
   })
 })
+
+test('the route is registered when the web server arrives AFTER activation', async () => {
+  const { apply, CONFIG_ROUTE_PATH } = await import('../index.js')
+  await withTempDir(async (dir) => {
+    const home = process.env.DSH_HOME
+    process.env.DSH_HOME = dir
+    try {
+      const routes = []
+      let deferred
+      const ctx = {
+        // Nothing is mounted yet: this is exactly the real startup order that
+        // made the route disappear. A one-shot lookup here finds `undefined`,
+        // and every later GET/POST answers 404 for the life of the process.
+        get: () => undefined,
+        effect: fn => fn(),
+        inject: (names, callback) => { deferred = { names, callback } },
+        logger: { warn: () => {} },
+      }
+      apply(ctx)
+      assert.equal(routes.length, 0, 'nothing can be registered before the server exists')
+      assert.notEqual(deferred, undefined,
+        'apply() must ask to be told when the web server mounts, instead of giving up')
+      assert.deepEqual(deferred.names, ['webServer'])
+
+      // The server mounts. The route must appear now, with no restart.
+      const webCtx = {
+        get: name => (name === 'webServer' ? { register: (r) => { routes.push(r); return () => {} } } : undefined),
+        effect: fn => fn(),
+      }
+      deferred.callback(webCtx)
+      assert.notEqual(routes.find(item => item.path === CONFIG_ROUTE_PATH), undefined,
+        'a late web server still gets the config route')
+    } finally {
+      if (process.env.DSH_HOME === home) delete process.env.DSH_HOME
+    }
+  })
+})
+
+test('a POST from an older browser keeps the file s teamwork default', async () => {
+  const { CONFIG_ROUTE_PATH } = await import('../index.js')
+  await withTempDir(async (dir) => {
+    const home = process.env.DSH_HOME
+    try {
+      const routes = await boot(dir)
+      const route = routes.find(item => item.path === CONFIG_ROUTE_PATH)
+      // The user turned the default on by hand, then an older browser build —
+      // one that knows only the two record sections — saves a visibility change.
+      await writeRaw(dir, 'hidden: []\nteamDefault: true\n')
+      const posted = await invoke(route, 'POST', { hidden: ['p'], aliases: {} })
+      assert.equal(posted.status, 200)
+      const onDisk = readConfigFile(join(dir, 'dsh-model-flatmap', 'config.yaml'))
+      assert.equal(onDisk.teamDefault, true,
+        'an absent field means "this build says nothing", never "switch it off"')
+      assert.deepEqual([...onDisk.hidden], ['p'])
+    } finally {
+      if (process.env.DSH_HOME === home) delete process.env.DSH_HOME
+    }
+  })
+})

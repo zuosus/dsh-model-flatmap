@@ -130,9 +130,11 @@ async function readConfigBody(req) {
     }
     // `teamDefault` is optional so an older browser build — one that predates
     // the section — keeps writing the two record sections it knows about
-    // instead of having every save rejected. An absent field means "leave the
-    // file's value alone", which is the only reading that cannot surprise it.
-    let teamDefault = false
+    // instead of having every save rejected. An absent field therefore stays
+    // `undefined` here: it means "this build says nothing", and the handler
+    // keeps whatever the file already holds. Defaulting it to `false` would
+    // silently switch the user's preference off on every visibility change.
+    let teamDefault
     if (parsed.teamDefault !== undefined) {
       if (typeof parsed.teamDefault !== 'boolean') return null
       teamDefault = parsed.teamDefault
@@ -160,6 +162,42 @@ function configPayload(config) {
     ))),
     teamDefault: config.teamDefault === true,
   })
+}
+
+/**
+ * Run one route installer where the web server actually is.
+ *
+ * The one-shot `ctx.get('webServer')` this used to do at activation is what made
+ * the whole settings bridge unreliable: routes mount in composition order, so
+ * whenever the server arrived after this plugin the lookup returned `undefined`,
+ * both installers returned silently, and every browser GET/POST answered 404 for
+ * the life of the process. The file switched things on, the route could not write
+ * them back, and the preference reset on the next launch — a symptom that looks
+ * like a lost setting rather than a missing route.
+ *
+ * `ctx.inject` is the documented optional-service channel: the callback runs when
+ * the service mounts (and again if it remounts), and its registrations belong to
+ * that service's lifetime. Exact identity matters — the callback receives a
+ * context scoped to the injected service, so `ctx.get('webServer')` inside it
+ * resolves to that server and not to whatever is globally present.
+ *
+ * The direct call is the fallback for a context that has no `inject` verb: it is
+ * the pre-existing behaviour, and it still works whenever the server is already up.
+ *
+ * @param {object} ctx - the Host plugin context.
+ * @param {(scope: object) => void} install - the installer, run with a scope that can see the server.
+ * @returns {void}
+ */
+function withWebServer(ctx, install) {
+  if (typeof ctx?.inject === 'function') {
+    try {
+      ctx.inject(['webServer'], scope => install(scope))
+      return
+    } catch (error) {
+      warnOnce(ctx, `dsh-model-flatmap: a route could not wait for the web server (plugin unaffected): ${String(error?.message ?? error)}`)
+    }
+  }
+  install(ctx)
 }
 
 /**
@@ -206,6 +244,18 @@ function registerConfigRoute(ctx) {
         const path = resolveConfigFile()
         if (method === 'POST') {
           const body = await readConfigBody(req)
+          // A body without `teamDefault` comes from a browser build that does
+          // not know the section. Carry the file's value through so that build's
+          // save cannot turn the user's default off behind their back.
+          if (body !== null && body.teamDefault === undefined) {
+            try {
+              body.teamDefault = readConfigFile(path).teamDefault === true
+            } catch {
+              // A file that does not parse is about to be replaced anyway; the
+              // built-in default is the only value left to write.
+              body.teamDefault = false
+            }
+          }
           if (body === null) {
             res.statusCode = 400
             res.setHeader('content-type', 'application/json; charset=utf-8')
@@ -638,13 +688,13 @@ export function apply(ctx) {
   // route (see DEC-035). Like the link route it swallows its own failures: with
   // no web server the browser keeps its localStorage choice and the Host keeps
   // reporting, which is the pre-toggle behaviour.
-  registerTelemetrySettings(ctx)
+  withWebServer(ctx, registerTelemetrySettings)
 
   // The model-visibility switches and provider renames read and write their
   // source of truth through this route (DEC-060). Same degradation rule: with no
   // web server the browser keeps its localStorage cache and the file simply is
   // not reachable from the UI.
-  registerConfigRoute(ctx)
+  withWebServer(ctx, registerConfigRoute)
 
   // The teamwork default is applied here, not in the picker: only the Host can
   // tell "no selection saved" from "saved off", and only the Host can write it

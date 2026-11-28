@@ -4,6 +4,19 @@ Project-level lessons log for the dsh-model-flatmap plugin. Append-only: new
 entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
+## LES-052 — 2026-11-28 — 可选服务不能「一次探测，取不到就永久放弃」；测试桩里永远现成的服务，正是这个 bug 的隐身衣
+
+`registerConfigRoute` / `registerTelemetrySettings` 在 `apply()` 里各写了一次 `ctx.get('webServer')`，取不到就 `return`。看起来是「优雅降级」，实际是**永久缺席**：插件按组合顺序挂载，只要 webServer 晚于插件挂载（重启、profile 重排、冷启动竞态都有），路由就再也不会注册，进程余生所有请求都是 404。而症状被包装成「设置没保存」——用户在设置页拨开关、看起来成功、重启后回到原值，于是怀疑的是**值**，不是**通道**。这次同一台机器上 404 与「文件被写回 false」交替出现，才让「有时好有时坏」的竞态浮出水面。
+
+三条自查：
+
+1. **可选服务要用框架给的通道**：`ctx.inject(['webServer'], scope => ...)` 的语义是「服务在就激活、不在就待命、重新挂载再激活」，而 `ctx.get(...) === undefined ? return` 的语义是「不在就永远算了」。DSH 文档 `references/practices.md` 第 20 条写得很直白；写插件时不要自己发明「一次性探测 + 静默 return」。
+2. **别把 `inject` 数组当万能解**：它控制的是**插件是否激活**，写进 `export const inject` 会让无该服务的组合里整个插件不加载——为了修路由而让心跳与 `agent/created` 默认值一起消失，是拿更贵的东西换更便宜的。要区分「插件级硬依赖」与「某个路由的可选依赖」。
+3. **测试桩要能表达「服务还没来」**：`boot()` 里 `get: name => (name === 'webServer' ? {...} : undefined)` 让服务永远现成，于是 379 条测试全绿却漏掉这个致命路径。补一条「激活时取不到、挂载后才来」的测试，是这类 bug 唯一便宜的防线——测试的形状必须能装下真实世界的那一种排列。
+
+顺带一条同族教训：作为整体替换的 POST，把「没发某个字段」解释成「把它关掉」，等于让每次无关调整都变成一次偏好重置。缺字段应当读回现值（DEC-066 第二条），否则旧客户端一次可见性操作就能把用户手改的 `true` 抹成 `false`。
+
+
 ## LES-051 — 2026-11-26 — `files` 数组漏了被 import 的模块，发布出去的 1.6.0 装完就报 `ERR_MODULE_NOT_FOUND`
 
 `index.js` 里 `import { readConfigFile } from './config.js'`，但 `package.json` 的 `files` 只列了 `index.js` / `repo-url.js` / `telemetry.js` / `client.js` / `cordis.patch.yml` / `locale/*.json` / `docs` / `icon.svg`。`config.js` 缺失，于是 1.6.0 的 tarball 里根本没有它——**每一个从 npm 安装的用户，宿主半边都加载失败**。而本地 checkout 里 `config.js` 一直在，全部 374 条测试也一直全绿，因为测试跑的是工作树，不是 tarball。

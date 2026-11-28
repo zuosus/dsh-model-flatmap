@@ -4,6 +4,19 @@ Project-level decision log for the dsh-model-flatmap plugin. Append-only: new
 entries go below the marker, newest first; old entries are never rewritten.
 
 <!-- APPEND-ONLY LOG: 新条目插入到此行之后 -->
+## DEC-066 — 2026-11-28 — 设置页写入失效的根因：config 路由在 `apply()` 里一次性探测 `webServer`，服务迟到就永久缺席
+
+**Context.** 用户二次反馈：「`teamDefault: false`，然后我在设置里打开这个选项，但 config.yaml 里 `teamDefault: false` 没有发生变化。」也就是说不是「值没设」，而是**设置页的写操作根本到不了文件**。现场证据：（a）`curl http://127.0.0.1:61524/dsh-model-flatmap/config` 返回 **404**（同一台 server 上 `/` 返回 401、`/nonexistent-xyz-123` 返回 404，故 404 表示**没有任何路由匹配**，不是鉴权拒绝）；（b）`~/.dsh/dsh-model-flatmap/config.yaml` 的 mtime 是 20:20:31，而我在 20:09 写入的 `teamDefault: true` 被改回 `false`——说明**某个时刻路由是通的、某个时刻不通**；（c）DEC-063 的 `installTeamDefault` 与应用点本身逻辑无误（381 条测试全绿），所以问题只在传输层。根因：`registerConfigRoute` / `registerTelemetrySettings` 在 `apply()` 里用一次 `ctx.get('webServer')` 取服务，取不到就 `return` 静默放弃，且此后**永不重试**。插件按组合顺序挂载，webServer 在插件之后挂载时（重启、profile 重排、冷启动竞态），路由就永久缺席；客户端 GET 拿到 404 → `status:'broken'`，`adopt` 从不执行（store 停在 `false`），POST 也 404，于是「设置页能拨、文件不动、重启后回到关」——正是用户说的「有时候开有时候关」。
+
+**Decision.** 三件事。（1）**新增 `withWebServer(ctx, install)`**：有 `ctx.inject` 时用 `ctx.inject(['webServer'], scope => install(scope))`，回调在服务挂载时执行、随服务生命周期归属，服务晚到也能补注册；没有 `inject` 动词的上下文回退为原先的一次性探测（此时行为与改动前完全一致，不引入新的失败模式）。`apply()` 里两个安装器改为 `withWebServer(ctx, registerConfigRoute)` / `withWebServer(ctx, registerTelemetrySettings)`。（2）**修正「缺字段」语义**：`readConfigBody` 原先把缺失的 `teamDefault` 默认成 `false`，现在保持 `undefined`，由 POST 处理器回读文件现值再写入——旧构建（不认识该 section）保存可见性开关时，不再把用户手改的 `true` 静默重置为 `false`。（3）**TDD 先行**：先写两条必红测试（webServer 激活后才挂载仍须注册路由；旧客户端缺字段的 POST 必须保留文件现值），确认 9 绿 2 红后再改实现，改完 11 条全绿。
+
+**Rationale.** 「一次性探测 + 静默放弃」是最难被发现的失败形态：不抛错、不告警、跑测试全绿（测试桩里 webServer 永远现成），只有真实的挂载顺序才会暴露，而暴露出来的症状还被误读成「设置没保存」。改用 `ctx.inject` 是 DSH 文档明确规定的可选服务通道（`references/practices.md` 第 20 条），语义正好是「服务在就激活、不在就待命」，而不是「不在就永久放弃」。第二条修正针对的是同一处「静默覆盖」家族：作为整体替换的 POST，若把「没发这个字段」理解成「要关掉它」，就等于让每次可见性调整都变成一次默认值重置。
+
+**Rejected.** （1）把 `webServer` 写进 `export const inject = ['webServer']`：那会让整个插件在无 Web Server 的组合里**完全不加载**，连心跳与 `agent/created` 默认值应用都一并失效——用「插件消失」换「路由可靠」，代价错了对象。（2）在 `apply()` 里加定时重试：轮询注册既可能与真正的挂载竞态，也会在永久缺服务的组合里留下一个永不停止的定时器。（3）改客户端在 GET 失败时重试：治标；路由不存在时任何重试都只会重复 404，且掩盖了服务端缺陷。（4）把 `teamDefault` 从 POST 里彻底删掉、只允许设置页单独写：仍然要通同一道门，且违反 DEC-063「POST 是整体替换、三个 section 一起发」的既有约定。
+
+**Consequences.** `index.js` 新增 `withWebServer`（含 `warnOnce` 降级路径），`readConfigBody` 的 `teamDefault` 语义由 `false` 改为 `undefined`，config 路由 POST 分支增加「沿用文件现值」的一段；`test/config-route.test.mjs` 新增 2 条测试，381 条全绿（基线 379），红→绿证据成立。**实测**：改动前两个路由均 404，`plugin_manager set_bundle` 重载组合后变为 **401**（路由已注册、由 trust fence 要求鉴权），即 `404 → 401` 是本次修复在运行进程上的直接证据。`~/.dsh/dsh-model-flatmap/config.yaml` 保持用户当前值，不改写。此条是 DEC-063 的补丁：DEC-063 修好了「谁读、读哪里」，本条修的是「读写的通道会不会在启动竞态里消失」。
+
+
 ## DEC-065 — 2026-11-27 — 统一 hero 图约定：`hero.png` 置于仓库根、双 README 引用、纳入 `files`，并补测试与 `npm test` 脚本
 
 **Context.** 统一 hero 图约定要求：文件名恰为 `hero.png`、PNG 格式、位于仓库根目录，被 `README.md` 与 `README.zh.md` 以 `./hero.png` 引用，并列入 `package.json` 的 `files` 以便随包发布。核查本仓库：`hero.png` 确为 PNG（`file` 输出 `PNG image data, 1536 x 656, 8-bit/color RGB, non-interlaced`，魔数 `89 50 4e 47 0d 0a 1a 0a`），位于仓库根，两份 README 第 3 行均引用 `./hero.png`——这三点已符合。但 `package.json` 的 `files` 只有 9 项（index.js / config.js / repo-url.js / telemetry.js / client.js / cordis.patch.yml / locale/*.json / docs / icon.svg），**不含 `hero.png`**，因此 `npm pack` 不会把它打进 tarball，README 里的图在安装后的包里会失效。此外仓库没有 `scripts.test`，`npm test` 直接报 `Missing script: "test"`，实际测试入口是 `node --test test/`（基线 378 条全绿）。
